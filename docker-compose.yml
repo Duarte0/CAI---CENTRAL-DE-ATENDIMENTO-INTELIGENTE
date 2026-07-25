@@ -1,0 +1,176 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cai}
+      POSTGRES_USER: ${POSTGRES_USER:-cai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: alembic upgrade head
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  ia_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: python -m src.workers.ia_worker
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  audio_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: python -m src.workers.audio_worker
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  image_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: python -m src.workers.image_worker
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  ralph:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ralph
+    volumes:
+      - .:/app
+      - codex_auth:/root/.codex
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  codex_auth:

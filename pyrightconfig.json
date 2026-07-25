@@ -1,0 +1,14 @@
+{
+  "include": [
+    "src/api/debug_routes.py",
+    "src/api/routes.py",
+    "src/api/webhook_adapter.py",
+    "src/core/db.py",
+    "src/core/models.py",
+    "src/workers/audio_worker.py",
+    "src/workers/ia_worker.py",
+    "src/workers/image_worker.py"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "strict"
+}

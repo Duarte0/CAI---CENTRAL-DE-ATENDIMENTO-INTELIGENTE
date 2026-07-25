@@ -1,0 +1,58 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# ---------- Testes / cobertura ----------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+tests
+
+# ---------- Variáveis de ambiente / segredos ----------
+.env
+.env.*
+!.env.example
+
+# ---------- Dados persistidos (volume ./data do compose) ----------
+data/
+migration-reports/
+*.db
+*.sqlite
+*.sqlite3
+
+# ---------- Logs ----------
+*.log
+logs/
+
+# ---------- Codex / Claude / Graphify ----------
+.codex/
+.claude/
+.agents/skills/graphify/
+graphify-out/
+.graphify-cache/
+
+# ---------- Node (usado só pelo Codex CLI no stage ralph) ----------
+node_modules/
+
+# ---------- Editor / SO ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---------- Docker ----------
+*.pid

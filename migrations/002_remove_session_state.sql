@@ -1,0 +1,3 @@
+-- Historical SQLite migration retained for audit/reference only.
+-- PostgreSQL deployments use the versioned Alembic schema under
+-- ../alembic/versions/; application startup does not execute this file.
