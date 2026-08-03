@@ -18,14 +18,22 @@ from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES, IMAGE_MESSAGE_TYPES
 from src.core.config import settings
 from src.core.analysis import normalize_protocol, with_protocol
 from src.core.db import (
+    close_cycle,
     close_database,
+    create_open_cycle,
     database_is_ready,
+    get_cycle,
+    get_cycle_metrics,
+    get_cycle_result,
+    get_latest_cycle,
     initialize_database,
+    list_cycles,
     record_ticket_assignment,
+    release_image_publication,
+    release_transcription_publication,
     reserve_transcription,
     reserve_image_extraction,
-    set_image_extraction_status,
-    set_transcription_status,
+    transition_cycle,
     update_analysis_protocol,
 )
 from src.core.digisac_directory import directory_sync_loop
@@ -80,7 +88,8 @@ def _ticket_transfer_count(data: Mapping[str, Any]) -> int | None:
     value = data.get("ticketTransferCount")
     metrics = data.get("metrics")
     if value is None and isinstance(metrics, Mapping):
-        value = metrics.get("ticketTransferCount")
+        metrics_data = cast(Mapping[str, Any], metrics)
+        value = metrics_data.get("ticketTransferCount")
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -91,6 +100,81 @@ def _ticket_transfer_count(data: Mapping[str, Any]) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _cycle_event_key(
+    event: str,
+    ticket_id: str,
+    payload: Mapping[str, Any],
+    data: Mapping[str, Any],
+) -> str:
+    source_event_id = _non_empty_string(payload.get("eventId") or payload.get("id"))
+    if source_event_id:
+        identity = f"{event}:{ticket_id}:{source_event_id}"
+    else:
+        timestamp, has_source_timestamp = _ticket_event_timestamp(payload, data)
+        identity = json.dumps(
+            [
+                event,
+                ticket_id,
+                data.get("isOpen"),
+                normalize_protocol(data.get("protocol")),
+                timestamp if has_source_timestamp else None,
+                data.get("lastMessageId"),
+                data.get("ticketTransferCount"),
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,
+        )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+async def _publish_cycle(
+    redis: AsyncRedis, cycle: Mapping[str, Any], *, attempt: int = 0
+) -> None:
+    public_id = cycle.get("public_id")
+    conversation_id = cycle.get("conversation_id")
+    if not public_id or not conversation_id:
+        raise ValueError("cycle is missing its persistent identity")
+    status_value = str(cycle.get("status") or "pending")
+    marked = await transition_cycle(
+        str(public_id),
+        status_value,
+        expected_statuses=(status_value,),
+        fields={"enqueued_at": datetime.now(timezone.utc)},
+    )
+    if marked is None:
+        return
+    try:
+        await redis.rpush(
+            "ia_queue",
+            json.dumps(
+                {
+                    "cycle_id": str(public_id),
+                    "conversation_id": str(conversation_id),
+                    "protocol": cycle.get("protocol"),
+                    "attempt": attempt,
+                    "not_before": (
+                        datetime.fromisoformat(
+                            str(cycle["next_attempt_at"])
+                        ).timestamp()
+                        if cycle.get("next_attempt_at")
+                        else 0
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+        )
+    except Exception:
+        await transition_cycle(
+            str(public_id),
+            status_value,
+            expected_statuses=(status_value,),
+            fields={"enqueued_at": None},
+        )
+        raise
 
 
 async def capture_ticket_assignment(
@@ -300,8 +384,8 @@ async def enqueue_audio_transcription(
             ),
         )
     except Exception as exc:
-        await set_transcription_status(
-            message.message_id, "failed", error_message=f"queue publish failed: {exc}"
+        await release_transcription_publication(
+            message.message_id, f"queue publish failed: {exc}"
         )
         raise
     return True
@@ -332,10 +416,8 @@ async def enqueue_image_extraction(
             ),
         )
     except Exception as exc:
-        await set_image_extraction_status(
-            message.message_id,
-            "failed",
-            error_message=f"queue publish failed: {exc}",
+        await release_image_publication(
+            message.message_id, f"queue publish failed: {exc}"
         )
         raise
     return True
@@ -458,10 +540,11 @@ async def health(redis: AsyncRedis = Depends(get_redis)) -> dict[str, str]:
 @app.get("/queues")
 async def queue_metrics(
     redis: AsyncRedis = Depends(get_redis),
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Small operational view of the Redis-backed work queues."""
     (
         ia_queue,
+        processing_queue,
         dead_letter,
         audio_queue,
         audio_dead_letter,
@@ -469,20 +552,24 @@ async def queue_metrics(
         image_dead_letter,
     ) = await asyncio.gather(
         redis.llen("ia_queue"),
+        redis.llen("ia_processing"),
         redis.llen("ia_dead_letter"),
         redis.llen("audio_transcription_queue"),
         redis.llen("audio_transcription_dead_letter"),
         redis.llen("image_extraction_queue"),
         redis.llen("image_extraction_dead_letter"),
     )
-    return {
+    result: dict[str, Any] = {
         "ia_queue": ia_queue,
+        "ia_processing": processing_queue,
         "ia_dead_letter": dead_letter,
         "audio_transcription_queue": audio_queue,
         "audio_transcription_dead_letter": audio_dead_letter,
         "image_extraction_queue": image_queue,
         "image_extraction_dead_letter": image_dead_letter,
     }
+    result["conversation_cycles"] = await get_cycle_metrics()
+    return result
 
 
 async def parse_webhook_payload(
@@ -552,8 +639,55 @@ async def digisac_webhook(
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "missing_ticket_id"}
         if event == "ticket.created":
+            if settings.digisac_history_finalization_enabled:
+                timestamp, _has_timestamp = _ticket_event_timestamp(
+                    payload_data, data
+                )
+                cycle, created = await create_open_cycle(
+                    conversation_id=ticket_id,
+                    started_at=timestamp,
+                    open_event_key=_cycle_event_key(
+                        event, ticket_id, payload_data, data
+                    ),
+                    start_strategy="ticket_created_event",
+                )
+                return {
+                    "status": "ticket_created",
+                    "conversation_id": ticket_id,
+                    "cycle_id": str(cycle["public_id"]),
+                    "cycle_created": created,
+                }
             return {"status": "ticket_created", "conversation_id": ticket_id}
         await capture_ticket_assignment(payload_data, data, ticket_id)
+        if (
+            settings.digisac_history_finalization_enabled
+            and data.get("isOpen") is True
+        ):
+            timestamp, _has_timestamp = _ticket_event_timestamp(
+                payload_data, data
+            )
+            cycle, created = await create_open_cycle(
+                conversation_id=ticket_id,
+                started_at=timestamp,
+                open_event_key=_cycle_event_key(
+                    event, ticket_id, payload_data, data
+                ),
+                start_strategy="ticket_reopened_event",
+            )
+            await redis.delete(
+                f"ticket_close_scheduled:{ticket_id}",
+                f"ticket_close_task:{ticket_id}",
+                f"ticket_classify_after:{ticket_id}",
+                f"ticket_last_message_at:{ticket_id}",
+                f"buffer:{ticket_id}",
+            )
+            return {
+                "status": "ticket_reopened",
+                "conversation_id": ticket_id,
+                "cycle_id": str(cycle["public_id"]),
+                "cycle_created": created,
+                "queued": False,
+            }
         if data.get("isOpen") is not False:
             logger.info(
                 "Ticket event ignored: ticket still open conversation_id=%s", ticket_id
@@ -581,6 +715,51 @@ async def digisac_webhook(
             ticket_id,
             protocol,
         )
+        if settings.digisac_history_finalization_enabled:
+            closed_at, _has_timestamp = _ticket_event_timestamp(
+                payload_data, data
+            )
+            cycle, created = await close_cycle(
+                conversation_id=ticket_id,
+                protocol=protocol,
+                closed_at=closed_at,
+                close_event_key=_cycle_event_key(
+                    event, ticket_id, payload_data, data
+                ),
+            )
+            if created:
+                try:
+                    await _publish_cycle(redis, cycle)
+                except Exception:
+                    logger.exception(
+                        "Cycle persisted but queue publication failed: "
+                        "cycle_id=%s conversation_id=%s",
+                        cycle["public_id"],
+                        ticket_id,
+                    )
+            await redis.set(
+                f"ia_status:{ticket_id}",
+                json.dumps(
+                    {
+                        "conversation_id": ticket_id,
+                        "cycle_id": str(cycle["public_id"]),
+                        "status": cycle["status"],
+                        "started_at": cycle["created_at"],
+                        "completed_at": None,
+                        "retry_count": cycle["attempt_count"],
+                        "max_retries": settings.max_retry_attempts,
+                    }
+                ),
+                ex=settings.result_ttl_seconds,
+            )
+            return {
+                "status": (
+                    "ticket_closed" if created else "ticket_already_closed"
+                ),
+                "conversation_id": ticket_id,
+                "cycle_id": str(cycle["public_id"]),
+                "queued": created,
+            }
         await associate_ticket_protocol(redis, ticket_id, protocol)
 
         closure_status = await schedule_initial_ticket_closure(redis, ticket_id)
@@ -692,6 +871,13 @@ async def digisac_webhook(
     # failed DB row can be reserved again when DigiSac retries the same webhook.
     transcription_queued = await enqueue_audio_transcription(redis, message)
     image_extraction_queued = await enqueue_image_extraction(redis, message)
+    if settings.digisac_history_finalization_enabled:
+        return {
+            "status": "received",
+            "conversation_id": conversation_id,
+            "transcription_queued": transcription_queued,
+            "image_extraction_queued": image_extraction_queued,
+        }
     if not await idempotency.try_mark_processed(event_id):
         return {"status": "duplicate", "conversation_id": conversation_id}
 
@@ -759,6 +945,19 @@ async def debug_digisac_webhook(
 async def conversation_status(
     conversation_id: str, redis: AsyncRedis = Depends(get_redis)
 ) -> ConversationProcessing:
+    if settings.digisac_history_finalization_enabled:
+        cycle = await get_latest_cycle(conversation_id)
+        if cycle:
+            return ConversationProcessing(
+                conversation_id=conversation_id,
+                status=cycle["status"],
+                started_at=cycle["created_at"],
+                completed_at=cycle.get("completed_at"),
+                error_message=cycle.get("error_message"),
+                retry_count=cycle["attempt_count"],
+                transient_retry_count=cycle.get("transient_retry_count", 0),
+                max_retries=settings.max_retry_attempts,
+            )
     data = await redis.get(f"ia_status:{conversation_id}")
     if not data:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -769,7 +968,38 @@ async def conversation_status(
 async def conversation_result(
     conversation_id: str, redis: AsyncRedis = Depends(get_redis)
 ) -> Any:
+    if settings.digisac_history_finalization_enabled:
+        cycle = await get_latest_cycle(conversation_id)
+        if cycle:
+            result = await get_cycle_result(str(cycle["public_id"]))
+            if result and result.get("classification_public_id"):
+                return result
     data = await redis.get(f"ia_result:{conversation_id}")
     if not data:
         raise HTTPException(status_code=404, detail="Result not available")
     return json.loads(data)
+
+
+@app.get("/conversations/{conversation_id}/cycles")
+async def conversation_cycles(
+    conversation_id: str, limit: int = 50
+) -> list[dict[str, Any]]:
+    return await list_cycles(conversation_id, limit=limit)
+
+
+@app.get("/cycles/{cycle_id}/status")
+async def cycle_status(cycle_id: str) -> dict[str, Any]:
+    cycle = await get_cycle(cycle_id)
+    if not cycle:
+        raise HTTPException(status_code=404, detail="Cycle not found")
+    return cycle
+
+
+@app.get("/cycles/{cycle_id}/result")
+async def cycle_result(cycle_id: str) -> dict[str, Any]:
+    result = await get_cycle_result(cycle_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Cycle not found")
+    if not result.get("classification_public_id"):
+        raise HTTPException(status_code=404, detail="Cycle result not available")
+    return result

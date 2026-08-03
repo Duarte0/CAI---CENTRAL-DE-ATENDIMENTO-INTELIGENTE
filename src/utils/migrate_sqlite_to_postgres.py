@@ -18,7 +18,8 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from src.core.db import EXPECTED_SCHEMA_REVISION
+from src.core.db import CURRENT_SCHEMA_REVISION
+from src.core.identifiers import uuid7
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ TABLES: dict[str, tuple[str, ...]] = {
     "digisac_users": ("id",),
     "digisac_directory_sync_state": ("resource",),
 }
+DESTINATION_ONLY_TABLES = ("classification_messages",)
 JSON_COLUMNS = {
     "ia_classifications": {"message_ids", "department", "agent"},
 }
@@ -110,7 +112,7 @@ def _sqlite_rows(path: Path) -> dict[str, list[tuple[list[str], list[Any]]]]:
 
 def _destination_is_empty(connection: psycopg.Connection[Any]) -> None:
     nonempty: list[str] = []
-    for table in TABLES:
+    for table in (*TABLES, *DESTINATION_ONLY_TABLES):
         count = connection.execute(
             sql.SQL("SELECT COUNT(*) FROM {};").format(sql.Identifier(table))
         ).fetchone()[0]
@@ -159,12 +161,42 @@ def _copy_rows(
 ) -> None:
     for table, table_rows in prepared.items():
         for columns, values in table_rows:
+            insert_columns = list(columns)
+            insert_values = list(values)
+            if table == "ia_classifications":
+                insert_columns.append("public_id")
+                insert_values.append(uuid7())
             statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
                 sql.Identifier(table),
-                sql.SQL(", ").join(sql.Identifier(column) for column in columns),
-                sql.SQL(", ").join(sql.Placeholder() for _ in columns),
+                sql.SQL(", ").join(
+                    sql.Identifier(column) for column in insert_columns
+                ),
+                sql.SQL(", ").join(
+                    sql.Placeholder() for _ in insert_columns
+                ),
             )
-            connection.execute(statement, values)
+            connection.execute(statement, insert_values)
+
+
+def _copy_classification_messages(
+    connection: psycopg.Connection[Any],
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO classification_messages (
+            classification_id, message_id, position, created_at
+        )
+        SELECT
+            c.id,
+            item.message_id,
+            item.ordinality::integer - 1,
+            c.created_at
+        FROM ia_classifications AS c
+        CROSS JOIN LATERAL jsonb_array_elements_text(c.message_ids)
+            WITH ORDINALITY AS item(message_id, ordinality)
+        ON CONFLICT DO NOTHING
+        """
+    )
 
 
 def _reset_sequences(connection: psycopg.Connection[Any]) -> None:
@@ -225,6 +257,57 @@ def _validate(
             )
             else "DIVERGENCE"
         )
+    normalized = connection.execute(
+        """
+        WITH expected AS (
+            SELECT
+                c.id AS classification_id,
+                item.message_id,
+                MIN(item.ordinality)::integer - 1 AS position,
+                c.created_at
+            FROM ia_classifications AS c
+            CROSS JOIN LATERAL jsonb_array_elements_text(c.message_ids)
+                WITH ORDINALITY AS item(message_id, ordinality)
+            GROUP BY c.id, item.message_id, c.created_at
+        ),
+        compared AS (
+            SELECT
+                expected.classification_id AS expected_id,
+                actual.classification_id AS actual_id,
+                expected.position AS expected_position,
+                actual.position AS actual_position,
+                expected.created_at AS expected_created_at,
+                actual.created_at AS actual_created_at
+            FROM expected
+            FULL OUTER JOIN classification_messages AS actual
+              USING (classification_id, message_id)
+        )
+        SELECT
+            (SELECT COUNT(*) FROM expected),
+            (SELECT COUNT(*) FROM classification_messages),
+            COUNT(*) FILTER (
+                WHERE expected_id IS NULL
+                   OR actual_id IS NULL
+                   OR expected_position <> actual_position
+                   OR expected_created_at <> actual_created_at
+            )
+        FROM compared
+        """
+    ).fetchone()
+    normalized_report = TableReport(
+        source=int(normalized[0]),
+        destination=int(normalized[1]),
+        rows_mismatched=int(normalized[2]),
+    )
+    normalized_report.status = (
+        "OK"
+        if (
+            normalized_report.source == normalized_report.destination
+            and not normalized_report.rows_mismatched
+        )
+        else "DIVERGENCE"
+    )
+    report.tables["classification_messages"] = normalized_report
 
 
 def _normal(value: Any) -> Any:
@@ -246,13 +329,14 @@ def migrate(sqlite_path: Path, database_url: str) -> MigrationReport:
         revision = connection.execute(
             "SELECT version_num FROM alembic_version LIMIT 1"
         ).fetchone()
-        if not revision or revision[0] != EXPECTED_SCHEMA_REVISION:
+        if not revision or revision[0] != CURRENT_SCHEMA_REVISION:
             raise RuntimeError(
-                f"PostgreSQL must be migrated to {EXPECTED_SCHEMA_REVISION} first"
+                f"PostgreSQL must be migrated to {CURRENT_SCHEMA_REVISION} first"
             )
         _destination_is_empty(connection)
         with connection.transaction():
             _copy_rows(connection, prepared)
+            _copy_classification_messages(connection)
             _reset_sequences(connection)
             _validate(connection, prepared, report)
             if any(item.status != "OK" for item in report.tables.values()):

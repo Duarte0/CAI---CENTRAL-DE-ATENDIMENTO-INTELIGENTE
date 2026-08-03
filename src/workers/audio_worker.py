@@ -6,13 +6,20 @@ import logging
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
 import requests
 
 from src.core.config import settings
-from src.core.db import close_database, initialize_database, set_transcription_status
+from src.core.db import (
+    close_database,
+    initialize_database,
+    recover_stale_transcriptions,
+    release_transcription_publication,
+    set_transcription_status,
+)
 from src.core.redis_client import AsyncRedis, create_redis_client
 
 logger = logging.getLogger(__name__)
@@ -147,7 +154,16 @@ class AudioTranscriptionWorker:
         message_id = job.get("message_id")
         if not isinstance(message_id, str) or not message_id:
             raise ValueError("Audio job missing message_id")
-        await set_transcription_status(message_id, "processing", increment_attempt=True)
+        lease = await set_transcription_status(
+            message_id, "processing", increment_attempt=True
+        )
+        if lease is None:
+            logger.info(
+                "Skipping duplicate or stale audio job: message_id=%s",
+                message_id,
+            )
+            return
+        await self._remove_matching_queue_items(message_id)
         try:
             text = await asyncio.to_thread(transcribe_message, message_id)
         except Exception as exc:
@@ -156,10 +172,21 @@ class AudioTranscriptionWorker:
             if transient and attempt < self.max_retries:
                 delay = min(2**attempt, 60)
                 job.update(attempt=attempt, not_before=time.time() + delay)
-                await set_transcription_status(
-                    message_id, "pending", error_message=str(exc)
+                transitioned = await set_transcription_status(
+                    message_id,
+                    "pending",
+                    error_message=str(exc),
+                    next_attempt_at=datetime.fromtimestamp(
+                        float(job["not_before"]), tz=timezone.utc
+                    ),
+                    expected_updated_at=lease,
                 )
-                await self.redis.rpush(self.queue, json.dumps(job))
+                if transitioned is None:
+                    logger.info(
+                        "Discarding stale audio retry result: message_id=%s",
+                        message_id,
+                    )
+                    return
                 logger.warning(
                     "Audio transcription retry scheduled: message_id=%s attempt=%s delay=%ss error=%s",
                     message_id,
@@ -168,8 +195,14 @@ class AudioTranscriptionWorker:
                     exc,
                 )
                 return
-            await set_transcription_status(message_id, "failed", error_message=str(exc))
-            await self.redis.rpush(self.dead_letter, json.dumps(job))
+            transitioned = await set_transcription_status(
+                message_id,
+                "failed",
+                error_message=str(exc),
+                expected_updated_at=lease,
+            )
+            if transitioned is not None:
+                await self.redis.rpush(self.dead_letter, json.dumps(job))
             logger.exception(
                 "Audio transcription failed: message_id=%s attempt=%s",
                 message_id,
@@ -177,13 +210,96 @@ class AudioTranscriptionWorker:
             )
             return
 
-        await set_transcription_status(message_id, "completed", text=text)
+        transitioned = await set_transcription_status(
+            message_id,
+            "completed",
+            text=text,
+            expected_updated_at=lease,
+        )
+        if transitioned is None:
+            logger.info(
+                "Discarding stale audio completion: message_id=%s",
+                message_id,
+            )
+            return
         logger.info("Audio transcription completed: message_id=%s", message_id)
+
+    async def _remove_matching_queue_items(self, message_id: str) -> int:
+        removed = 0
+        raw_items = await self.redis.lrange(self.queue, 0, -1)
+        for raw in dict.fromkeys(raw_items):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                job = cast(dict[str, Any], parsed)
+                if job.get("message_id") == message_id:
+                    removed += await self.redis.lrem(self.queue, 0, raw)
+        if removed:
+            logger.info(
+                "Removed duplicate audio queue items: message_id=%s count=%s",
+                message_id,
+                removed,
+            )
+        return removed
+
+    async def recover_stale_jobs(self) -> int:
+        rows = await recover_stale_transcriptions(
+            lease_seconds=settings.content_recovery_lease_seconds,
+            batch_size=settings.content_recovery_batch_size,
+        )
+        queued_message_ids: set[str] = set()
+        for raw in await self.redis.lrange(self.queue, 0, -1):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                queued_job = cast(dict[str, Any], parsed)
+                queued_id = queued_job.get("message_id")
+                if isinstance(queued_id, str) and queued_id:
+                    queued_message_ids.add(queued_id)
+        published = 0
+        for row in rows:
+            message_id = str(row["message_id"])
+            if message_id in queued_message_ids:
+                logger.debug(
+                    "Audio publication already present in Redis: message_id=%s",
+                    message_id,
+                )
+                continue
+            attempt_count = int(row["attempt_count"])
+            job = {
+                "message_id": message_id,
+                "conversation_id": row["conversation_id"],
+                "attempt": max(attempt_count, 0),
+            }
+            try:
+                await self.redis.rpush(self.queue, json.dumps(job))
+            except Exception as exc:
+                await release_transcription_publication(
+                    message_id,
+                    f"recovery queue publish failed: {exc}",
+                )
+                raise
+            published += 1
+            queued_message_ids.add(message_id)
+        if published:
+            logger.warning("Recovered stale audio jobs: count=%s", published)
+        return published
 
     async def process(self) -> None:
         logger.info("Audio transcription worker started")
+        next_recovery_at = 0.0
         while True:
             try:
+                if time.monotonic() >= next_recovery_at:
+                    await self.recover_stale_jobs()
+                    next_recovery_at = (
+                        time.monotonic()
+                        + settings.content_reconcile_interval_seconds
+                    )
                 raw = await self.redis.lpop(self.queue)
                 if not raw:
                     await asyncio.sleep(1)

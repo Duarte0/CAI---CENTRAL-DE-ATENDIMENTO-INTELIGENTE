@@ -1,0 +1,86 @@
+"""Shared PostgreSQL integration-test setup.
+
+Set CAI_TEST_DATABASE_URL to a disposable PostgreSQL database to run the
+database-backed tests.  They are skipped locally when PostgreSQL is absent;
+pure webhook/model tests remain runnable without external services.
+"""
+
+import os
+from pathlib import Path
+
+import psycopg
+import pytest
+import pytest_asyncio
+from alembic import command
+from alembic.config import Config
+
+from src.core.config import settings
+from src.core.db import close_database, initialize_database
+
+TEST_DATABASE_URL = os.environ.get("CAI_TEST_DATABASE_URL")
+POSTGRES_MODULES = {
+    "test_ia_history_db.py",
+    "test_ticket_assignments.py",
+    "test_digisac_directory.py",
+    "test_postgres_evolution.py",
+    "test_conversation_cycles_db.py",
+}
+_schema_ready = False
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "postgres: requires a PostgreSQL database")
+
+
+def pytest_collection_modifyitems(config, items):
+    if TEST_DATABASE_URL:
+        return
+    skip = pytest.mark.skip(reason="CAI_TEST_DATABASE_URL is not configured")
+    for item in items:
+        if item.path.name in POSTGRES_MODULES or item.get_closest_marker("postgres"):
+            item.add_marker(skip)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def postgres_state(request):
+    global _schema_ready
+    needs_database = (
+        request.node.path.name in POSTGRES_MODULES
+        or request.node.get_closest_marker("postgres") is not None
+    )
+    if not needs_database:
+        yield
+        return
+    assert TEST_DATABASE_URL
+    previous_url = settings.database_url
+    settings.database_url = TEST_DATABASE_URL
+    os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+    await close_database()
+    if not _schema_ready:
+        config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+        command.upgrade(config, "head")
+        _schema_ready = True
+    with psycopg.connect(TEST_DATABASE_URL) as connection:
+        connection.execute(
+            """
+            TRUNCATE TABLE
+                conversation_cycle_messages,
+                conversation_processing_cycles,
+                classification_messages,
+                ia_classifications,
+                message_transcriptions,
+                message_image_extractions,
+                ticket_assignment_history,
+                ticket_assignment_event_keys,
+                digisac_departments,
+                digisac_users,
+                digisac_directory_sync_state
+            RESTART IDENTITY CASCADE
+            """
+        )
+    await initialize_database()
+    try:
+        yield
+    finally:
+        await close_database()
+        settings.database_url = previous_url

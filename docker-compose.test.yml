@@ -1,0 +1,16 @@
+services:
+  postgres-test:
+    image: postgres:16.14-alpine
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_DB: cai_test
+      POSTGRES_USER: cai_test
+      POSTGRES_PASSWORD: cai_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cai_test -d cai_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 20

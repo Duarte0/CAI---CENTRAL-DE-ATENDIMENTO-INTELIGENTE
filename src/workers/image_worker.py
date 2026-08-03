@@ -6,14 +6,29 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, cast
 
 import requests
 from groq import Groq
 
 from src.core.config import settings
-from src.core.db import close_database, initialize_database, set_image_extraction_status
+from src.core.db import (
+    close_database,
+    get_image_extraction,
+    initialize_database,
+    recover_stale_image_extractions,
+    release_image_publication,
+    reserve_image_extraction,
+    set_image_extraction_status,
+)
 from src.core.redis_client import AsyncRedis, create_redis_client
+from src.core.provider_retry import (
+    TransientProviderError,
+    retry_after_from_text,
+    retry_after_seconds,
+    retry_delay,
+)
 
 logger = logging.getLogger(__name__)
 TRANSIENT_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
@@ -33,14 +48,61 @@ VISION_PROMPT = (
 )
 
 
-class TransientImageExtractionError(RuntimeError):
+class TransientImageExtractionError(TransientProviderError):
     """A network/upstream failure worth retrying."""
+
+    def __init__(
+        self, message: str, *, retry_after_seconds: float | None = None
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _retry_after_from_text(message: str) -> float | None:
+    return retry_after_from_text(message)
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    return retry_after_seconds(exc)
+
+
+def _is_transient_failure_text(message: str | None) -> bool:
+    if not message:
+        return False
+    lowered = message.lower()
+    return bool(
+        re.search(r"(?:error code:|http)\s*(?:408|425|429|500|502|503|504)", lowered)
+        or "rate_limit_exceeded" in lowered
+        or "tokens per minute" in lowered
+        or "tokens per day" in lowered
+        or "currently over capacity" in lowered
+        or "apiconnectionerror" in lowered
+        or "apitimeouterror" in lowered
+        or "transient http" in lowered
+    )
+
+
+def _retry_delay(exc: TransientImageExtractionError, attempt: int) -> float:
+    return retry_delay(
+        attempt=attempt,
+        base_seconds=settings.image_retry_base_seconds,
+        max_delay_seconds=settings.image_retry_max_delay_seconds,
+        provider_margin_seconds=settings.image_retry_provider_margin_seconds,
+        provider_delay_seconds=(
+            exc.retry_after_seconds
+            if exc.retry_after_seconds is not None
+            else _retry_after_from_text(str(exc))
+        ),
+    )
 
 
 def _raise_for_status(response: requests.Response, operation: str) -> None:
     if response.status_code in TRANSIENT_HTTP_STATUSES:
         raise TransientImageExtractionError(
-            f"{operation} returned transient HTTP {response.status_code}"
+            f"{operation} returned transient HTTP {response.status_code}",
+            retry_after_seconds=_retry_after_seconds(
+                requests.HTTPError(response=response)
+            ),
         )
     response.raise_for_status()
 
@@ -224,7 +286,8 @@ def extract_image_message(
             in {"APIConnectionError", "APITimeoutError", "RateLimitError"}
         ):
             raise TransientImageExtractionError(
-                f"Groq vision request failed: {exc}"
+                f"Groq vision request failed: {exc}",
+                retry_after_seconds=_retry_after_seconds(exc),
             ) from exc
         else:
             raise exc
@@ -246,40 +309,70 @@ class ImageExtractionWorker:
         self.redis = redis_client
         self.queue = "image_extraction_queue"
         self.dead_letter = "image_extraction_dead_letter"
-        self.max_retries = settings.max_retry_attempts
+        self.rate_limited_until = 0.0
 
     async def process_job(self, job: dict[str, Any]) -> None:
         message_id = job.get("message_id")
         if not isinstance(message_id, str) or not message_id:
             raise ValueError("Image job missing message_id")
-        await set_image_extraction_status(
+        lease = await set_image_extraction_status(
             message_id, "processing", increment_attempt=True
         )
+        if lease is None:
+            logger.info(
+                "Skipping duplicate or stale image job: message_id=%s",
+                message_id,
+            )
+            return
+        await self._remove_matching_queue_items(message_id)
         try:
             text = await asyncio.to_thread(extract_image_message, message_id)
         except Exception as exc:
             attempt = int(job.get("attempt", 0)) + 1
             transient = isinstance(exc, TransientImageExtractionError)
-            if transient and attempt < self.max_retries:
-                delay = min(2**attempt, 60)
-                job.update(attempt=attempt, not_before=time.time() + delay)
-                await set_image_extraction_status(
-                    message_id, "pending", error_message=str(exc)
+            if transient:
+                delay = _retry_delay(exc, attempt)
+                retry_at = time.time() + delay
+                self.rate_limited_until = max(
+                    self.rate_limited_until, retry_at
                 )
-                await self.redis.rpush(self.queue, json.dumps(job))
+                job.update(attempt=attempt, not_before=retry_at)
+                transitioned = await set_image_extraction_status(
+                    message_id,
+                    "pending",
+                    error_message=str(exc),
+                    next_attempt_at=datetime.fromtimestamp(
+                        retry_at, tz=timezone.utc
+                    ),
+                    expected_updated_at=lease,
+                )
+                if transitioned is None:
+                    logger.info(
+                        "Discarding stale image retry result: message_id=%s",
+                        message_id,
+                    )
+                    return
                 logger.warning(
                     "Image extraction retry scheduled: message_id=%s "
-                    "attempt=%s delay=%ss error=%s",
+                    "attempt=%s delay=%.3fs provider_retry_after=%s error=%s",
                     message_id,
                     attempt,
                     delay,
+                    exc.retry_after_seconds,
                     exc,
                 )
                 return
-            await set_image_extraction_status(
-                message_id, "failed", error_message=str(exc)
+            transitioned = await set_image_extraction_status(
+                message_id,
+                "failed",
+                error_message=str(exc),
+                expected_updated_at=lease,
             )
-            await self.redis.rpush(self.dead_letter, json.dumps(job))
+            if transitioned is not None:
+                await self.redis.rpush(
+                    self.dead_letter,
+                    json.dumps({**job, "attempt": attempt}),
+                )
             logger.exception(
                 "Image extraction failed: message_id=%s attempt=%s",
                 message_id,
@@ -287,13 +380,196 @@ class ImageExtractionWorker:
             )
             return
 
-        await set_image_extraction_status(message_id, "completed", text=text)
+        transitioned = await set_image_extraction_status(
+            message_id,
+            "completed",
+            text=text,
+            expected_updated_at=lease,
+        )
+        if transitioned is None:
+            logger.info(
+                "Discarding stale image completion: message_id=%s",
+                message_id,
+            )
+            return
+        removed = await self._remove_matching_dead_letters(message_id)
+        if removed:
+            logger.info(
+                "Removed stale image dead letters after success: "
+                "message_id=%s count=%s",
+                message_id,
+                removed,
+            )
         logger.info("Image extraction completed: message_id=%s", message_id)
+
+    async def _remove_matching_dead_letters(self, message_id: str) -> int:
+        removed = 0
+        raw_items = await self.redis.lrange(self.dead_letter, 0, -1)
+        for raw in dict.fromkeys(raw_items):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                job = cast(dict[str, Any], parsed)
+                if job.get("message_id") == message_id:
+                    removed += await self.redis.lrem(self.dead_letter, 0, raw)
+        return removed
+
+    async def _remove_matching_queue_items(self, message_id: str) -> int:
+        removed = 0
+        raw_items = await self.redis.lrange(self.queue, 0, -1)
+        for raw in dict.fromkeys(raw_items):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                queued_job = cast(dict[str, Any], parsed)
+                if queued_job.get("message_id") == message_id:
+                    removed += await self.redis.lrem(self.queue, 0, raw)
+        if removed:
+            logger.info(
+                "Removed duplicate image queue items: message_id=%s count=%s",
+                message_id,
+                removed,
+            )
+        return removed
+
+    async def recover_transient_dead_letters(self) -> int:
+        """Republish legacy transient failures without deleting their safety copy."""
+        raw_items = await self.redis.lrange(self.dead_letter, 0, -1)
+        jobs_by_message: dict[str, tuple[str, dict[str, Any]]] = {}
+        for raw in raw_items:
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            job = cast(dict[str, Any], parsed)
+            message_id = job.get("message_id")
+            if isinstance(message_id, str) and message_id:
+                jobs_by_message.setdefault(message_id, (raw, job))
+
+        published = 0
+        for message_id, (_raw, job) in jobs_by_message.items():
+            row = await get_image_extraction(message_id)
+            if row is None:
+                continue
+            if row["status"] == "completed":
+                await self._remove_matching_dead_letters(message_id)
+                continue
+            error_message = row.get("error_message")
+            if row["status"] != "failed" or not _is_transient_failure_text(
+                error_message if isinstance(error_message, str) else None
+            ):
+                continue
+            reserved = await reserve_image_extraction(
+                message_id,
+                row.get("conversation_id"),
+                str(row.get("model") or settings.image_vision_model),
+            )
+            if not reserved:
+                continue
+            attempt = max(int(job.get("attempt", 0)), 0)
+            retry_error = TransientImageExtractionError(
+                "legacy transient image dead letter",
+                # A stored provider delay is relative to the original failure
+                # and is stale by the time the reconciler sees it.
+                retry_after_seconds=0.0,
+            )
+            delay = _retry_delay(retry_error, attempt + 1)
+            retry_at = time.time() + delay
+            scheduled_at = datetime.fromtimestamp(
+                retry_at, tz=timezone.utc
+            )
+            transitioned = await set_image_extraction_status(
+                message_id,
+                "pending",
+                error_message=str(retry_error),
+                next_attempt_at=scheduled_at,
+                expected_statuses=("pending",),
+            )
+            if transitioned is None:
+                continue
+            published += 1
+            logger.warning(
+                "Recovered transient image dead letter: message_id=%s "
+                "attempt=%s delay=%.3fs",
+                message_id,
+                attempt,
+                delay,
+            )
+        return published
+
+    async def recover_stale_jobs(self) -> int:
+        rows = await recover_stale_image_extractions(
+            lease_seconds=settings.content_recovery_lease_seconds,
+            batch_size=settings.content_recovery_batch_size,
+        )
+        queued_message_ids: set[str] = set()
+        for raw in await self.redis.lrange(self.queue, 0, -1):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                queued_job = cast(dict[str, Any], parsed)
+                queued_id = queued_job.get("message_id")
+                if isinstance(queued_id, str) and queued_id:
+                    queued_message_ids.add(queued_id)
+        published = 0
+        for row in rows:
+            message_id = str(row["message_id"])
+            if message_id in queued_message_ids:
+                logger.debug(
+                    "Image publication already present in Redis: message_id=%s",
+                    message_id,
+                )
+                continue
+            attempt_count = int(row["attempt_count"])
+            job = {
+                "message_id": message_id,
+                "conversation_id": row["conversation_id"],
+                "attempt": max(attempt_count, 0),
+            }
+            try:
+                await self.redis.rpush(self.queue, json.dumps(job))
+            except Exception as exc:
+                await release_image_publication(
+                    message_id,
+                    f"recovery queue publish failed: {exc}",
+                )
+                raise
+            published += 1
+            queued_message_ids.add(message_id)
+        if published:
+            logger.warning("Recovered stale image jobs: count=%s", published)
+        return published
 
     async def process(self) -> None:
         logger.info("Image extraction worker started")
+        next_recovery_at = 0.0
+        next_dead_letter_recovery_at = 0.0
         while True:
             try:
+                rate_limit_remaining = self.rate_limited_until - time.time()
+                if rate_limit_remaining > 0:
+                    await asyncio.sleep(min(rate_limit_remaining, 1.0))
+                    continue
+                if time.monotonic() >= next_dead_letter_recovery_at:
+                    await self.recover_transient_dead_letters()
+                    next_dead_letter_recovery_at = (
+                        time.monotonic()
+                        + settings.image_dead_letter_recovery_interval_seconds
+                    )
+                if time.monotonic() >= next_recovery_at:
+                    await self.recover_stale_jobs()
+                    next_recovery_at = (
+                        time.monotonic()
+                        + settings.content_reconcile_interval_seconds
+                    )
                 raw = await self.redis.lpop(self.queue)
                 if not raw:
                     await asyncio.sleep(1)

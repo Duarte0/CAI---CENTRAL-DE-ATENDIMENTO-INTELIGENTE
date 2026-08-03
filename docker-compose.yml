@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.14-alpine
     ports:
       - "5432:5432"
     environment:
@@ -41,7 +41,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: alembic upgrade head
+    command: alembic upgrade ${ALEMBIC_TARGET_REVISION:-head}
     restart: "no"
 
   api:
@@ -157,9 +157,15 @@ services:
       context: .
       dockerfile: Dockerfile
       target: ralph
+    group_add:
+      # Resolve at launch with:
+      # DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock) docker compose up -d --build --no-deps ralph
+      # The root fallback keeps read-only Compose commands usable before launch.
+      - "${DOCKER_SOCKET_GID:-0}"
     volumes:
       - .:/app
       - codex_auth:/root/.codex
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}

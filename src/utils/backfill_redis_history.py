@@ -69,6 +69,9 @@ async def backfill(dry_run: bool = False) -> tuple[int, int, int]:
                     model=settings.model_name,
                     processing_time_ms=0,
                     prompt_version=LEGACY_PROMPT_VERSION,
+                    idempotency_key=(
+                        f"legacy-redis:{conversation_id}:{created_at}"
+                    ),
                 )
             inserted += 1
     finally:

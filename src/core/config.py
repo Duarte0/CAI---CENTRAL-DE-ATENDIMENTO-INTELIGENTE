@@ -1,7 +1,7 @@
 # src/core/config.py
 from typing import Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     database_pool_min_size: int = 1
     database_pool_max_size: int = 10
     database_pool_timeout_seconds: float = 10.0
+    database_statement_timeout_ms: int = 15_000
+    database_lock_timeout_ms: int = 3_000
+    database_idle_transaction_timeout_ms: int = 30_000
 
     # Application
     debug: bool = False
@@ -53,12 +56,34 @@ class Settings(BaseSettings):
     image_max_bytes: int = 4 * 1024 * 1024
     image_download_timeout_seconds: int = 30
     image_extraction_timeout_seconds: int = 60
+    image_retry_base_seconds: float = 2.0
+    image_retry_max_delay_seconds: float = 15 * 60
+    image_retry_provider_margin_seconds: float = 1.0
+    image_dead_letter_recovery_interval_seconds: float = 60.0
+    ia_retry_base_seconds: float = 2.0
+    ia_retry_max_delay_seconds: float = 15 * 60
+    ia_retry_provider_margin_seconds: float = 1.0
     content_extraction_wait_seconds: float = 30.0
     content_extraction_poll_seconds: float = 0.5
+    content_recovery_lease_seconds: int = 300
+    content_recovery_batch_size: int = 100
+    content_reconcile_interval_seconds: float = 5.0
     digisac_directory_timeout_seconds: int = 15
     digisac_directory_max_retries: int = 3
     digisac_directory_sync_interval_seconds: int = 60 * 60 * 24
     digisac_directory_refresh_cooldown_seconds: int = 60 * 15
+    digisac_history_finalization_enabled: bool = False
+    digisac_history_initial_delay_seconds: float = 2.0
+    digisac_history_request_timeout_seconds: float = 15.0
+    digisac_history_max_attempts: int = 3
+    digisac_history_retry_base_seconds: float = 2.0
+    finalization_reconcile_interval_seconds: float = 5.0
+    finalization_lease_seconds: int = 300
+    media_status_recheck_seconds: float = 30.0
+    quoted_message_max_chars: int = 240
+    ia_context_safe_input_tokens: int = 96_000
+    ia_context_chunk_tokens: int = 12_000
+    ia_context_summary_output_tokens: int = 1_200
 
     # Monitoring
     prometheus_port: int = 9090
@@ -78,6 +103,50 @@ class Settings(BaseSettings):
         if isinstance(value, str) and value.lower() in {"release", "production"}:
             return False
         return value
+
+    @field_validator(
+        "digisac_history_initial_delay_seconds",
+        "digisac_history_request_timeout_seconds",
+        "digisac_history_retry_base_seconds",
+        "finalization_reconcile_interval_seconds",
+        "media_status_recheck_seconds",
+        "image_retry_base_seconds",
+        "image_retry_max_delay_seconds",
+        "image_retry_provider_margin_seconds",
+        "image_dead_letter_recovery_interval_seconds",
+        "ia_retry_base_seconds",
+        "ia_retry_max_delay_seconds",
+        "ia_retry_provider_margin_seconds",
+        "content_reconcile_interval_seconds",
+    )
+    @classmethod
+    def positive_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("duration settings must be positive")
+        return value
+
+    @field_validator(
+        "digisac_history_max_attempts",
+        "finalization_lease_seconds",
+        "quoted_message_max_chars",
+        "ia_context_safe_input_tokens",
+        "ia_context_chunk_tokens",
+        "ia_context_summary_output_tokens",
+    )
+    @classmethod
+    def positive_integer(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("limit settings must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def validate_context_limits(self) -> "Settings":
+        if self.ia_context_chunk_tokens >= self.ia_context_safe_input_tokens:
+            raise ValueError(
+                "IA_CONTEXT_CHUNK_TOKENS must be below "
+                "IA_CONTEXT_SAFE_INPUT_TOKENS"
+            )
+        return self
 
 
 settings = Settings()

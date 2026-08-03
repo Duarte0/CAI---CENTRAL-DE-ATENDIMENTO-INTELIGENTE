@@ -10,7 +10,6 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from typing import Any, Mapping
 
 import psycopg
@@ -101,7 +100,9 @@ def backfill(database_url: str, *, apply: bool = False) -> BackfillReport:
     departments = _fetch_directory("departments")
     users = _fetch_directory("users")
     report = BackfillReport()
-    with psycopg.connect(database_url) as connection:
+    # Read and close before any HTTP call so a slow DigiSac scan cannot leave an
+    # idle PostgreSQL transaction holding an old snapshot.
+    with psycopg.connect(database_url, autocommit=True) as connection:
         rows = connection.execute(
             """
             SELECT conversation_id,
@@ -112,40 +113,43 @@ def backfill(database_url: str, *, apply: bool = False) -> BackfillReport:
             ORDER BY conversation_id
             """
         ).fetchall()
-        updates: list[tuple[str | None, str | None, str]] = []
-        for row in rows:
-            report.scanned += 1
-            if row[1] and row[2]:
-                report.unchanged += 1
-                continue
-            conversation_id = row[0]
-            try:
-                ticket = _get_json(
-                    f"{settings.digisac_api_base_url.rstrip('/')}/tickets/"
-                    f"{conversation_id}"
-                )
-            except LookupError:
-                report.not_found += 1
-                continue
-            except Exception:
-                logger.exception(
-                    "Failed to fetch DigiSac ticket %s", conversation_id
-                )
-                report.errors += 1
-                continue
-            department = departments.get(ticket.get("departmentId"))
-            agent = users.get(ticket.get("userId"))
-            needs_department = not row[1]
-            needs_agent = not row[2]
-            can_update = (needs_department and department) or (needs_agent and agent)
-            if (needs_department and not department) or (needs_agent and not agent):
-                report.unresolved += 1
-            if not can_update:
-                continue
-            updates.append((department, agent, conversation_id))
-            report.would_update += 1
+    updates: list[tuple[str | None, str | None, str]] = []
+    for row in rows:
+        report.scanned += 1
+        if row[1] and row[2]:
+            report.unchanged += 1
+            continue
+        conversation_id = row[0]
+        try:
+            ticket = _get_json(
+                f"{settings.digisac_api_base_url.rstrip('/')}/tickets/"
+                f"{conversation_id}"
+            )
+        except LookupError:
+            report.not_found += 1
+            continue
+        except Exception:
+            logger.exception(
+                "Failed to fetch DigiSac ticket %s", conversation_id
+            )
+            report.errors += 1
+            continue
+        department = departments.get(ticket.get("departmentId"))
+        agent = users.get(ticket.get("userId"))
+        needs_department = not row[1]
+        needs_agent = not row[2]
+        can_update = (needs_department and department) or (needs_agent and agent)
+        if (needs_department and not department) or (needs_agent and not agent):
+            report.unresolved += 1
+        if not can_update:
+            continue
+        updates.append((department, agent, conversation_id))
+        report.would_update += 1
 
-        if apply and updates:
+    if apply and updates:
+        with psycopg.connect(database_url) as connection:
+            connection.execute("SET LOCAL statement_timeout = '30s'")
+            connection.execute("SET LOCAL lock_timeout = '3s'")
             with connection.transaction():
                 for department, agent, conversation_id in updates:
                     cursor = connection.execute(

@@ -378,9 +378,18 @@ class IAAnalysisResult(BaseModel):
 
 
 class ProcessingStatus(str, Enum):
+    OPEN = "open"
     PENDING = "pending"
     PROCESSING = "processing"
+    RECOVERING_MESSAGES = "recovering_messages"
+    WAITING_MEDIA = "waiting_media"
+    MEDIA_BLOCKED = "media_blocked"
+    BUILDING_CONTEXT = "building_context"
+    SUMMARIZING = "summarizing"
+    CLASSIFYING = "classifying"
     COMPLETED = "completed"
+    COMPLETED_WITH_WARNINGS = "completed_with_warnings"
+    RETRYABLE_FAILURE = "retryable_failure"
     FAILED = "failed"
 
 
@@ -388,6 +397,7 @@ class ConversationProcessing(BaseModel):
     """Status do processamento de uma conversa"""
 
     conversation_id: str
+    cycle_id: Optional[str] = None
     status: ProcessingStatus = ProcessingStatus.PENDING
     started_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc))
@@ -395,4 +405,5 @@ class ConversationProcessing(BaseModel):
     error_message: Optional[str] = None
     result: Optional[IAAnalysisResult] = None
     retry_count: int = 0
+    transient_retry_count: int = 0
     max_retries: int = 3

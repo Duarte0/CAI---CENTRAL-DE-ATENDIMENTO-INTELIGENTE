@@ -66,11 +66,22 @@ Principais variáveis:
 | `TICKET_BUFFER_TTL_SECONDS` | Retenção do contexto de um ticket ainda aberto. | `2592000` (30 dias) |
 | `IA_TIMEOUT_SECONDS` | Tempo máximo de uma chamada à IA. | `60` |
 | `MAX_RETRY_ATTEMPTS` | Número de novas tentativas após falha da IA. | `3` |
+| `IA_RETRY_BASE_SECONDS` | Backoff inicial de falhas transitórias da Groq na classificação. | `2` |
+| `IA_RETRY_MAX_DELAY_SECONDS` | Teto do backoff local da IA; `Retry-After` maior prevalece. | `900` |
+| `IA_RETRY_PROVIDER_MARGIN_SECONDS` | Margem sobre o prazo informado pela Groq. | `1` |
 | `MODEL_NAME` | Modelo utilizado pela análise de IA via Groq. | `openai/gpt-oss-120b` |
 | `AUDIO_TRANSCRIPTION_MODEL` | Modelo utilizado para transcrever áudios. | `whisper-large-v3-turbo` |
 | `IMAGE_VISION_MODEL` | Modelo multimodal usado para texto/resumo de imagens. | `qwen/qwen3.6-27b` |
 | `IMAGE_VISION_MAX_COMPLETION_TOKENS` | Limite inicial de saída da API multimodal, mantendo margem no TPM. | `5000` |
 | `IMAGE_MAX_BYTES` | Tamanho máximo de imagem baixada para processamento. | `4194304` |
+| `IMAGE_RETRY_BASE_SECONDS` | Backoff inicial para falhas transitórias da extração de imagem. | `2` |
+| `IMAGE_RETRY_MAX_DELAY_SECONDS` | Teto do backoff local; um `Retry-After` maior do provedor continua sendo respeitado. | `900` |
+| `IMAGE_RETRY_PROVIDER_MARGIN_SECONDS` | Margem adicionada ao prazo de retry informado pelo provedor. | `1` |
+| `IMAGE_DEAD_LETTER_RECOVERY_INTERVAL_SECONDS` | Intervalo de reconciliação automática de dead-letters transitórias antigas. | `60` |
+| `CONTENT_RECOVERY_LEASE_SECONDS` | Lease após o qual mídia pendente/em processamento pode ser republicada. | `300` |
+| `CONTENT_RECONCILE_INTERVAL_SECONDS` | Intervalo para publicar mídias cujo retry persistido venceu. | `5` |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | Timeout por statement nas conexões da aplicação. | `15000` |
+| `DATABASE_LOCK_TIMEOUT_MS` | Tempo máximo aguardando lock nas conexões da aplicação. | `3000` |
 | `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por áudio/imagem antes da classificação. | `30` |
 | `DIGISAC_DIRECTORY_SYNC_INTERVAL_SECONDS` | Intervalo da sincronização de departamentos e usuários. | `86400` |
 | `DIGISAC_DIRECTORY_REFRESH_COOLDOWN_SECONDS` | Intervalo mínimo entre refreshes sob demanda por IDs desconhecidos. | `900` |
@@ -194,11 +205,10 @@ assinatura, retries, fila de falhas e recuperação de itens em processamento.
 Os testes de persistência usam PostgreSQL real:
 
 ```bash
-docker compose up -d postgres
-docker compose exec postgres createdb -U "$POSTGRES_USER" cai_test
-export DATABASE_URL="postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/cai_test"
-alembic upgrade head
+docker compose -f docker-compose.test.yml up -d --wait
+export DATABASE_URL="postgresql://cai_test:cai_test@localhost:5433/cai_test"
 CAI_TEST_DATABASE_URL="$DATABASE_URL" pytest -q --ignore=tests/test_webhook_local.py
+docker compose -f docker-compose.test.yml down
 ```
 
 Em um ambiente Compose, o serviço `migrate` aplica o schema antes dos serviços
@@ -243,6 +253,77 @@ altera tabelas automaticamente:
 ```bash
 DATABASE_URL="$DATABASE_URL" alembic upgrade head
 ```
+
+Para bancos existentes, a evolução de identidade pública é deliberadamente
+dividida. Não execute `upgrade head` diretamente antes dos backfills:
+
+```bash
+# 1. Migrations expansivas, FK ainda não validada e índices online.
+DATABASE_URL="$DATABASE_URL" alembic upgrade 0009_recovery_indexes
+
+# 2. Implante esta versão da API e dos workers, confirme nos logs que todos
+#    reconheceram identity=true/idempotency=true/normalized_messages=true.
+
+# 3. Inspeção somente leitura e backfills reiniciáveis.
+python -m src.utils.audit_postgres --database-url "$DATABASE_URL"
+python -m src.utils.backfill_classification_public_ids \
+  --database-url "$DATABASE_URL"
+python -m src.utils.backfill_classification_messages \
+  --database-url "$DATABASE_URL"
+python -m src.utils.backfill_classification_public_ids \
+  --database-url "$DATABASE_URL" --apply
+python -m src.utils.backfill_classification_messages \
+  --database-url "$DATABASE_URL" --apply
+
+# 4. Repita os dry-runs; ambos devem indicar zero pendências.
+python -m src.utils.backfill_classification_public_ids \
+  --database-url "$DATABASE_URL"
+python -m src.utils.backfill_classification_messages \
+  --database-url "$DATABASE_URL"
+
+# 5. Somente então finalize NOT NULL/UNIQUE e valide a FK.
+DATABASE_URL="$DATABASE_URL" alembic upgrade head
+```
+
+Durante a primeira fase, mantenha
+O Compose aplica `ALEMBIC_TARGET_REVISION=head` por padrão. Em instalações
+anteriores que ainda fixam `0009_recovery_indexes`, conclua os backfills
+documentados antes de remover o pin. O `public_id` é UUIDv7 e aparece de
+forma aditiva como `classification_public_id` nos novos resultados do Redis e
+no endpoint de resultado; o `id BIGINT` interno permanece inalterado.
+
+Rollback da fase expansiva:
+
+```bash
+DATABASE_URL="$DATABASE_URL" alembic downgrade 0001_initial
+```
+
+O downgrade de `0007_class_messages` recusa remover a tabela quando
+ela contém dados. Isso é intencional: volte a aplicação para a versão
+compatível e preserve o schema expandido até definir uma reversão de dados.
+Após `public_id` ser finalizado, o downgrade para `0010_public_id_check`
+remove apenas a obrigatoriedade, preservando os UUIDs existentes.
+Da mesma forma, `0005_class_identity` não remove colunas de identidade
+preenchidas; exporte e planeje essa contração explicitamente.
+Como `CREATE/DROP INDEX CONCURRENTLY` exige blocos autocommit, um downgrade
+recusado pode já ter parado numa revision intermediária segura. Consulte
+`alembic current`, confirme que os dados protegidos permanecem presentes e
+execute `alembic upgrade head` para restaurar a expansão; não tente forçar a
+remoção das proteções.
+
+### Retenção e manutenção
+
+Nenhuma exclusão automática foi ativada. Classificações, snapshots de
+departamento/agente, extrações e histórico de atribuições permanecem registros
+de auditoria. A FK de `ticket_assignment_history.event_key` usa `RESTRICT`, de
+modo que uma limpeza futura das chaves de idempotência deve excluir somente
+chaves sem histórico e após uma janela de retenção aprovada.
+
+Use `python -m src.utils.audit_postgres` periodicamente para acompanhar tamanho,
+tuplas mortas, scans e uso de índices. Configure alertas para crescimento,
+sessões `idle in transaction`, falhas de autovacuum e constraints não
+validadas. Antes de criar TTL ou arquivamento, defina por tabela a retenção
+mínima legal/operacional; o projeto deliberadamente não assume esse prazo.
 
 Para localizar casos com baixa confiança:
 
@@ -306,3 +387,97 @@ anterior do código (ou imagem) que ainda contém o adaptador SQLite, apontando
 nesse ambiente. Esta versão PostgreSQL não reativa SQLite. Dados gravados
 somente no PostgreSQL após o cutover não são sincronizados automaticamente de
 volta para SQLite; o rollback é temporário e não constitui dual-write.
+
+## Finalização pelo histórico da DigiSac
+
+As revisions `0013_conversation_cycles` e `0014_retry_scheduling` introduzem
+ciclos persistentes e agendamento durável de retries. Com
+`DIGISAC_HISTORY_FINALIZATION_ENABLED=true`, webhooks de texto deixam de
+alimentar `buffer:{conversation_id}`; áudio e imagem continuam sendo
+reservados antecipadamente nas tabelas e filas existentes. No fechamento, a
+API persiste o ciclo antes de publicar o job.
+
+O worker move o job de `ia_queue` para `ia_processing` com `LMOVE`, adquire um
+lease no PostgreSQL, recupera todas as páginas de
+`GET /api/v1/messages?where[ticketId]=...`, deduplica e ordena o histórico,
+reconcilia mídias por `message_id` e persiste snapshot e contextos. Mídia em
+`pending`/`processing` agenda a retomada no `next_attempt_at` persistido.
+Imagem com falha terminal move o ciclo para `media_blocked`, sem classificar
+contexto incompleto; o ciclo volta automaticamente quando a imagem é
+reprocessada. Falha terminal de áudio continua gerando marcador e
+`completed_with_warnings`. O reconciliador usa claims PostgreSQL para impedir
+republicações concorrentes entre PostgreSQL e Redis.
+
+Reaberturas criam uma nova sequência. A unicidade do evento e a chave de
+classificação `ia:cycle:{cycle_id}` tornam o fechamento e a classificação
+idempotentes, enquanto `conversation_cycle_messages.message_id` impede que uma
+mensagem seja atribuída a dois ciclos. Se não houver abertura observada, o
+início é inferido do ticket, da classificação anterior ou da primeira mensagem
+disponível; a estratégia fica registrada no snapshot.
+
+Contextos acima de `IA_CONTEXT_SAFE_INPUT_TOKENS` são divididos sem cortar
+mensagens sempre que possível. Cada bloco é resumido, com seu intervalo de IDs
+persistido, e somente o contexto reduzido é enviado à classificação final.
+URLs de mídia, tokens e binários não são persistidos.
+
+Endpoints compatíveis retornam o ciclo mais recente:
+
+- `GET /ia/status/{conversation_id}`
+- `GET /ia/result/{conversation_id}`
+
+Os endpoints de auditoria são:
+
+- `GET /conversations/{conversation_id}/cycles`
+- `GET /cycles/{cycle_id}/status`
+- `GET /cycles/{cycle_id}/result`
+
+### Configuração e rollout
+
+As variáveis do novo fluxo são:
+
+```dotenv
+DIGISAC_HISTORY_FINALIZATION_ENABLED=false
+DIGISAC_HISTORY_INITIAL_DELAY_SECONDS=2
+DIGISAC_HISTORY_REQUEST_TIMEOUT_SECONDS=15
+DIGISAC_HISTORY_MAX_ATTEMPTS=3
+DIGISAC_HISTORY_RETRY_BASE_SECONDS=2
+FINALIZATION_RECONCILE_INTERVAL_SECONDS=5
+FINALIZATION_LEASE_SECONDS=300
+MEDIA_STATUS_RECHECK_SECONDS=30
+CONTENT_RECONCILE_INTERVAL_SECONDS=5
+IA_RETRY_BASE_SECONDS=2
+IA_RETRY_MAX_DELAY_SECONDS=900
+IA_RETRY_PROVIDER_MARGIN_SECONDS=1
+QUOTED_MESSAGE_MAX_CHARS=240
+IA_CONTEXT_SAFE_INPUT_TOKENS=96000
+IA_CONTEXT_CHUNK_TOKENS=12000
+IA_CONTEXT_SUMMARY_OUTPUT_TOKENS=1200
+```
+
+Faça o rollout sem janela de perda:
+
+```bash
+docker compose build
+docker compose up -d postgres redis
+docker compose run --rm migrate alembic upgrade head
+docker compose up -d api audio_worker image_worker ia_worker
+```
+
+Mantenha o flag em `false` durante a migration e a atualização de todos os
+containers. Depois de validar acesso e paginação da DigiSac, altere-o para
+`true` e recrie API e `ia_worker`:
+
+```bash
+docker compose up -d --force-recreate api ia_worker
+docker compose ps
+docker compose logs --tail=200 api ia_worker audio_worker image_worker
+```
+
+O downgrade é permitido somente enquanto não houver ciclos persistidos:
+
+```bash
+docker compose run --rm migrate alembic downgrade 0012_validate_event_fk
+```
+
+Depois da ativação, rollback de aplicação deve preservar a tabela de auditoria;
+não force o downgrade com ciclos existentes.
