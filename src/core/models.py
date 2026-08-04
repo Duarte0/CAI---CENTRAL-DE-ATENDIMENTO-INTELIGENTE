@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from src.core.message_filter import is_bot_message
+from src.core.media import is_image_message
 
 
 class MessageEventType(str, Enum):
@@ -291,7 +292,9 @@ class MessageBuffer(BaseModel):
         return [
             str(message_id)
             for message in self.messages
-            if message.get("message_type", "chat") == "image"
+            if is_image_message(
+                message.get("message_type", "chat"), message.get("file")
+            )
             and (message_id := message.get("id", message.get("message_id")))
             not in (None, "")
         ]
@@ -314,7 +317,13 @@ def format_message_for_context(
     text = raw_text.strip() if isinstance(raw_text, str) else ""
 
     lines = [f"{role}: {text}"] if text else []
-    if message_type == "document":
+    if is_image_message(message_type, message.get("file")):
+        extracted_text = image_extraction.strip() if image_extraction else ""
+        if extracted_text:
+            lines.append(f"{role}: [imagem] {extracted_text}")
+        else:
+            lines.append(f"{role}: enviou uma imagem.")
+    elif message_type == "document":
         raw_file = message.get("file")
         file_data = (
             cast(Dict[str, Any], raw_file)
@@ -332,12 +341,6 @@ def format_message_for_context(
             lines.append(f"{role}: [áudio transcrito] {transcript_text}")
         else:
             lines.append(f"{role}: enviou um áudio.")
-    elif message_type == "image":
-        extracted_text = image_extraction.strip() if image_extraction else ""
-        if extracted_text:
-            lines.append(f"{role}: [imagem] {extracted_text}")
-        else:
-            lines.append(f"{role}: enviou uma imagem.")
     elif message_type != "chat":
         return None
 

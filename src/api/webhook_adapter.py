@@ -6,6 +6,8 @@ from typing import Any, Mapping, Optional, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.core.media import effective_message_type
+
 SUPPORTED_MESSAGE_TYPES = {"chat", "document",
                            "ptt", "audio", "voice", "image"}
 AUDIO_MESSAGE_TYPES = {"ptt", "audio", "voice"}
@@ -123,7 +125,7 @@ class DigisacWebhookAdapter:
                 ticketId=conversation_id,
                 id=cls._as_non_empty_string(data.get("id")),
                 text=content,
-                type=message_type,
+                type=effective_message_type(message_type, normalized_file),
                 file=normalized_file,
                 contactId=cls._as_non_empty_string(data.get("contactId")),
                 isFromMe=is_from_me,

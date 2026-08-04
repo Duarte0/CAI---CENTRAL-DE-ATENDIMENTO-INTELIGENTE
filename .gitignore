@@ -24,6 +24,7 @@ tests/*
 !tests/conftest.py
 !tests/test_identifiers.py
 !tests/test_postgres_evolution.py
+!tests/test_media_detection.py
 
 # ---------- Variáveis de ambiente / segredos ----------
 .env

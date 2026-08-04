@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from src.api.middleware import verify_webhook_signature
 from src.api.webhook_adapter import DigisacMessage, DigisacWebhookAdapter
-from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES, IMAGE_MESSAGE_TYPES
+from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES
 from src.core.config import settings
 from src.core.analysis import normalize_protocol, with_protocol
 from src.core.db import (
@@ -38,6 +38,7 @@ from src.core.db import (
 )
 from src.core.digisac_directory import directory_sync_loop
 from src.core.message_filter import is_bot_message
+from src.core.media import is_image_message
 from src.core.models import ConversationProcessing, WebhookPayload
 from src.core.redis_client import AsyncRedis, create_redis_client
 from src.utils.idempotency import IdempotencyService
@@ -395,7 +396,7 @@ async def enqueue_image_extraction(
     redis: AsyncRedis, message: DigisacMessage
 ) -> bool:
     """Persist an idempotent reservation before publishing a vision job."""
-    if message.message_type not in IMAGE_MESSAGE_TYPES or not message.message_id:
+    if not is_image_message(message.message_type, message.file) or not message.message_id:
         return False
     reserved = await reserve_image_extraction(
         message.message_id,

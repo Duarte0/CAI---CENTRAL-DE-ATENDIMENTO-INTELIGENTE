@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from src.core.config import settings
 from src.core.message_filter import is_bot_message
+from src.core.media import effective_message_type, is_image_message
 
 
 DISPLAY_TIMEZONE = ZoneInfo("America/Sao_Paulo")
@@ -172,6 +173,7 @@ def normalize_history(
             continue
         is_from_me = raw.get("isFromMe") is True
         text = raw.get("text")
+        file_data = safe_file_metadata(raw.get("file"))
         normalized.append(
             {
                 "message_id": message_id,
@@ -181,7 +183,7 @@ def normalize_history(
                     raw.get("userId") if is_from_me else raw.get("contactId")
                 ),
                 "sender_name": None,
-                "type": message_type,
+                "type": effective_message_type(message_type, file_data),
                 "content": text.strip() if isinstance(text, str) else "",
                 "quoted_message_id": (
                     raw.get("quotedMessageId")
@@ -189,7 +191,7 @@ def normalize_history(
                     else None
                 ),
                 "media_status": None,
-                "file": safe_file_metadata(raw.get("file")),
+                "file": file_data,
             }
         )
     normalized.sort(key=lambda item: (item["timestamp"], item["message_id"]))
@@ -221,7 +223,9 @@ def apply_media_states(
         message = dict(original)
         message_id = str(message["message_id"])
         message_type = str(message["type"])
-        if message_type not in AUDIO_TYPES | {"image"}:
+        if message_type not in AUDIO_TYPES and not is_image_message(
+            message_type, message.get("file")
+        ):
             output.append(message)
             continue
         state = states.get(message_id)
@@ -241,7 +245,7 @@ def apply_media_states(
                 pending.add(message_id)
             elif (
                 status == "failed"
-                and message_type == "image"
+                and is_image_message(message_type, message.get("file"))
                 and attempts >= max_attempts
             ):
                 blocked.add(message_id)
@@ -320,7 +324,10 @@ def render_context(
                 else "mensagem citada indisponível"
             )
             quote_line = f"[EM RESPOSTA A: “{excerpt}”]\n"
-        if message_type == "document":
+        if is_image_message(message_type, message.get("file")):
+            label += " — IMAGEM ANALISADA"
+            text = text or f"[{role} ENVIOU UMA IMAGEM]"
+        elif message_type == "document":
             file_data = message.get("file")
             filename = (
                 file_data.get("name") or file_data.get("public_filename")
@@ -336,9 +343,6 @@ def render_context(
         elif message_type in AUDIO_TYPES:
             label += " — ÁUDIO TRANSCRITO"
             text = text or f"[{role} ENVIOU UM ÁUDIO]"
-        elif message_type == "image":
-            label += " — IMAGEM ANALISADA"
-            text = text or f"[{role} ENVIOU UMA IMAGEM]"
         if not text:
             continue
         blocks.append(

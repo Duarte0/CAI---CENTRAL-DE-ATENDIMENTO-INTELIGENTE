@@ -37,6 +37,7 @@ from src.core.db import (  # noqa: F401
 from src.core.digisac_client import DigisacClient, DigisacHistory
 from src.core.digisac_directory import sync_digisac_directories
 from src.core.models import MessageBuffer
+from src.core.media import is_image_message
 from src.core.finalization import (
     AUDIO_TYPES,
     apply_media_states,
@@ -480,7 +481,9 @@ class IAWorker:
         for message in messages:
             message_id = str(message["message_id"])
             message_type = str(message["type"])
-            if message_type not in AUDIO_TYPES | {"image"}:
+            if message_type not in AUDIO_TYPES and not is_image_message(
+                message_type, message.get("file")
+            ):
                 continue
             state = states.get(message_id)
             if state and (
@@ -696,7 +699,7 @@ class IAWorker:
         image_ids = [
             str(item["message_id"])
             for item in messages
-            if item.get("type") == "image"
+            if is_image_message(item.get("type"), item.get("file"))
         ]
         states = await get_content_states(audio_ids, image_ids)
         await self._ensure_media_jobs(conversation_id, messages, states)
