@@ -16,7 +16,6 @@ from src.workers import ia_worker
 def worker_without_init() -> ia_worker.IAWorker:
     worker = object.__new__(ia_worker.IAWorker)
     worker.queue = "ia_queue"
-    worker.processing_queue = "ia_processing"
     worker.dead_letter = "ia_dead_letter"
     worker.max_retries = 3
     worker.provider_blocked_until = 0.0
@@ -181,7 +180,6 @@ class QueueProbeRedis:
         self.worker = worker
         self.activate_during_lmove = activate_during_lmove
         self.lmove_calls = 0
-        self.processing = []
         self.queue = [
             json.dumps(
                 {
@@ -192,21 +190,14 @@ class QueueProbeRedis:
         ]
         self.requeued = asyncio.Event()
 
-    async def lmove(self, *args):
+    async def lpop(self, _name):
         self.lmove_calls += 1
         if not self.queue:
             return None
         item = self.queue.pop(0)
-        self.processing.append(item)
         if self.activate_during_lmove:
             self.worker.provider_blocked_until = time.time() + 60
         return item
-
-    async def lrem(self, name, count, item):
-        if item in self.processing:
-            self.processing.remove(item)
-            return 1
-        return 0
 
     async def rpush(self, name, item):
         self.queue.append(item)
@@ -246,7 +237,6 @@ async def test_active_provider_window_does_not_touch_queue_or_database(
 
     assert redis.lmove_calls == 0
     assert len(redis.queue) == 1
-    assert redis.processing == []
 
 
 @pytest.mark.asyncio
@@ -272,7 +262,6 @@ async def test_provider_window_is_checked_again_before_claim(monkeypatch):
 
     assert redis.lmove_calls == 1
     assert len(redis.queue) == 1
-    assert redis.processing == []
 
 
 @pytest.mark.asyncio
@@ -331,7 +320,6 @@ async def test_restart_during_provider_window_preserves_cycle_once(monkeypatch):
         await blocked_task
 
     assert len(redis.queue) == 1
-    assert redis.processing == []
 
     restarted_worker = worker_without_init()
     restarted_worker.redis = redis
@@ -360,7 +348,6 @@ async def test_restart_during_provider_window_preserves_cycle_once(monkeypatch):
         await restarted_task
 
     assert redis.queue == []
-    assert redis.processing == []
 
 
 def test_media_check_uses_real_future_schedule(monkeypatch):

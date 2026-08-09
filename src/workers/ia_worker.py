@@ -10,18 +10,15 @@ from typing import Any, Dict, cast
 from groq import Groq
 
 from src.core.config import settings
-from src.core.analysis import normalize_protocol, with_protocol
+from src.core.analysis import with_protocol
 from src.core.db import (  # noqa: F401
     close_database,
-    get_completed_image_extractions,
-    get_completed_transcriptions,
     get_pending_content_extractions,
     get_content_states,
     get_previous_cycle,
     get_recoverable_cycles,
     initialize_database,
     insert_classification,
-    ticket_has_classification as _ticket_has_classification,
     claim_cycle,
     reserve_image_extraction,
     reserve_transcription,
@@ -36,7 +33,6 @@ from src.core.db import (  # noqa: F401
 )
 from src.core.digisac_client import DigisacClient, DigisacHistory
 from src.core.digisac_directory import sync_digisac_directories
-from src.core.models import MessageBuffer
 from src.core.media import is_image_message
 from src.core.finalization import (
     AUDIO_TYPES,
@@ -60,39 +56,10 @@ from src.core.provider_retry import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Kept as a module-level compatibility seam for legacy worker tests/backfills.
-ticket_has_classification = _ticket_has_classification
-
-CLAIM_TICKET_BUFFER = """
-local claimed = redis.call('GET', KEYS[5])
-if claimed then
-    return {'claimed', claimed, ARGV[1]}
-end
-local current_token = redis.call('GET', KEYS[1])
-if not current_token or current_token ~= ARGV[1] then
-    return {'stale', current_token or ''}
-end
-local due_at = tonumber(redis.call('GET', KEYS[2]) or '0')
-if due_at > tonumber(ARGV[2]) then
-    return {'not_due', tostring(due_at)}
-end
-local raw = redis.call('GET', KEYS[3])
-if not raw then
-    return {'empty', redis.call('GET', KEYS[4]) or '', current_token}
-end
-redis.call('RENAME', KEYS[3], KEYS[5])
-redis.call('EXPIRE', KEYS[5], tonumber(ARGV[3]))
-redis.call('DEL', KEYS[1])
-redis.call('DEL', KEYS[2])
-return {'claimed', raw, current_token}
-"""
-
-
 class IAWorker:
     def __init__(self, redis_client: AsyncRedis):
         self.redis = redis_client
         self.queue = "ia_queue"
-        self.processing_queue = "ia_processing"
         self.dead_letter = "ia_dead_letter"
 
         # Usa GROQ_API_KEY
@@ -121,227 +88,9 @@ class IAWorker:
         self.provider_window_resume_pending = False
 
     async def process(self) -> None:
-        """Processa mensagens da fila de IA"""
+        """Process persistent conversation-cycle jobs from Redis."""
         logger.info("🤖 IA Worker started with Groq")
-        if settings.digisac_history_finalization_enabled:
-            await self._process_cycle_queue()
-            return
-
-        # Recupera itens que estavam em processamento
-        await self._recover_processing_items()
-
-        while True:
-            try:
-                item = await self.redis.lpop(self.queue)
-                if not item:
-                    await asyncio.sleep(1)
-                    continue
-
-                parsed_data: Any = json.loads(item)
-                if not isinstance(parsed_data, dict):
-                    raise ValueError("IA queue item must be a JSON object")
-                data = cast(dict[str, Any], parsed_data)
-                conversation_id = data.get("conversation_id")
-                logger.info(f"📥 Processando conversa: {conversation_id}")
-
-                # Marca como em processamento
-                await self.redis.rpush(self.processing_queue, item)
-
-                try:
-                    if not isinstance(conversation_id, str) or not conversation_id:
-                        raise ValueError("IA job missing conversation_id")
-                    task_token = data.get("task_token")
-                    while True:
-                        classify_after = await self.redis.get(
-                            f"ticket_classify_after:{conversation_id}"
-                        )
-                        if not classify_after:
-                            break
-                        remaining = float(classify_after) - \
-                            datetime.now(timezone.utc).timestamp()
-                        if remaining <= 0:
-                            break
-                        await asyncio.sleep(remaining)
-                    if not isinstance(task_token, str) or not task_token:
-                        raise ValueError("IA job missing task_token")
-                    raw_claim: Any = await self.redis.eval(
-                        CLAIM_TICKET_BUFFER, 5,
-                        f"ticket_close_task:{conversation_id}",
-                        f"ticket_classify_after:{conversation_id}",
-                        f"buffer:{conversation_id}",
-                        f"ticket_last_message_at:{conversation_id}",
-                        f"ticket_buffer_claim:{conversation_id}:{task_token}",
-                        task_token, str(datetime.now(
-                            timezone.utc).timestamp()),
-                        settings.ticket_buffer_ttl_seconds,
-                    )
-                    if (
-                        not isinstance(raw_claim, list)
-                        or not raw_claim
-                        or not all(
-                            isinstance(value, str)
-                            for value in cast(list[object], raw_claim)
-                        )
-                    ):
-                        raise RuntimeError("Redis returned an invalid ticket buffer claim")
-                    claim = cast(list[str], raw_claim)
-                    claim_status = claim[0]
-                    if claim_status == "stale":
-                        logger.info(
-                            "Skipping replaced closure task: ticket_id=%s task_token=%s "
-                            "current_task_token=%s",
-                            conversation_id, task_token, claim[1] or None,
-                        )
-                        continue
-                    if claim_status == "not_due":
-                        await self.redis.rpush(self.queue, item)
-                        continue
-                    if claim_status == "empty":
-                        logger.warning(
-                            "Ticket closure found empty buffer: ticket_id=%s "
-                            "last_message_at=%s closure_at=%s task_token=%s concurrent_task=%s",
-                            conversation_id, claim[1] or None, datetime.now(
-                                timezone.utc).isoformat(),
-                            task_token, bool(
-                                claim[2] and claim[2] != task_token),
-                        )
-                        continue
-                    raw_buffer = claim[1]
-                    buffer = MessageBuffer.model_validate_json(raw_buffer)
-                    human_buffer = buffer.human_buffer()
-                    ignored_bot_count = len(
-                        buffer.messages) - len(human_buffer.messages)
-                    if ignored_bot_count:
-                        logger.info(
-                            "Bot messages removed from claimed buffer: ticket_id=%s count=%s",
-                            conversation_id,
-                            ignored_bot_count,
-                        )
-                    message_ids = human_buffer.get_message_ids()
-                    audio_message_ids = human_buffer.get_audio_message_ids()
-                    image_message_ids = human_buffer.get_image_message_ids()
-                    await self._wait_for_content_extractions(
-                        audio_message_ids,
-                        image_message_ids,
-                    )
-                    transcriptions, image_extractions = await asyncio.gather(
-                        get_completed_transcriptions(audio_message_ids),
-                        get_completed_image_extractions(image_message_ids),
-                    )
-                    context = human_buffer.get_consolidated_context(
-                        transcriptions,
-                        image_extractions,
-                    )
-                    message_count = human_buffer.message_count
-                    if not context:
-                        logger.warning(
-                            "Ticket %s has no text to classify; skipping", conversation_id)
-                        await self.redis.delete(
-                            f"ticket_buffer_claim:{conversation_id}:{task_token}"
-                        )
-                        continue
-                    logger.info("📝 Mensagens: %s", message_count)
-                    # Analisa com IA
-                    started_at = time.perf_counter()
-                    result = await self._analyze_with_groq(context, message_count)
-                    processing_time_ms = int(
-                        (time.perf_counter() - started_at) * 1000)
-                    department_list, agent_list = (
-                        await self._resolve_assignment_names(conversation_id)
-                    )
-                    result = {
-                        **result,
-                        "department": department_list,
-                        "agent": agent_list,
-                    }
-                    protocol = normalize_protocol(
-                        await self.redis.get(f"ticket_protocol:{conversation_id}")
-                    )
-
-                    try:
-                        identity = await insert_classification(
-                            conversation_id=conversation_id,
-                            message_ids=message_ids,
-                            created_at=result["processed_at"],
-                            full_context=context,
-                            message_count=message_count,
-                            result=result,
-                            model=self.model,
-                            processing_time_ms=processing_time_ms,
-                            prompt_version=self.prompt_version,
-                            protocol=protocol,
-                            idempotency_key=(
-                                f"ia:{conversation_id}:{task_token}"
-                            ),
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to persist IA classification for %s; continuing",
-                            conversation_id,
-                        )
-                        raise
-
-                    # Salva resultado
-                    result = with_protocol(result, protocol)
-                    public_id = getattr(identity, "public_id", None)
-                    if public_id is not None:
-                        result["classification_public_id"] = str(public_id)
-                    await self.redis.set(
-                        f"ia_result:{conversation_id}",
-                        json.dumps(result, ensure_ascii=False),
-                        ex=self.result_ttl_seconds,
-                    )
-                    await self.redis.delete(
-                        f"ticket_buffer_claim:{conversation_id}:{task_token}"
-                    )
-
-                    # Atualiza status (mantém conversation_id, exigido por ConversationProcessing)
-                    await self.redis.set(
-                        f"ia_status:{conversation_id}",
-                        json.dumps({
-                            "conversation_id": conversation_id,
-                            "status": "completed",
-                            "completed_at": datetime.now(timezone.utc).isoformat(),
-                        }),
-                        ex=self.result_ttl_seconds,
-                    )
-
-                    logger.info(
-                        f"✅ Conversa {conversation_id} processada com sucesso")
-                except Exception as e:
-                    logger.error(f"❌ Erro ao processar {conversation_id}: {e}")
-
-                    # Incrementa tentativas
-                    attempt = data.get("attempt", 0) + 1
-                    data["attempt"] = attempt
-
-                    if attempt >= self.max_retries:
-                        # Vai para dead letter
-                        await self.redis.rpush(self.dead_letter, json.dumps(data))
-                        await self.redis.set(
-                            f"ia_status:{conversation_id}",
-                            json.dumps({
-                                "conversation_id": conversation_id,
-                                "status": "failed",
-                                "error": str(e),
-                            }),
-                            ex=self.result_ttl_seconds,
-                        )
-                        logger.error(
-                            f"💀 Máximo de tentativas para {conversation_id}")
-                    else:
-                        # Requeue
-                        await self.redis.rpush(self.queue, json.dumps(data))
-                        logger.info(
-                            f"🔄 Reenfileirado {conversation_id} (tentativa {attempt})")
-
-                finally:
-                    # Remove do processamento
-                    await self._remove_from_processing(item)
-
-            except Exception as e:
-                logger.error(f"⚠️ Erro no worker: {e}")
-                await asyncio.sleep(1)
+        await self._process_cycle_queue()
 
     async def _process_cycle_queue(self) -> None:
         owner = f"{uuid.uuid4().hex}:{os.getpid()}"
@@ -358,9 +107,7 @@ class IAWorker:
                     )
                 if await self._pause_for_provider_window():
                     continue
-                item = await self.redis.lmove(
-                    self.queue, self.processing_queue, "LEFT", "RIGHT"
-                )
+                item = await self.redis.lpop(self.queue)
                 if not item:
                     await asyncio.sleep(0.5)
                     continue
@@ -373,14 +120,12 @@ class IAWorker:
                     raise ValueError("finalization job is missing cycle_id")
                 not_before = float(job.get("not_before", 0) or 0)
                 if not_before > time.time():
-                    await self.redis.lrem(self.processing_queue, 1, item)
                     await self.redis.rpush(self.queue, item)
                     await asyncio.sleep(min(not_before - time.time(), 1.0))
                     item = None
                     continue
                 provider_remaining = self._provider_window_remaining()
                 if provider_remaining > 0:
-                    await self.redis.lrem(self.processing_queue, 1, item)
                     await self.redis.rpush(self.queue, item)
                     item = None
                     await asyncio.sleep(min(provider_remaining, 1.0))
@@ -402,9 +147,6 @@ class IAWorker:
                 if item:
                     await self.redis.rpush(self.dead_letter, item)
                 await asyncio.sleep(1)
-            finally:
-                if item:
-                    await self.redis.lrem(self.processing_queue, 1, item)
 
     async def _reconcile_cycles(self) -> None:
         awakened = await wake_unblocked_media_cycles(
@@ -1187,7 +929,7 @@ class IAWorker:
                 "intent_type": "other",
                 "confidence": 0.0,
                 "title": "Sem conteúdo para análise",
-                "description": "O buffer da conversa chegou vazio ao worker de IA.",
+                "description": "O ciclo não possui conteúdo textual para análise.",
                 "message_count": message_count,
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -1459,16 +1201,6 @@ Exemplos:
 - "Obrigado, bom dia" sem outro assunto identificável => other
 """
 
-    async def _recover_processing_items(self) -> None:
-        """Recupera itens que estavam em processamento"""
-        items = await self.redis.lrange(self.processing_queue, 0, -1)
-        for item in items:
-            await self.redis.lpush(self.queue, item)
-            await self.redis.lrem(self.processing_queue, 0, item)
-        if items:
-            logger.info(
-                f"♻️ Recuperados {len(items)} itens da fila de processamento")
-
     async def _wait_for_content_extractions(
         self,
         audio_message_ids: list[str],
@@ -1522,11 +1254,6 @@ Exemplos:
                 unresolved_users,
             )
         return departments, agents
-
-    async def _remove_from_processing(self, item: str) -> None:
-        """Remove item da fila de processamento"""
-        await self.redis.lrem(self.processing_queue, 0, item)
-
 
 async def main() -> None:
     """Função principal"""

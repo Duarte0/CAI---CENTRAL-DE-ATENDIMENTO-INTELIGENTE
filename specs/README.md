@@ -8,7 +8,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-09. PRD e arq
 | --- | --- | --- | --- | --- | --- |
 | SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.1 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações e fronteiras de privacidade. |
 | SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.3 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos, consultas atualmente sem versão e diagnóstico bruto interno sujeito a decisão de segurança. |
-| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.2 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente como destino, caminho Redis legado ainda feature-flagged, contexto, mídia, retry e recuperação concorrente. |
+| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.3 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente. |
 | SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Itens 1–2 e verificação operacional do item 4 implementados v1.3 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
 
 ## Arquivos não ativos

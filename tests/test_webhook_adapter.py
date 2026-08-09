@@ -182,14 +182,10 @@ async def test_audio_webhook_queues_transcription_for_both_authors(monkeypatch):
             },
         }, None
 
-    async def fake_append(_redis, _message):
-        return 1, False
-
     async def fake_reserve(*_args):
         return True
 
     monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
-    monkeypatch.setattr(routes, "append_message_to_buffer", fake_append)
     monkeypatch.setattr(routes, "reserve_transcription", fake_reserve)
 
     body = await routes.digisac_webhook(
@@ -227,14 +223,10 @@ async def test_image_webhook_queues_extraction_for_both_authors(
             },
         }, None
 
-    async def fake_append(_redis, _message):
-        return 1, False
-
     async def fake_reserve(*_args):
         return True
 
     monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
-    monkeypatch.setattr(routes, "append_message_to_buffer", fake_append)
     monkeypatch.setattr(routes, "reserve_image_extraction", fake_reserve)
 
     body = await routes.digisac_webhook(

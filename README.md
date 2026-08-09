@@ -18,8 +18,7 @@ Ele termina na classificação e na disponibilização do resultado por API.
   ticket passou;
 - transcreve áudios e extrai o conteúdo visível de imagens em workers separados;
 - finaliza uma conversa quando o ticket é fechado, recuperando o histórico
-  completo da DigiSac no modo persistente ou usando temporariamente o buffer
-  Redis compatível enquanto a remoção do legado aprovada não é implementada;
+  completo da DigiSac por um ciclo persistente;
 - classifica a intenção do cliente com a API da Groq;
 - persiste classificações, mensagens associadas, mídias, ciclos e snapshots no
   PostgreSQL;
@@ -50,7 +49,7 @@ DigiSac
   │    └─ fechamento → ciclo persistente → ia_queue
   │
   └─ message.created / message.updated
-       ├─ texto/documento → ciclo persistente ou buffer Redis compatível
+       ├─ texto/documento → ciclo persistente
        ├─ áudio → reserva PostgreSQL → audio_transcription_queue
        └─ imagem → reserva PostgreSQL → image_extraction_queue
 
@@ -76,22 +75,13 @@ ia_worker
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
 | `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac e ciclos. |
-| `redis` | Filas, buffers do modo legado, debounce, locks, idempotência temporária, status e resultados com TTL. |
+| `redis` | Filas, locks, idempotência temporária, status e resultados com TTL. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
-camada transitória e de coordenação. O buffer e o debounce Redis continuam
-existindo somente no caminho legado temporário.
+camada transitória de transporte e coordenação.
 
-## Modos de finalização
-
-### Ciclos persistentes por histórico DigiSac
-
-É o fluxo durável e o destino aprovado para a remoção do legado, ativado por:
-
-```dotenv
-DIGISAC_HISTORY_FINALIZATION_ENABLED=true
-```
+## Finalização persistente por histórico DigiSac
 
 Cada abertura/reabertura cria uma sequência e cada fechamento persiste um ciclo
 antes de publicá-lo. O worker consulta todas as páginas de
@@ -109,21 +99,7 @@ mesmo se houver queda entre a persistência e a publicação no Redis.
 - falha terminal de áudio preserva um marcador e pode concluir com avisos;
 - uma extração reprocessada desperta automaticamente ciclos bloqueados;
 - uma mensagem só pode pertencer a um ciclo;
-- a chave `ia:cycle:{cycle_id}` torna a classificação idempotente.
-
-### Buffer Redis legado (compatibilidade temporária)
-
-Com o flag em `false` (padrão), mensagens são acumuladas em
-`buffer:{conversation_id}`. O fechamento agenda uma classificação com debounce;
-mensagens tardias estendem a janela para evitar snapshot parcial. O worker move
-o job de `ia_queue` para `ia_processing`, recupera itens abandonados na
-inicialização e envia falhas definitivas para `ia_dead_letter`.
-
-Esse modo ainda está implementado para compatibilidade quando a flag está em
-`false` (o padrão do código). A remoção da flag, do buffer, do debounce, das
-chaves e do tratamento correspondente no worker foi aprovada, mas ainda é um
-follow-up de implementação; a recuperação de `ia_processing` pressupõe uma
-única réplica do `ia_worker` enquanto esse caminho existir.
+- a identidade persistida do ciclo e da classificação torna a análise idempotente.
 
 ## Tratamento do contexto
 
@@ -165,7 +141,6 @@ retenção ou arquivamento devem ser definidos como política operacional explí
   `X-Digisac-Signature` (`<hash>` ou `sha256=<hash>`).
 - Reservas de mídia acontecem antes da marcação de idempotência, permitindo que
   uma entrega DigiSac repetida recupere uma publicação que falhou.
-- A escrita do buffer legado é atômica no Redis.
 - Filas de mídia e ciclos usam reservas/claims persistentes para evitar
   publicações concorrentes e recuperar trabalho abandonado.
 - Retries transitórios respeitam `Retry-After`, backoff e limites configurados.
@@ -210,9 +185,7 @@ Variáveis principais:
 | `PROMPT_VERSION` | Identificador do prompt persistido. | `v4` |
 | `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas. | `3` |
 | `RESULT_TTL_SECONDS` | TTL de status/resultados transitórios no Redis. | `86400` |
-| `TICKET_BUFFER_TTL_SECONDS` | Retenção do buffer legado. | `2592000` |
-| `DIGISAC_HISTORY_FINALIZATION_ENABLED` | Ativa ciclos persistentes. | `false` |
-| `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por mídia no modo legado. | `30` |
+| `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por mídia. | `30` |
 | `CONTENT_RECOVERY_LEASE_SECONDS` | Lease de recuperação de mídia. | `300` |
 | `CONTENT_RECONCILE_INTERVAL_SECONDS` | Intervalo do reconciliador de mídia. | `5` |
 | `FINALIZATION_RECONCILE_INTERVAL_SECONDS` | Intervalo do reconciliador de ciclos. | `5` |
@@ -242,13 +215,8 @@ O Compose inicia PostgreSQL, Redis, aplica `alembic upgrade head` no serviço
 `http://localhost:8000`; PostgreSQL e Redis também são publicados localmente no
 Compose atual.
 
-Para ativar o fluxo persistente sem janela de perda, primeiro aplique migrations
-e atualize todos os containers com o flag em `false`. Depois altere o flag para
-`true` e recrie API e worker de IA:
-
-```bash
-docker compose -p cai up -d --force-recreate api ia_worker
-```
+O fluxo persistente é iniciado diretamente após a aplicação das migrations; não
+há flag de finalização nem uma segunda fila de compatibilidade para alternar.
 
 ## Execução local
 
@@ -369,16 +337,13 @@ docker compose -p cai exec ia_worker python -m src.utils.backfill_redis_history
 Testes offline:
 
 ```bash
-PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q --ignore=tests/test_webhook_local.py
+PYTHONPATH=/app pytest -q --ignore=tests/test_webhook_local.py
 python -m compileall -q src tests alembic
 npx --yes pyright
 ```
 
-O `conftest.py` seleciona o modo persistente e restaura a configuração por
-teste; por isso o resultado canônico não depende do valor da flag no `.env`. A
-verificação de isolamento repete o comando com
-`DIGISAC_HISTORY_FINALIZATION_ENABLED=false` e deve produzir o mesmo resultado.
-Em 2026-08-09, a execução produziu **128 passed, 33 skipped**; os skips
+O modo persistente é o único caminho suportado e não depende de uma flag no
+`.env`. Em 2026-08-09, a execução produziu **118 passed, 33 skipped**; os skips
 exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
 `tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
 real e só deve ser incluído se ela estiver em execução.
@@ -408,7 +373,7 @@ e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
 fora da execução canônica.
 
 Na execução observada do runner após a verificação operacional, a etapa
-PostgreSQL produziu **33 passed, 128 deselected**. Esses testes cobrem, no
+PostgreSQL produziu **33 passed, 118 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
 fila e o despertar somente dos ciclos dependentes de uma imagem recuperada.

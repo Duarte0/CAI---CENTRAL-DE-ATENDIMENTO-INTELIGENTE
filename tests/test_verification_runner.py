@@ -50,7 +50,6 @@ def test_prepare_test_environment_overrides_external_database_values() -> None:
     source = {
         "CAI_TEST_DATABASE_URL": "postgresql://external/unsafe",
         "DATABASE_URL": "postgresql://external/unsafe",
-        "DIGISAC_HISTORY_FINALIZATION_ENABLED": "false",
         "PATH": os.environ.get("PATH", ""),
     }
 
@@ -58,4 +57,3 @@ def test_prepare_test_environment_overrides_external_database_values() -> None:
 
     assert prepared["CAI_TEST_DATABASE_URL"].endswith("/cai_test")
     assert prepared["DATABASE_URL"] == prepared["CAI_TEST_DATABASE_URL"]
-    assert prepared["DIGISAC_HISTORY_FINALIZATION_ENABLED"] == "true"

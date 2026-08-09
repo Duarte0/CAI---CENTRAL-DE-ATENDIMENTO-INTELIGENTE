@@ -7,7 +7,6 @@ from src.api.webhook_adapter import DigisacWebhookAdapter
 from src.api.webhook_adapter import DigisacMessage
 from src.core.finalization import apply_media_states, normalize_history, render_context
 from src.core.media import is_image_message
-from src.core.models import MessageBuffer, format_message_for_context
 
 
 IMAGE_DOCUMENT_FILE = {
@@ -66,7 +65,7 @@ def test_webhook_adapter_keeps_pdf_document_as_document():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_image_extraction_accepts_legacy_image_document(monkeypatch):
+async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
     reserved: list[tuple[str, str, str]] = []
 
     async def fake_reserve(message_id: str, conversation_id: str, model: str):
@@ -93,25 +92,6 @@ async def test_enqueue_image_extraction_accepts_legacy_image_document(monkeypatc
     assert await routes.enqueue_image_extraction(redis, message) is True
     assert reserved and reserved[0][:2] == ("image-document-id", "ticket-id")
     assert redis.jobs[0][0] == "image_extraction_queue"
-
-
-def test_legacy_buffer_waits_for_and_renders_image_document_extraction():
-    message = {
-        "id": "image-document-id",
-        "message_type": "document",
-        "file": {
-            "name": "Comprovante-de-Endereco-Luan.jpg",
-            "mimetype": "image/jpeg",
-        },
-        "isFromMe": False,
-        "timestamp": "2026-08-04T13:18:43+00:00",
-    }
-    buffer = MessageBuffer(conversation_id="ticket-id", messages=[message])
-
-    assert buffer.get_image_message_ids() == ["image-document-id"]
-    assert format_message_for_context(
-        message, image_extraction="Endereço residencial confirmado."
-    ) == "Cliente: [imagem] Endereço residencial confirmado."
 
 
 def test_history_normalizes_image_document_and_blocks_failed_extraction():

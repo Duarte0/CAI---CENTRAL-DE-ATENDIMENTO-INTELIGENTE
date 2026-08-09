@@ -15,7 +15,7 @@ IMAGE_MESSAGE_TYPES = {"image"}
 
 
 class DigisacMessage(BaseModel):
-    """The fields used by the buffering and IA-processing pipeline."""
+    """The fields used by the persistent-cycle and media pipelines."""
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
@@ -74,8 +74,8 @@ class DigisacWebhookAdapter:
 
     ``data.id`` maps to ``message_id``, ``data.text`` to ``content``,
     ``data.contactId`` to ``sender_id``, ``data.userId`` to ``user_id``, and
-    ``data.ticketId`` to ``conversation_id``.  A ticket is required: buffers
-    are deliberately scoped to their final Digisac ticket.
+    ``data.ticketId`` to ``conversation_id``.  A ticket is required so history
+    recovery remains scoped to its final Digisac ticket.
     """
 
     @classmethod
@@ -108,7 +108,8 @@ class DigisacWebhookAdapter:
             if isinstance(raw_file, Mapping)
             else {}
         )
-        # Only safe metadata is normalized; signed URLs never enter the buffer.
+        # Only safe metadata is normalized; signed URLs never enter durable
+        # snapshots or queue payloads.
         normalized_file = {
             "id": cls._as_non_empty_string(file_data.get("id")),
             "name": cls._as_non_empty_string(file_data.get("name")),

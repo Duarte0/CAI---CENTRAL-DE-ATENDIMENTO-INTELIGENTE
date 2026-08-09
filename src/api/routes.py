@@ -4,19 +4,17 @@ import asyncio
 import hashlib
 import json
 import logging
-import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Mapping, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from pydantic import BaseModel
 
 from src.api.middleware import verify_webhook_signature
 from src.api.webhook_adapter import DigisacMessage, DigisacWebhookAdapter
 from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES
 from src.core.config import settings
-from src.core.analysis import normalize_protocol, with_protocol
+from src.core.analysis import normalize_protocol
 from src.core.db import (
     close_cycle,
     close_database,
@@ -34,7 +32,6 @@ from src.core.db import (
     reserve_transcription,
     reserve_image_extraction,
     transition_cycle,
-    update_analysis_protocol,
 )
 from src.core.digisac_directory import directory_sync_loop
 from src.core.message_filter import is_bot_message
@@ -45,10 +42,6 @@ from src.utils.idempotency import IdempotencyService
 
 
 logger = logging.getLogger(__name__)
-
-
-def _dump(model: BaseModel) -> str:
-    return model.model_dump_json()
 
 
 def _non_empty_string(value: Any) -> str | None:
@@ -234,132 +227,6 @@ async def capture_ticket_assignment(
     return inserted
 
 
-APPEND_MESSAGE_TO_BUFFER = """
-local key = KEYS[1]
-local message = cjson.decode(ARGV[1])
-local now = ARGV[2]
-local conversation_id = ARGV[3]
-local ttl = tonumber(ARGV[4])
-local current = redis.call('GET', key)
-local buffer
-if current then
-    buffer = cjson.decode(current)
-else
-    buffer = {conversation_id = conversation_id, messages = {}, last_activity = now,
-              is_active = true, message_count = 0}
-end
-local duplicate = false
-if message.id and message.id ~= cjson.null then
-    for _, current_message in ipairs(buffer.messages) do
-        if current_message.id == message.id then duplicate = true break end
-    end
-end
-if not duplicate then
-    table.insert(buffer.messages, message)
-    table.sort(buffer.messages, function(a, b)
-        local a_time = tonumber(a.timestamp_epoch) or 0
-        local b_time = tonumber(b.timestamp_epoch) or 0
-        if a_time == b_time then
-            return tostring(a.id or "") < tostring(b.id or "")
-        end
-        return a_time < b_time
-    end)
-    buffer.message_count = #buffer.messages
-end
-buffer.last_activity = now
-redis.call('SET', key, cjson.encode(buffer), 'EX', ttl)
-redis.call('SET', KEYS[2], now, 'EX', ttl)
-return {buffer.message_count, redis.call('EXISTS', KEYS[3])}
-"""
-
-SCHEDULE_TICKET_CLOSURE = """
-local token_key = KEYS[1]
-local due_key = KEYS[2]
-local token = ARGV[1]
-local due_at = ARGV[2]
-local ttl = tonumber(ARGV[3])
-local previous = redis.call('GET', token_key)
-redis.call('SET', token_key, token, 'EX', ttl)
-redis.call('SET', due_key, due_at, 'EX', ttl)
-redis.call('RPUSH', KEYS[3], cjson.encode({conversation_id=ARGV[4], task_token=token}))
-return previous or ''
-"""
-
-SCHEDULE_INITIAL_TICKET_CLOSURE = """
-if redis.call('EXISTS', KEYS[1]) == 1 then return {'duplicate', ''} end
-local ttl = tonumber(ARGV[3])
-redis.call('SET', KEYS[1], '1', 'EX', ttl)
-redis.call('SET', KEYS[2], ARGV[1], 'EX', ttl)
-redis.call('SET', KEYS[3], ARGV[2], 'EX', ttl)
-redis.call('RPUSH', KEYS[5], cjson.encode({conversation_id=ARGV[4], task_token=ARGV[1]}))
-if redis.call('EXISTS', KEYS[4]) == 0 then return {'scheduled_empty', ARGV[1]} end
-return {'scheduled', ARGV[1]}
-"""
-
-
-async def schedule_ticket_closure(
-    redis: AsyncRedis, conversation_id: str
-) -> tuple[str, str | None]:
-    """Atomically replace the pending debounce generation for a ticket."""
-    token = uuid.uuid4().hex
-    due_at = (
-        datetime.now(timezone.utc).timestamp()
-        + settings.ticket_closure_debounce_seconds
-    )
-    previous = await redis.eval(
-        SCHEDULE_TICKET_CLOSURE,
-        3,
-        f"ticket_close_task:{conversation_id}",
-        f"ticket_classify_after:{conversation_id}",
-        "ia_queue",
-        token,
-        str(due_at),
-        settings.closed_ticket_ttl_seconds,
-        conversation_id,
-    )
-    return token, previous or None
-
-
-async def append_message_to_buffer(
-    redis: AsyncRedis, payload: WebhookPayload | DigisacMessage
-) -> tuple[int, bool]:
-    """Append a message atomically, so concurrent webhooks do not lose data."""
-    now = datetime.now(timezone.utc)
-    message_timestamp = payload.get_timestamp() or now
-    if message_timestamp.tzinfo is None:
-        message_timestamp = message_timestamp.replace(tzinfo=timezone.utc)
-    message_timestamp = message_timestamp.astimezone(timezone.utc)
-    message = {
-        "id": payload.get_message_id(),
-        "message_id": payload.get_message_id(),
-        "ticket_id": payload.get_conversation_id(),
-        "text": payload.get_content(),
-        "message_type": payload.get_message_type(),
-        "file": payload.get_file(),
-        "sender_id": payload.get_sender_id(),
-        "isFromMe": getattr(payload, "is_from_me", False),
-        "is_from_me": getattr(payload, "is_from_me", False),
-        "is_from_bot": getattr(payload, "is_from_bot", None),
-        "origin": getattr(payload, "origin", None),
-        "userId": getattr(payload, "user_id", None),
-        "event_type": payload.get_event(),
-        "timestamp": message_timestamp.isoformat(),
-        "timestamp_epoch": message_timestamp.timestamp(),
-    }
-    result = await redis.eval(
-        APPEND_MESSAGE_TO_BUFFER,
-        3,
-        f"buffer:{payload.get_conversation_id()}",
-        f"ticket_last_message_at:{payload.get_conversation_id()}",
-        f"ticket_close_scheduled:{payload.get_conversation_id()}",
-        json.dumps(message),
-        now.isoformat(),
-        payload.get_conversation_id(),
-        settings.ticket_buffer_ttl_seconds,
-    )
-    return int(result[0]), bool(result[1])
-
-
 async def enqueue_audio_transcription(
     redis: AsyncRedis, message: DigisacMessage
 ) -> bool:
@@ -424,89 +291,6 @@ async def enqueue_image_extraction(
     return True
 
 
-async def schedule_initial_ticket_closure(
-    redis: AsyncRedis, conversation_id: str
-) -> str:
-    """Atomically check the buffer and create the ticket's first close task."""
-    token = uuid.uuid4().hex
-    due_at = (
-        datetime.now(timezone.utc).timestamp()
-        + settings.ticket_closure_debounce_seconds
-    )
-    result = await redis.eval(
-        SCHEDULE_INITIAL_TICKET_CLOSURE,
-        5,
-        f"ticket_close_scheduled:{conversation_id}",
-        f"ticket_close_task:{conversation_id}",
-        f"ticket_classify_after:{conversation_id}",
-        f"buffer:{conversation_id}",
-        "ia_queue",
-        token,
-        str(due_at),
-        settings.closed_ticket_ttl_seconds,
-        conversation_id,
-    )
-    value = result[0]
-    if not isinstance(value, str):
-        raise RuntimeError("Redis returned an invalid ticket closure status")
-    return value
-
-
-async def associate_ticket_protocol(
-    redis: AsyncRedis, conversation_id: str, protocol: str
-) -> None:
-    """Persist protocol now or leave Redis state for a racing IA insertion."""
-    try:
-        await redis.set(
-            f"ticket_protocol:{conversation_id}",
-            protocol,
-            ex=settings.closed_ticket_ttl_seconds,
-        )
-    except Exception:
-        logger.exception(
-            "Failed to store ticket protocol state: conversation_id=%s",
-            conversation_id,
-        )
-
-    try:
-        analysis_exists = await update_analysis_protocol(conversation_id, protocol)
-    except Exception:
-        logger.exception(
-            "Failed to associate protocol with analysis: conversation_id=%s",
-            conversation_id,
-        )
-        return
-
-    if analysis_exists:
-        logger.info(
-            "Protocol associated with analysis: conversation_id=%s", conversation_id
-        )
-    else:
-        logger.info(
-            "Analysis not found yet; protocol retained for later processing: "
-            "conversation_id=%s",
-            conversation_id,
-        )
-
-    try:
-        raw_result = await redis.get(f"ia_result:{conversation_id}")
-        if raw_result:
-            parsed_result: Any = json.loads(raw_result)
-            if not isinstance(parsed_result, Mapping):
-                raise ValueError("Cached IA result must be a JSON object")
-            await redis.set(
-                f"ia_result:{conversation_id}",
-                json.dumps(with_protocol(cast(dict[str, Any], parsed_result), protocol),
-                           ensure_ascii=False),
-                ex=settings.result_ttl_seconds,
-            )
-    except Exception:
-        logger.exception(
-            "Failed to refresh cached analysis protocol: conversation_id=%s",
-            conversation_id,
-        )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await initialize_database()
@@ -545,7 +329,6 @@ async def queue_metrics(
     """Small operational view of the Redis-backed work queues."""
     (
         ia_queue,
-        processing_queue,
         dead_letter,
         audio_queue,
         audio_dead_letter,
@@ -553,7 +336,6 @@ async def queue_metrics(
         image_dead_letter,
     ) = await asyncio.gather(
         redis.llen("ia_queue"),
-        redis.llen("ia_processing"),
         redis.llen("ia_dead_letter"),
         redis.llen("audio_transcription_queue"),
         redis.llen("audio_transcription_dead_letter"),
@@ -562,7 +344,6 @@ async def queue_metrics(
     )
     result: dict[str, Any] = {
         "ia_queue": ia_queue,
-        "ia_processing": processing_queue,
         "ia_dead_letter": dead_letter,
         "audio_transcription_queue": audio_queue,
         "audio_transcription_dead_letter": audio_dead_letter,
@@ -615,7 +396,7 @@ async def digisac_webhook(
     _: None = Depends(verify_webhook_signature),
     redis: AsyncRedis = Depends(get_redis),
 ) -> dict[str, Any]:
-    """Buffer messages by ticket and schedule one IA job at closure."""
+    """Ingest DigiSac events into the persistent cycle and media flows."""
     payload_data, _payload = await parse_webhook_payload(request)
     data = payload_data.get("data")
     if not isinstance(data, dict):
@@ -640,30 +421,21 @@ async def digisac_webhook(
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "missing_ticket_id"}
         if event == "ticket.created":
-            if settings.digisac_history_finalization_enabled:
-                timestamp, _has_timestamp = _ticket_event_timestamp(
-                    payload_data, data
-                )
-                cycle, created = await create_open_cycle(
-                    conversation_id=ticket_id,
-                    started_at=timestamp,
-                    open_event_key=_cycle_event_key(
-                        event, ticket_id, payload_data, data
-                    ),
-                    start_strategy="ticket_created_event",
-                )
-                return {
-                    "status": "ticket_created",
-                    "conversation_id": ticket_id,
-                    "cycle_id": str(cycle["public_id"]),
-                    "cycle_created": created,
-                }
-            return {"status": "ticket_created", "conversation_id": ticket_id}
+            timestamp, _has_timestamp = _ticket_event_timestamp(payload_data, data)
+            cycle, created = await create_open_cycle(
+                conversation_id=ticket_id,
+                started_at=timestamp,
+                open_event_key=_cycle_event_key(event, ticket_id, payload_data, data),
+                start_strategy="ticket_created_event",
+            )
+            return {
+                "status": "ticket_created",
+                "conversation_id": ticket_id,
+                "cycle_id": str(cycle["public_id"]),
+                "cycle_created": created,
+            }
         await capture_ticket_assignment(payload_data, data, ticket_id)
-        if (
-            settings.digisac_history_finalization_enabled
-            and data.get("isOpen") is True
-        ):
+        if data.get("isOpen") is True:
             timestamp, _has_timestamp = _ticket_event_timestamp(
                 payload_data, data
             )
@@ -674,13 +446,6 @@ async def digisac_webhook(
                     event, ticket_id, payload_data, data
                 ),
                 start_strategy="ticket_reopened_event",
-            )
-            await redis.delete(
-                f"ticket_close_scheduled:{ticket_id}",
-                f"ticket_close_task:{ticket_id}",
-                f"ticket_classify_after:{ticket_id}",
-                f"ticket_last_message_at:{ticket_id}",
-                f"buffer:{ticket_id}",
             )
             return {
                 "status": "ticket_reopened",
@@ -716,82 +481,29 @@ async def digisac_webhook(
             ticket_id,
             protocol,
         )
-        if settings.digisac_history_finalization_enabled:
-            closed_at, _has_timestamp = _ticket_event_timestamp(
-                payload_data, data
-            )
-            cycle, created = await close_cycle(
-                conversation_id=ticket_id,
-                protocol=protocol,
-                closed_at=closed_at,
-                close_event_key=_cycle_event_key(
-                    event, ticket_id, payload_data, data
-                ),
-            )
-            if created:
-                try:
-                    await _publish_cycle(redis, cycle)
-                except Exception:
-                    logger.exception(
-                        "Cycle persisted but queue publication failed: "
-                        "cycle_id=%s conversation_id=%s",
-                        cycle["public_id"],
-                        ticket_id,
-                    )
-            await redis.set(
-                f"ia_status:{ticket_id}",
-                json.dumps(
-                    {
-                        "conversation_id": ticket_id,
-                        "cycle_id": str(cycle["public_id"]),
-                        "status": cycle["status"],
-                        "started_at": cycle["created_at"],
-                        "completed_at": None,
-                        "retry_count": cycle["attempt_count"],
-                        "max_retries": settings.max_retry_attempts,
-                    }
-                ),
-                ex=settings.result_ttl_seconds,
-            )
-            return {
-                "status": (
-                    "ticket_closed" if created else "ticket_already_closed"
-                ),
-                "conversation_id": ticket_id,
-                "cycle_id": str(cycle["public_id"]),
-                "queued": created,
-            }
-        await associate_ticket_protocol(redis, ticket_id, protocol)
-
-        closure_status = await schedule_initial_ticket_closure(redis, ticket_id)
-        if closure_status == "duplicate":
-            return {
-                "status": "ticket_already_closed",
-                "conversation_id": ticket_id,
-                "queued": False,
-            }
-        if closure_status == "scheduled_empty":
-            last_message_at = await redis.get(f"ticket_last_message_at:{ticket_id}")
-            logger.warning(
-                "Ticket closure scheduled with empty buffer: ticket_id=%s "
-                "last_message_at=%s closure_at=%s concurrent_task=%s",
-                ticket_id,
-                last_message_at,
-                datetime.now(timezone.utc).isoformat(),
-                False,
-            )
-            logger.info(
-                "Empty closure remains scheduled to catch late messages: ticket_id=%s",
-                ticket_id,
-            )
-        processing = ConversationProcessing(
+        closed_at, _has_timestamp = _ticket_event_timestamp(payload_data, data)
+        cycle, created = await close_cycle(
             conversation_id=ticket_id,
-            max_retries=settings.max_retry_attempts,
+            protocol=protocol,
+            closed_at=closed_at,
+            close_event_key=_cycle_event_key(event, ticket_id, payload_data, data),
         )
-        await redis.set(
-            f"ia_status:{ticket_id}", _dump(processing), ex=settings.result_ttl_seconds
-        )
-        return {"status": "ticket_closed", "conversation_id": ticket_id, "queued": True}
+        if created:
+            try:
+                await _publish_cycle(redis, cycle)
+            except Exception:
+                logger.exception(
+                    "Cycle persisted but queue publication failed: "
+                    "cycle_id=%s conversation_id=%s",
+                    cycle["public_id"],
+                    ticket_id,
+                )
+        return {
+            "status": "ticket_closed" if created else "ticket_already_closed",
+            "conversation_id": ticket_id,
+            "cycle_id": str(cycle["public_id"]),
+            "queued": created,
+        }
 
     if event not in {"message.created", "message.updated"}:
         response.status_code = status.HTTP_200_OK
@@ -872,29 +584,8 @@ async def digisac_webhook(
     # failed DB row can be reserved again when DigiSac retries the same webhook.
     transcription_queued = await enqueue_audio_transcription(redis, message)
     image_extraction_queued = await enqueue_image_extraction(redis, message)
-    if settings.digisac_history_finalization_enabled:
-        return {
-            "status": "received",
-            "conversation_id": conversation_id,
-            "transcription_queued": transcription_queued,
-            "image_extraction_queued": image_extraction_queued,
-        }
     if not await idempotency.try_mark_processed(event_id):
         return {"status": "duplicate", "conversation_id": conversation_id}
-
-    _buffered_count, closed = await append_message_to_buffer(redis, message)
-    if closed:
-        # Digisac can deliver message.created after ticket.updated. Extend the
-        # settling window so the worker cannot snapshot a partial history.
-        token, replaced = await schedule_ticket_closure(redis, conversation_id)
-        logger.info(
-            "Reset ticket closure debounce: ticket_id=%s message_id=%s task_token=%s "
-            "replaced_task_token=%s",
-            conversation_id,
-            message.message_id,
-            token,
-            replaced,
-        )
     return {
         "status": "received",
         "conversation_id": conversation_id,
@@ -944,41 +635,35 @@ async def debug_digisac_webhook(
     "/conversations/{conversation_id}/status", response_model=ConversationProcessing
 )
 async def conversation_status(
-    conversation_id: str, redis: AsyncRedis = Depends(get_redis)
+    conversation_id: str,
 ) -> ConversationProcessing:
-    if settings.digisac_history_finalization_enabled:
-        cycle = await get_latest_cycle(conversation_id)
-        if cycle:
-            return ConversationProcessing(
-                conversation_id=conversation_id,
-                status=cycle["status"],
-                started_at=cycle["created_at"],
-                completed_at=cycle.get("completed_at"),
-                error_message=cycle.get("error_message"),
-                retry_count=cycle["attempt_count"],
-                transient_retry_count=cycle.get("transient_retry_count", 0),
-                max_retries=settings.max_retry_attempts,
-            )
-    data = await redis.get(f"ia_status:{conversation_id}")
-    if not data:
+    cycle = await get_latest_cycle(conversation_id)
+    if cycle is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return ConversationProcessing.model_validate_json(data)
+    return ConversationProcessing(
+        conversation_id=conversation_id,
+        cycle_id=str(cycle["public_id"]),
+        status=cycle["status"],
+        started_at=cycle["created_at"],
+        completed_at=cycle.get("completed_at"),
+        error_message=cycle.get("error_message"),
+        retry_count=cycle["attempt_count"],
+        transient_retry_count=cycle.get("transient_retry_count", 0),
+        max_retries=settings.max_retry_attempts,
+    )
 
 
 @app.get("/conversations/{conversation_id}/result")
 async def conversation_result(
-    conversation_id: str, redis: AsyncRedis = Depends(get_redis)
+    conversation_id: str,
 ) -> Any:
-    if settings.digisac_history_finalization_enabled:
-        cycle = await get_latest_cycle(conversation_id)
-        if cycle:
-            result = await get_cycle_result(str(cycle["public_id"]))
-            if result and result.get("classification_public_id"):
-                return result
-    data = await redis.get(f"ia_result:{conversation_id}")
-    if not data:
+    cycle = await get_latest_cycle(conversation_id)
+    if cycle is None:
         raise HTTPException(status_code=404, detail="Result not available")
-    return json.loads(data)
+    result = await get_cycle_result(str(cycle["public_id"]))
+    if not result or not result.get("classification_public_id"):
+        raise HTTPException(status_code=404, detail="Result not available")
+    return result
 
 
 @app.get("/conversations/{conversation_id}/cycles")

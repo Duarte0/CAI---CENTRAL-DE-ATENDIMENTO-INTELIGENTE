@@ -4,7 +4,6 @@ import pytest
 from fastapi import Response
 
 from src.api import routes
-from src.core.config import settings
 
 
 class PersistentRedis:
@@ -17,11 +16,6 @@ class PersistentRedis:
     async def set(self, key, value, **_kwargs):
         self.values[key] = value
         return True
-
-    async def delete(self, *keys):
-        for key in keys:
-            self.values.pop(key, None)
-        return len(keys)
 
     async def rpush(self, key, value):
         self.queues.setdefault(key, []).append(value)
@@ -42,8 +36,34 @@ async def send(monkeypatch, redis, payload):
 
 
 @pytest.mark.asyncio
-async def test_suite_selects_persistent_finalization():
-    assert settings.digisac_history_finalization_enabled is True
+async def test_ticket_created_always_establishes_persistent_cycle(monkeypatch):
+    redis = PersistentRedis()
+    cycle = {"public_id": "cycle-open", "conversation_id": "ticket"}
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        return cycle, True
+
+    monkeypatch.setattr(routes, "create_open_cycle", create)
+
+    result = await send(
+        monkeypatch,
+        redis,
+        {
+            "event": "ticket.created",
+            "data": {"id": "ticket", "createdAt": "2026-07-28T12:00:00Z"},
+        },
+    )
+
+    assert calls and calls[0]["conversation_id"] == "ticket"
+    assert result == {
+        "status": "ticket_created",
+        "conversation_id": "ticket",
+        "cycle_id": "cycle-open",
+        "cycle_created": True,
+    }
+    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
@@ -70,7 +90,9 @@ async def test_message_webhook_does_not_publish_an_ia_cycle(monkeypatch):
         "transcription_queued": False,
         "image_extraction_queued": False,
     }
-    assert redis.values == {}
+    assert list(redis.values) and all(
+        key.startswith("processed:") for key in redis.values
+    )
     assert redis.queues == {}
 
 

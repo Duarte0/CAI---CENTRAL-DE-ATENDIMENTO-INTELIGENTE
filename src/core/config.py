@@ -32,9 +32,6 @@ class Settings(BaseSettings):
 
     # Worker Settings
     ia_timeout_seconds: int = 60
-    ticket_buffer_ttl_seconds: int = 60 * 60 * 24 * 30
-    closed_ticket_ttl_seconds: int = 60 * 60 * 24 * 30
-    ticket_closure_debounce_seconds: float = 2.0
     result_ttl_seconds: int = 86400
 
     # AI Settings
@@ -72,7 +69,6 @@ class Settings(BaseSettings):
     digisac_directory_max_retries: int = 3
     digisac_directory_sync_interval_seconds: int = 60 * 60 * 24
     digisac_directory_refresh_cooldown_seconds: int = 60 * 15
-    digisac_history_finalization_enabled: bool = False
     digisac_history_initial_delay_seconds: float = 2.0
     digisac_history_request_timeout_seconds: float = 15.0
     digisac_history_max_attempts: int = 3

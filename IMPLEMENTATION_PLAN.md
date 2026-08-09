@@ -10,8 +10,7 @@ documentation. Status describes this checkout, not production availability._
 
 - **[completed] Durable conversation analysis.** The API, PostgreSQL cycle
   state, Redis coordination, Groq classification, and separate audio/image
-  workers implement the persistent DigiSac-history flow and the feature-flagged
-  legacy Redis-buffer flow pending its approved removal. Persistent cycles record history snapshot and
+  workers implement the persistent DigiSac-history flow. Persistent cycles record history snapshot and
   ordered membership, reconcile scheduled media, and block terminal image
   failures rather than classify incomplete context. References: PRD §§5–8,
   ARCHITECTURE §§3–9, SPEC-0001–0003.
@@ -31,9 +30,9 @@ documentation. Status describes this checkout, not production availability._
   src tests alembic scripts`, `npx --yes pyright` (0 diagnostics), and
   `docker compose config -q` for both Compose files passed.
 - **[completed] Isolated offline behavioral suite.** Both
-  `PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q
+  `PYTHONPATH=/app pytest -q
   --ignore=tests/test_webhook_local.py` and the same command with `false`
-  produced **128 passed, 33 skipped** on 2026-08-09. The skipped tests require
+  produced **118 passed, 33 skipped** on 2026-08-09. The skipped tests require
   `CAI_TEST_DATABASE_URL`; the live webhook test remains opt-in. The test-owned
   fixture selects persistent finalization and restores environment/settings
   state after each test.
@@ -41,9 +40,9 @@ documentation. Status describes this checkout, not production availability._
   python scripts/verify.py` creates a uniquely named Compose project with
   PostgreSQL 16 and a dynamically published host port, or uses the explicit
   `postgres-test:5432` Docker-network form when the runner is containerized.
-  The observed run passed compileall, Pyright, offline pytest (**128 passed,
+  The observed run passed compileall, Pyright, offline pytest (**118 passed,
   33 skipped**), process connectivity, Alembic
-  `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 128
+  `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 118
   deselected**). The 33 offline skips are not PostgreSQL runtime evidence; the
   dedicated PostgreSQL stage had no prerequisite skips.
 
@@ -67,23 +66,22 @@ documentation. Status describes this checkout, not production availability._
    (SPEC-0004 §§1–3).
 
    Outcome: a clean checkout contains the offline and PostgreSQL test families
-   that currently provide evidence, and each family selects its finalization
-   mode rather than inheriting a developer `.env`.
+   that currently provide evidence, and each family uses the sole persistent
+   finalization contract rather than inheriting a developer `.env`.
 
    Completion criteria:
 
    - replace the blanket `tests/*` ignore policy with an explicit tracked-suite
      policy; retain only justified local artifacts such as
      `test_webhook_local.py` as opt-in;
-   - make fixtures/environment reset settings deterministically, with the
-     persistent mode explicitly selected;
+   - make fixtures/environment independent of obsolete mode settings;
    - remove legacy-mode fixtures and replace `test_ticket_closure.py` with
      tracked persistent-cycle coverage; and
    - the clean-checkout offline command passes without personal `.env` input.
 
-   Evidence: the canonical command produces **128 passed, 33 skipped** with
-   either externally supplied flag value, including the focused operational
-   recovery tests skipped without `CAI_TEST_DATABASE_URL`.
+   Evidence: the canonical command produces **118 passed, 33 skipped** with
+  including the focused operational recovery tests skipped without
+  `CAI_TEST_DATABASE_URL`.
 
 2. **[P0 | completed] Establish an executable PostgreSQL verification runner**
    (SPEC-0004 §§4–5; SPEC-0001–0003 acceptance).
@@ -119,7 +117,7 @@ documentation. Status describes this checkout, not production availability._
      variables, routes, Compose behavior, migrations, recovery commands, and
      test commands against source;
    - [x] the 2026-08-09 specification pass reconciled those contracts: SPEC-0003
-     v1.2 records the approved removal of legacy mode, and SPEC-0002 v1.3 records
+     v1.3 records the completed removal of legacy mode, and SPEC-0002 v1.3 records
      the mounted `/webhook/debug` raw-payload response as an internal diagnostic
      behavior rather than a sanitized or public API contract. The associated
      authorization and retention decisions are recorded, while diagnostic
@@ -130,14 +128,14 @@ documentation. Status describes this checkout, not production availability._
    - [x] update documentation to distinguish the locally verified offline baseline
      from the unverified PostgreSQL/runtime baseline; and
    - [x] keep PostgreSQL as durable source of truth and Redis as coordination,
-     while documenting the still-implemented legacy worker limitation and its
-     approved future removal.
+     while documenting the persistent-only worker and its durable recovery
+     boundary.
 
    Evidence: the documentation-only reconciliation was validated against the
    source, migrations, tests, and the observed `scripts/verify.py` run on
-   2026-08-09. That run passed compileall, Pyright, offline pytest (128 passed,
+   2026-08-09. That run passed compileall, Pyright, offline pytest (118 passed,
    33 skipped), Alembic `0014_retry_scheduling`, and PostgreSQL pytest (33
-   passed, 128 deselected). It does not claim production verification.
+   passed, 118 deselected). It does not claim production verification.
 
    Dependency: item 1 for reproducible test references. This supersedes the
    previous plan item that proposed creating PRD/architecture/spec files: they
@@ -159,8 +157,8 @@ documentation. Status describes this checkout, not production availability._
    disposable target.
 
    Evidence: the 2026-08-09 run passed compileall, Pyright, offline pytest
-   (**128 passed, 33 skipped**), PostgreSQL 16 connectivity, Alembic
-   `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 128
+   (**118 passed, 33 skipped**), PostgreSQL 16 connectivity, Alembic
+   `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 118
    deselected**). The focused tests use only synthetic identifiers and the
    runner-owned disposable database; no production behavior or schema changed.
 
@@ -214,13 +212,13 @@ documentation. Status describes this checkout, not production availability._
    currently mounted without a version prefix; `/v1/` and `/v2/` remain future
    compatibility policy, not implemented route claims.
 
-8. **[completed] Record the approved removal of legacy finalization**
+8. **[completed] Remove legacy finalization**
    (PRD §10; ARCHITECTURE §5; SPEC-0003).
 
-   Impact: remove the flag, Redis-buffer keys, debounce, legacy IA worker handling,
-   single-replica recovery limitation, and legacy test matrix; retain only the
-   persistent DigiSac-history mode. The compatibility/legacy section of SPEC-0003
-   is removed as part of the refactor.
+   Outcome: removed the flag, Redis-buffer keys, debounce, legacy IA worker
+   handling, single-replica recovery limitation, and legacy test matrix; only
+   the persistent DigiSac-history mode remains. SPEC-0003 now documents the
+   persistent-only contract.
 
 ## Discrepancies, dependencies, and non-work
 
@@ -229,9 +227,9 @@ documentation. Status describes this checkout, not production availability._
   by SPEC-0001–0004 v1.1. Item 1 now versions the canonical test modules and
   isolates their persistent-mode evidence; item 2 now supplies the executable
   PostgreSQL runner.
-- SPEC-0003, PRD §10, and ARCHITECTURE now record the approved removal of the
-  legacy finalization mode; the implementation refactor and replacement tests
-  remain delivery work.
+- SPEC-0003, PRD §10, and ARCHITECTURE now record the completed removal of the
+  legacy finalization mode; persistent-cycle tests and recovery evidence remain
+  the verification baseline.
 - The mounted `/webhook/debug` returns `raw_payload` after HMAC validation when
   configured; the unmounted handler also prints/returns raw headers and body.
   The mounted response is now documented as an internal diagnostic exception to

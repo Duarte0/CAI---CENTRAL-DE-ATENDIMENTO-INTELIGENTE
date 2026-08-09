@@ -19,13 +19,13 @@ As rotas montadas são `POST /webhook/digisac`, `POST /webhook/debug`, `GET /hea
 1. `POST /webhook/digisac` **deve** aceitar `ticket.created`, `ticket.updated`, `message.created` e `message.updated`. Evento não suportado **deve** retornar `200` com motivo seguro e não pode alterar estado.
 2. JSON inválido, payload não objeto ou `data` não objeto **deve** retornar `400`. Com `WEBHOOK_SECRET` configurado, a assinatura HMAC-SHA256 de `X-Digisac-Signature` sobre o corpo bruto **deve** ser validada antes da normalização; hex puro e `sha256=<hex>` são aceitos e assinatura ausente/inválida retorna `401`.
 3. O adaptador **deve** aceitar `chat`, `document`, `ptt`, `audio`, `voice` e `image`. Documento com MIME `image/*` **deve** tornar-se imagem internamente; documento não-imagem continua documento. Só `id`, nome, nome público, extensão e MIME seguros podem ser normalizados para trabalho posterior.
-4. Bot, `isFromMe`, tipo não suportado, chat vazio e mensagem sem ticket **devem** ser ignorados antes de reserva de mídia e idempotência. A resposta **deve** ser `200` com motivo seguro e não pode enfileirar, bufferizar ou reagendar fechamento.
-5. `ticket.updated` **deve** capturar atribuições observadas idempotentemente. Fechamento sem protocolo válido **deve** ser ignorado com `200`; com protocolo, deve acionar somente o modo de finalização ativo. Abertura/reabertura cria ou recupera ciclo apenas no modo persistente e não publica classificação na reabertura.
+4. Bot, `isFromMe`, tipo não suportado, chat vazio e mensagem sem ticket **devem** ser ignorados antes de reserva de mídia e idempotência. A resposta **deve** ser `200` com motivo seguro e não pode enfileirar ou criar trabalho de ciclo.
+5. `ticket.updated` **deve** capturar atribuições observadas idempotentemente. Fechamento sem protocolo válido **deve** ser ignorado com `200`; com protocolo, deve persistir e publicar um ciclo persistente. Abertura/reabertura cria ou recupera ciclo e não publica classificação na reabertura.
 
 ## Idempotência, mídia e respostas
 
 1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da marcação transitória de idempotência e antes da publicação Redis. Falha de publicação **deve** liberar o marcador de publicação para repetição/reconciliação.
-2. No modo legado, repetição **não pode** duplicar buffer ou geração de fechamento. No modo por histórico, ciclo e reserva persistentes são a deduplicação de trabalho relevante.
+2. Repetição **não pode** duplicar ciclo, reserva ou publicação persistente; ciclo e reserva persistentes são a deduplicação de trabalho relevante.
 3. A rota de produção normalmente retorna `202`; eventos seguramente ignorados retornam `200`. `POST /webhook/debug` **deve** usar a mesma HMAC quando `WEBHOOK_SECRET` estiver configurado e apenas normalizar/devolver diagnóstico, sem escrita ou fila.
 4. `GET /conversations/{conversation_id}/status`, `/result`, `/cycles` e `GET /cycles/{cycle_id}/status`, `/result` **devem** retornar o estado persistente por histórico. Conversa, ciclo ou resultado ausente **deve** retornar `404`.
 
@@ -35,10 +35,10 @@ Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo saniti
 
 Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes de idempotência, falha de publicação, fechamento/reabertura e `404` nas consultas. O diagnóstico deve provar HMAC antes do parse, ausência de escrita/publicação e o formato atual que inclui `raw_payload`; testes de logs devem provar que a rota de produção não registra corpo bruto.
 
-- Repetição do webhook não produz fila, reserva, buffer ou ciclo duplicado.
+- Repetição do webhook não produz fila, reserva ou ciclo duplicado.
 - PDF `document` não entra na fila visual; `document` MIME `image/*` entra uma única vez.
 - Com segredo configurado, uma assinatura inválida não atinge normalização nem filas.
-- Uma chamada de diagnóstico autenticada não cria reserva, buffer, ciclo ou job e devolve o payload recebido somente na sua resposta de diagnóstico.
+- Uma chamada de diagnóstico autenticada não cria reserva, ciclo ou job e devolve o payload recebido somente na sua resposta de diagnóstico.
 
 ## Decisões registradas
 

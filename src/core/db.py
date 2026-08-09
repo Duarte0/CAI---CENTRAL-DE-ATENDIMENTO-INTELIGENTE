@@ -206,17 +206,12 @@ def _verify_schema_sync() -> None:
         _schema_capabilities.classification_messages,
         _schema_capabilities.conversation_cycles,
     )
-    if settings.digisac_history_finalization_enabled and not (
-        _schema_capabilities.conversation_cycles
-    ):
+    if not _schema_capabilities.conversation_cycles:
         raise RuntimeError(
-            "DIGISAC_HISTORY_FINALIZATION_ENABLED requires migration "
+            "persistent finalization requires migration "
             "0013_conversation_cycles"
         )
-    if (
-        settings.digisac_history_finalization_enabled
-        and row[0] != CURRENT_SCHEMA_REVISION
-    ):
+    if row[0] != CURRENT_SCHEMA_REVISION:
         raise RuntimeError(
             "durable finalization requires migration "
             f"{CURRENT_SCHEMA_REVISION}"

@@ -49,7 +49,7 @@ flowchart LR
 | \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, and queries. | Writes PostgreSQL and Redis. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
-| \`ia_worker\` | Consumes legacy IA jobs and persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
+| \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
 | \`audio_worker\` | Downloads audio from DigiSac, calls Groq transcription, and persists status/result. | PostgreSQL reservation/status; Redis queue and dead letter. |
 | \`image_worker\` | Downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation/status; Redis queue and dead letter. |
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
@@ -81,9 +81,7 @@ sequenceDiagram
     alt human audio or image
         A->>P: reserve media row
         A->>R: publish media job
-    else text in legacy mode
-        A->>R: atomic buffer append
-    else persistent-history mode
+    else text, document, or ticket lifecycle
         A->>P: maintain ticket/cycle state
     end
     A-->>D: 202 accepted or 200 ignored
@@ -98,10 +96,10 @@ sequenceDiagram
   \`401\` before normalization.
 - Invalid JSON or a non-object \`data\` field returns \`400\`.
 - Bot messages, \`isFromMe\` messages, empty chats, missing tickets, and
-  unsupported message types are ignored without queueing or buffering.
+  unsupported message types are ignored without queueing or cycle work.
 - Normalized file data keeps safe metadata such as ID, name, public name,
   extension, and MIME type. Download URLs, tokens, and binary data do not enter
-  Redis buffers, context snapshots, or classification records.
+  context snapshots, queue payloads, or classification records.
 - A \`document\` whose MIME type starts with \`image/\` is treated as an image;
   other documents remain documents.
 
@@ -128,34 +126,27 @@ record.
 | \`audio_transcription_queue\` | API/recovery | \`audio_worker\` | \`audio_transcription_dead_letter\` |
 | \`image_extraction_queue\` | API/recovery | \`image_worker\` | \`image_extraction_dead_letter\` |
 
-The legacy IA worker also uses \`ia_processing\` while a job is claimed.
 Persistent jobs use PostgreSQL publication markers and leases so a failure
-between database persistence and Redis publication can be recovered.
+between database persistence and Redis publication can be recovered. The worker
+does not require a second Redis processing queue: a popped job is recovered from
+its durable cycle marker by reconciliation after a process failure.
 
 ### Transient keys
 
 Important key families include:
 
-- \`ticket_last_message_at:*\` and \`ticket_protocol:*\` for short-lived ticket
-  coordination;
 - \`processed:*\` for temporary webhook idempotency;
-- \`ia:cycle:{cycle_id}\` for
-  classification coordination/idempotency.
-
-The former legacy buffer and debounce key families are scheduled for removal
-with the complete finalization refactor.
+- TTL-based \`ia_status:*\` and \`ia_result:*\` compatibility views.
 
 ## 5. Finalization modes
 
-The current checkout has a persistent-history mode and a feature-flagged legacy
-Redis-buffer compatibility mode. `DIGISAC_HISTORY_FINALIZATION_ENABLED=true`
-selects persistent history; `false` is the code default and selects the legacy
-path. Persistent history is the approved long-term architecture. Removing the
-flag and legacy path is approved, but the refactor is not implemented here.
+Persistent DigiSac-history finalization is the only supported mode. Ticket
+open/reopen events create durable cycles, and closure persists a cycle before
+publishing its job.
 
 ### 5.1 Persistent DigiSac-history mode
 
-When enabled, each ticket opening/reopening creates or reuses a persistent
+Each ticket opening/reopening creates or reuses a persistent
 conversation cycle. Closing a ticket persists the cycle before publishing its
 IA job.
 
@@ -177,13 +168,6 @@ The IA worker then:
 
 Persistent cycle publication is guarded by \`enqueued_at\`. Reconcilers only
 republish due work and recover jobs whose publication/lease has expired.
-
-### 5.2 Legacy Redis-buffer mode (implemented compatibility path; scheduled for removal)
-
-When the flag is `false`, the API appends messages to `buffer:{conversation_id}`
-and uses Redis debounce generations. Its flag, key families, debounce logic, IA
-worker buffer handling, and single-replica recovery limitation will be removed.
-The persistent cycle mode remains as the only mode after that refactor.
 
 ## 6. Persistent cycle state machine
 
@@ -337,8 +321,8 @@ docker compose -p cai ps
 docker compose -p cai logs -f api ia_worker audio_worker image_worker
 \`\`\`
 
-The persistent-history flag must be changed through a coordinated rollout:
-migrations first, then recreate API and IA worker with the new value.
+The persistent-cycle schema must be migrated before API and worker rollout. The
+application verifies that schema at startup and does not create or mutate it.
 
 ## 12. Reliability and recovery invariants
 
@@ -369,9 +353,8 @@ records these delivery limitations:
 - Data retention is indefinite; no automatic deletion or archival is planned.
 - Historical assignment events are preserved chronologically to track department
   routing from ticket open to close and support future Acessórias integration.
-- The legacy Redis-buffer mode is still implemented behind the flag and approved
-  for complete deprecation and removal; persistent history is the only long-term
-  mode.
+- Persistent DigiSac-history finalization is the only supported mode; the former
+  Redis buffer, debounce, feature flag, and legacy worker branch were removed.
 - The mounted debug response currently returns raw payload to its internal
   caller after HMAC validation when configured; Phase 1 item 5 still owns the
   least-privilege, redaction, retention, and audience decision.

@@ -54,7 +54,9 @@ async def test_text_webhook_does_not_publish_an_ia_cycle(monkeypatch):
     }
     result = await send(monkeypatch, redis, payload)
     assert result["status"] == "received"
-    assert redis.values == {}
+    assert list(redis.values) and all(
+        key.startswith("processed:") for key in redis.values
+    )
     assert redis.queues == {}
 
 

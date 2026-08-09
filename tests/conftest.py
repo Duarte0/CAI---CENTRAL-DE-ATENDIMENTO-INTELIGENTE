@@ -14,7 +14,6 @@ import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 
-from src.core.config import settings
 from src.core.db import close_database, initialize_database
 
 TEST_DATABASE_URL = os.environ.get("CAI_TEST_DATABASE_URL")
@@ -41,14 +40,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
-@pytest.fixture(autouse=True)
-def persistent_finalization(monkeypatch):
-    """Make every test independent of a developer's finalization setting."""
-    monkeypatch.setenv("DIGISAC_HISTORY_FINALIZATION_ENABLED", "true")
-    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
-    yield
-
-
 @pytest_asyncio.fixture(autouse=True)
 async def postgres_state(request):
     global _schema_ready
@@ -60,6 +51,8 @@ async def postgres_state(request):
         yield
         return
     assert TEST_DATABASE_URL
+    from src.core.config import settings
+
     previous_url = settings.database_url
     previous_environment_url = os.environ.get("DATABASE_URL")
     settings.database_url = TEST_DATABASE_URL

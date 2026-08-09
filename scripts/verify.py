@@ -93,7 +93,6 @@ def prepare_test_environment(
     environment = dict(source)
     environment["CAI_TEST_DATABASE_URL"] = target_url
     environment["DATABASE_URL"] = target_url
-    environment["DIGISAC_HISTORY_FINALIZATION_ENABLED"] = "true"
     existing_pythonpath = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = (
         str(ROOT)
@@ -273,7 +272,6 @@ def run() -> int:
 
         offline_environment = dict(os.environ)
         offline_environment.pop("CAI_TEST_DATABASE_URL", None)
-        offline_environment["DIGISAC_HISTORY_FINALIZATION_ENABLED"] = "true"
         run_stage(
             "offline pytest",
             [

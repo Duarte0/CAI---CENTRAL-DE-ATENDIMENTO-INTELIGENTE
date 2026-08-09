@@ -93,13 +93,13 @@ remain documents.
 Bot messages, `isFromMe` messages, unsupported types, empty chats, and messages
 without a ticket are ignored without creating analysis work. Normalized file
 metadata is limited to safe identifiers and descriptive fields; download URLs,
-tokens, and binary data are not placed in buffers or analysis snapshots.
+  tokens, and binary data are not placed in queue payloads or analysis snapshots.
 
 ### 5.2 Ticket lifecycle and assignment history
 
-Ticket creation and reopening establish the beginning of a conversation cycle
-when persistent-history finalization is enabled. Ticket updates capture observed
-department and user assignments idempotently and chronologically.
+Ticket creation and reopening establish the beginning of a persistent
+conversation cycle. Ticket updates capture observed department and user
+assignments idempotently and chronologically.
 
 Ticket closure requires a valid protocol before classification is scheduled.
 The protocol is persisted as metadata and may be used to construct
@@ -126,16 +126,14 @@ dependent persistent cycle until the image is successfully recovered.
 
 ### 5.4 Finalization mode
 
-The checkout currently contains two feature-flagged finalization paths. When
-`DIGISAC_HISTORY_FINALIZATION_ENABLED=true`, persistent DigiSac-history
-finalization is used; when it is `false` (the code default), the legacy
-Redis-buffer path remains available for compatibility. Persistent history is the
-approved long-term mode, and removal of the flag and legacy path is approved but
-not implemented in this checkout.
+Persistent DigiSac-history finalization is the only supported finalization path.
+The former feature flag, Redis buffer, debounce generation, and fallback worker
+loop have been removed. PostgreSQL cycles are the durable authority and Redis
+only transports persistent-cycle/media jobs and transient operational values.
 
 #### Persistent DigiSac-history mode
 
-When enabled, CAI persists a cycle before publishing its IA job. The IA worker:
+CAI persists a cycle before publishing its IA job. The IA worker:
 
 1. claims the cycle using PostgreSQL state and a lease;
 2. retrieves all pages of the ticket's DigiSac history;
@@ -154,11 +152,6 @@ Persistent claims, leases, publication markers, `next_attempt_at`, and
 reconcilers allow work abandoned by a process failure to be recovered without
 duplicating terminal classifications.
 
-The legacy Redis-buffer mode, its debounce logic, Redis key families, legacy IA
-worker buffer handling, and its single-replica recovery limitation are approved
-for removal. Tests that selected the legacy mode have been replaced or isolated
-by the tracked persistent-mode baseline; the production refactor remains
-follow-up work.
 
 ## 6. Context and AI contract
 
@@ -225,8 +218,8 @@ links, media states/results, assignment history, DigiSac directory data, and
 persistent cycles. Alembic owns the schema; application startup must verify the
 schema and must not create or mutate tables.
 
-Redis is limited to queues, locks, legacy buffers, debounce state, temporary
-idempotency, and TTL-based status/results.
+Redis is limited to queues, locks, temporary idempotency, and TTL-based
+status/results.
 
 Classifications use a unique UUIDv7 `public_id`. Classification identity and
 message membership must be idempotent, including concurrent retries. Persistent
@@ -277,10 +270,10 @@ The observed local runner evidence on 2026-08-09 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 128 passed, 33 skipped (the skips are deliberately absent
+- offline pytest: 118 passed, 33 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
 - Alembic: `0014_retry_scheduling` applied and verified on the runner target; and
-- PostgreSQL pytest: 33 passed, 128 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 33 passed, 118 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, and dependent image wake-up.
 
@@ -298,9 +291,9 @@ The product owner has decided the following policies:
 | API consumer authentication and authorization | Determines whether query endpoints can be exposed beyond trusted internal services. | Decided — single internal operator; no query authentication/authorization; require production `WEBHOOK_SECRET`; revisit for Acessórias. |
 | Rate limits and external compatibility guarantees | Determines production API protection and versioning commitments. | No rate limiting. The current query routes are unversioned in source; `/v1/` and `/v2/` compatibility remains a future versioning policy and is not claimed as mounted behavior. Webhooks/operations remain unversioned. |
 | SLA targets for webhook acceptance and classification completion | Determines capacity, alerting, and provider fallback design. | Decided — no SLA targets, alerting thresholds, or capacity commitments at this stage. |
-| Long-term Redis-buffer posture | Determines whether to retain, migrate, or deprecate the single-worker legacy path. | Decided — fully deprecate and remove the legacy mode, flag, Redis keys, code paths, and legacy test coverage; persistent history remains. Implementation is still pending; the flag and path remain in the current checkout. |
+| Long-term Redis-buffer posture | Determines whether to retain, migrate, or deprecate the single-worker legacy path. | Completed — the legacy mode, flag, Redis keys, code paths, and legacy test coverage were removed; persistent history remains. |
 | Historical assignment interpretation | Determines which assignment events are business-significant and how they are presented. | Decided — preserve all observed transfers chronologically to track departments from open to close and support future Acessórias routing. |
-| Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner with explicit mode selection, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
+| Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and future Acessórias integration value. |
 
 ## 11. Source traceability
