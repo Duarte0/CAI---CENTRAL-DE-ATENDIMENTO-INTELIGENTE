@@ -108,7 +108,7 @@ documentation. Status describes this checkout, not production availability._
    Compose project, temporary database, network form, and cleanup before the
    fixture truncates its target.
 
-3. **[P0 | pending] Reconcile and version the documentation/spec baseline.**
+3. **[P0 | completed] Reconcile and version the documentation/spec baseline.**
 
    Outcome: README, PRD, architecture, and `specs/` are a single,
   implementation-derived baseline with product decisions explicitly recorded,
@@ -116,40 +116,48 @@ documentation. Status describes this checkout, not production availability._
 
    Completion criteria:
 
-   - review and version the existing working-tree documentation after verifying
+   - [x] review and version the existing working-tree documentation after verifying
      variables, routes, Compose behavior, migrations, recovery commands, and
      test commands against source;
-   - the 2026-08-09 specification pass reconciled those contracts: SPEC-0003
-     v1.2 records the approved removal of legacy mode, and SPEC-0002 v1.2 records
+   - [x] the 2026-08-09 specification pass reconciled those contracts: SPEC-0003
+     v1.2 records the approved removal of legacy mode, and SPEC-0002 v1.3 records
      the mounted `/webhook/debug` raw-payload response as an internal diagnostic
      behavior rather than a sanitized or public API contract. The associated
-  authorization and retention decisions are recorded, while diagnostic
-  redaction and exposure remain limited to internal use under item 5;
-   - retain implementation-derived status until product approval rather than
+     authorization and retention decisions are recorded, while diagnostic
+     redaction and exposure remain limited to internal use under item 5;
+   - [x] retain implementation-derived status until product approval rather than
      claiming approved policy, and update README/API wording to state the
      resulting debug-payload contract explicitly; and
-   - update documentation to distinguish the locally verified offline baseline
+   - [x] update documentation to distinguish the locally verified offline baseline
      from the unverified PostgreSQL/runtime baseline; and
-   - keep PostgreSQL as durable source of truth and Redis as coordination while
-     removing the legacy worker's single-replica recovery limitation.
+   - [x] keep PostgreSQL as durable source of truth and Redis as coordination,
+     while documenting the still-implemented legacy worker limitation and its
+     approved future removal.
+
+   Evidence: the documentation-only reconciliation was validated against the
+   source, migrations, tests, and the observed `scripts/verify.py` run on
+   2026-08-09. That run passed compileall, Pyright, offline pytest (128 passed,
+   28 skipped), Alembic `0014_retry_scheduling`, and PostgreSQL pytest (28
+   passed, 128 deselected). It does not claim production verification.
 
    Dependency: item 1 for reproducible test references. This supersedes the
    previous plan item that proposed creating PRD/architecture/spec files: they
-   now exist, but remain unversioned and partially stale.
+   now exist and this item reconciles their implementation status and evidence.
 
 ### Phase 1 — Close operational and exposed-surface gaps
 
-4. **[P1 | pending] Verify durable operation on the executable runner**
+4. **[P1 | pending] Verify broader durable operation on the executable runner**
    (SPEC-0001–0003).
 
    Outcome: Alembic head and the durable cycle/media paths are proven together
    on a fresh disposable database.
 
-   Completion criteria: the runner in item 2 executes all 28 currently skipped
-   database tests and retains coverage for cycle claim/lease, publication
-   recovery, due-media wake-up, blocked-image behavior, and idempotent queue
-   publication. Investigate failures as implementation defects only after the
-   runner has a confirmed reachable target.
+   Completion criteria: extend the already successful runner baseline with
+   broader operational checks for cycle claim/lease, publication recovery,
+   due-media wake-up, blocked-image behavior, and idempotent queue publication.
+   The current runner has already executed all 28 PostgreSQL tests against its
+   disposable target; investigate failures as implementation defects only after
+   the runner has a confirmed reachable target.
 
    Dependency: item 2. Do not run backfills or migrations against the active
    deployment under this item; production rollout still requires separately
@@ -197,8 +205,9 @@ documentation. Status describes this checkout, not production availability._
    policy** (PRD §10; SPEC-0001–0002).
 
    Impact: all observed assignment transfers remain chronological for future
-   Acessórias routing. The internal query API has no rate limiting and uses `/v1/`
-   routes; future breaking changes use `/v2/` while `/v1/` remains functional.
+   Acessórias routing. The internal query API has no rate limiting and is
+   currently mounted without a version prefix; `/v1/` and `/v2/` remain future
+   compatibility policy, not implemented route claims.
 
 8. **[completed] Record the approved removal of legacy finalization**
    (PRD §10; ARCHITECTURE §5; SPEC-0003).
@@ -218,11 +227,15 @@ documentation. Status describes this checkout, not production availability._
 - SPEC-0003, PRD §10, and ARCHITECTURE now record the approved removal of the
   legacy finalization mode; the implementation refactor and replacement tests
   remain delivery work.
-- The mounted `/webhook/debug` returns `raw_payload` after HMAC validation;
-  the unmounted handler also prints/returns raw headers and body. This conflicts
-  with SPEC-0002's general sanitized-response rule, while PRD §8 describes raw
-  diagnostic output. Item 5 owns the security/product decision and subsequent
-  contract reconciliation.
+- The mounted `/webhook/debug` returns `raw_payload` after HMAC validation when
+  configured; the unmounted handler also prints/returns raw headers and body.
+  The mounted response is now documented as an internal diagnostic exception to
+  the general sanitized-response rule, while item 5 owns least-privilege,
+  redaction, retention, and audience policy.
+- Earlier SPEC-0002/PRD wording described query routes as `/v1/`, but
+  `src/api/routes.py` currently mounts them without that prefix. The baseline
+  now follows the source and records `/v1/`/`/v2/` as future policy only; adding
+  versioned aliases is outside this documentation issue.
 - The current code search found no TODO/FIXME/stub backlog. Inspected `pass`
   statements are exception or migration control flow, not placeholders.
 - There is no hosted CI configuration; `scripts/verify.py` is the canonical

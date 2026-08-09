@@ -12,7 +12,12 @@ Definir a finalização por histórico DigiSac e os contratos de mídia, context
 
 ## Modo persistente, ciclo e concorrência
 
-1. O modo persistente é o único modo suportado: abertura/reabertura **deve** criar ou recuperar um ciclo persistente e fechamento **deve** persistir o ciclo antes de publicar o job. Falha de publicação não pode apagar o ciclo e **deve** permitir reconciliação.
+1. Quando `DIGISAC_HISTORY_FINALIZATION_ENABLED=true`, o modo persistente é o
+   caminho aprovado: abertura/reabertura **deve** criar ou recuperar um ciclo
+   persistente e fechamento **deve** persistir o ciclo antes de publicar o job.
+   Falha de publicação não pode apagar o ciclo e **deve** permitir
+   reconciliação. O caminho Redis legado ainda existe quando a flag está em
+   `false`, mas sua remoção foi aprovada e permanece como follow-up.
 2. O ciclo **deve** registrar sequência por ticket, chaves de abertura/fechamento, snapshot seguro, vínculo ordenado de mensagens, status, `next_attempt_at`, marca de publicação e lease. Claims/transições **devem** usar estado esperado e exclusão concorrente; apenas um trabalhador pode reclamar o mesmo trabalho elegível.
 3. `next_attempt_at` **deve** ser a fonte de elegibilidade. Reconciliadores **não podem** republicar antes dele nem duplicar job marcado como publicado. Backoff local e `Retry-After` **devem** usar o horário mais tardio aplicável.
 4. A chave `ia:cycle:{cycle_id}` e a identidade persistida da classificação **devem** impedir análise terminal duplicada. Conclusão **deve** persistir classificação, snapshot e estado terminal; avisos resultam em `completed_with_warnings`.

@@ -1,18 +1,18 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
 - **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas versionadas
-- **Versão:** 1.2
+- **Versão:** 1.3
 - **Prioridade/Fase:** P0 / baseline de requisitos
 - **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` itens 5 e 7; SPEC-0001
 - **Dependências:** SPEC-0001
 
 ## Objetivo e não objetivos
 
-Especificar a entrada autenticada de eventos DigiSac, a normalização segura e a superfície operacional de consulta. O sistema tem um único operador interno: consultas não exigem login, API key, JWT ou camada de autorização, e não há rate limiting. Quando a integração Acessórias for construída, os requisitos de controle de acesso serão revisitados. A consulta usa `/v1/`; uma mudança incompatível futura introduzirá `/v2/`, mantendo `/v1/` durante a migração.
+Especificar a entrada autenticada de eventos DigiSac, a normalização segura e a superfície operacional de consulta. O sistema tem um único operador interno: consultas não exigem login, API key, JWT ou camada de autorização, e não há rate limiting. Quando a integração Acessórias for construída, os requisitos de controle de acesso serão revisitados. As consultas estão sem prefixo de versão no código atualmente montado; uma política futura pode introduzir `/v1/` e, depois, `/v2/`, mas esses prefixos não são comportamento implementado neste checkout.
 
 ## Estado de referência
 
-As rotas montadas são `POST /webhook/digisac`, `POST /webhook/debug`, `GET /health`, `GET /queues`, e as consultas de conversa/ciclo versionadas em `/v1/`. O atual `POST /webhook/debug` valida a HMAC quando configurada, não escreve nem enfileira, e devolve `raw_payload`, extração e normalização ao chamador para diagnóstico interno. Em produção, `WEBHOOK_SECRET` deve estar configurado para validar a origem DigiSac e impedir injeção de eventos; não há autenticação adicional de leitores. Há também um manipulador não montado em `src/api/debug_routes.py` que imprime headers e corpo bruto; ele **não deve** ser montado, anunciado ou usado como contrato.
+As rotas montadas são `POST /webhook/digisac`, `POST /webhook/debug`, `GET /health`, `GET /queues`, e as consultas de conversa/ciclo sem prefixo de versão. O atual `POST /webhook/debug` valida a HMAC quando configurada, não escreve nem enfileira, e devolve `raw_payload`, extração e normalização ao chamador para diagnóstico interno. Em produção, `WEBHOOK_SECRET` deve estar configurado para validar a origem DigiSac e impedir injeção de eventos; não há autenticação adicional de leitores. Há também um manipulador não montado em `src/api/debug_routes.py` que imprime headers e corpo bruto; ele **não deve** ser montado, anunciado ou usado como contrato.
 
 ## Ingestão, validação e normalização
 
@@ -27,7 +27,7 @@ As rotas montadas são `POST /webhook/digisac`, `POST /webhook/debug`, `GET /hea
 1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da marcação transitória de idempotência e antes da publicação Redis. Falha de publicação **deve** liberar o marcador de publicação para repetição/reconciliação.
 2. No modo legado, repetição **não pode** duplicar buffer ou geração de fechamento. No modo por histórico, ciclo e reserva persistentes são a deduplicação de trabalho relevante.
 3. A rota de produção normalmente retorna `202`; eventos seguramente ignorados retornam `200`. `POST /webhook/debug` **deve** usar a mesma HMAC quando `WEBHOOK_SECRET` estiver configurado e apenas normalizar/devolver diagnóstico, sem escrita ou fila.
-4. `GET /v1/conversations/{conversation_id}/status`, `/result`, `/cycles` e `GET /v1/cycles/{cycle_id}/status`, `/result` **devem** retornar o estado persistente por histórico. Conversa, ciclo ou resultado ausente **deve** retornar `404`.
+4. `GET /conversations/{conversation_id}/status`, `/result`, `/cycles` e `GET /cycles/{cycle_id}/status`, `/result` **devem** retornar o estado persistente por histórico. Conversa, ciclo ou resultado ausente **deve** retornar `404`.
 
 ## Segurança, observabilidade, testes e aceitação
 
@@ -42,4 +42,4 @@ Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignor
 
 ## Decisões registradas
 
-O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. Apenas as consultas usam `/v1/`; futuras mudanças incompatíveis usarão `/v2/` com `/v1/` funcional durante a migração. O controle de acesso será revisitado quando a integração Acessórias for construída.
+O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. O controle de acesso será revisitado quando a integração Acessórias for construída.

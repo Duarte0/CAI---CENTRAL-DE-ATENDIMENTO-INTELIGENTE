@@ -18,7 +18,8 @@ Ele termina na classificação e na disponibilização do resultado por API.
   ticket passou;
 - transcreve áudios e extrai o conteúdo visível de imagens em workers separados;
 - finaliza uma conversa quando o ticket é fechado, recuperando o histórico
-  completo da DigiSac ou usando o buffer Redis no modo legado;
+  completo da DigiSac no modo persistente ou usando temporariamente o buffer
+  Redis compatível enquanto a remoção do legado aprovada não é implementada;
 - classifica a intenção do cliente com a API da Groq;
 - persiste classificações, mensagens associadas, mídias, ciclos e snapshots no
   PostgreSQL;
@@ -49,7 +50,7 @@ DigiSac
   │    └─ fechamento → ciclo persistente → ia_queue
   │
   └─ message.created / message.updated
-       ├─ texto/documento → histórico DigiSac ou buffer Redis legado
+       ├─ texto/documento → ciclo persistente ou buffer Redis compatível
        ├─ áudio → reserva PostgreSQL → audio_transcription_queue
        └─ imagem → reserva PostgreSQL → image_extraction_queue
 
@@ -62,7 +63,8 @@ ia_worker
   ├─ aguarda/reagenda mídias pendentes de forma durável
   ├─ divide e resume contextos acima do limite seguro
   ├─ classifica a intenção do cliente com Groq
-  └─ grava classificação, snapshot e resultado no PostgreSQL/Redis
+  └─ grava classificação, snapshot e estado durável no PostgreSQL; publica
+     apenas status/resultados transitórios compatíveis no Redis
 ```
 
 ### Componentes
@@ -78,13 +80,14 @@ ia_worker
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
-camada transitória e de coordenação.
+camada transitória e de coordenação. O buffer e o debounce Redis continuam
+existindo somente no caminho legado temporário.
 
 ## Modos de finalização
 
 ### Ciclos persistentes por histórico DigiSac
 
-É o fluxo durável, ativado por:
+É o fluxo durável e o destino aprovado para a remoção do legado, ativado por:
 
 ```dotenv
 DIGISAC_HISTORY_FINALIZATION_ENABLED=true
@@ -108,7 +111,7 @@ mesmo se houver queda entre a persistência e a publicação no Redis.
 - uma mensagem só pode pertencer a um ciclo;
 - a chave `ia:cycle:{cycle_id}` torna a classificação idempotente.
 
-### Buffer Redis legado
+### Buffer Redis legado (compatibilidade temporária)
 
 Com o flag em `false` (padrão), mensagens são acumuladas em
 `buffer:{conversation_id}`. O fechamento agenda uma classificação com debounce;
@@ -116,8 +119,11 @@ mensagens tardias estendem a janela para evitar snapshot parcial. O worker move
 o job de `ia_queue` para `ia_processing`, recupera itens abandonados na
 inicialização e envia falhas definitivas para `ia_dead_letter`.
 
-Esse modo é mantido por compatibilidade. A recuperação de `ia_processing`
-pressupõe uma única réplica do `ia_worker`.
+Esse modo ainda está implementado para compatibilidade quando a flag está em
+`false` (o padrão do código). A remoção da flag, do buffer, do debounce, das
+chaves e do tratamento correspondente no worker foi aprovada, mas ainda é um
+follow-up de implementação; a recuperação de `ia_processing` pressupõe uma
+única réplica do `ia_worker` enquanto esse caminho existir.
 
 ## Tratamento do contexto
 
@@ -276,6 +282,11 @@ Cada worker deve rodar em seu próprio processo.
 | `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo. |
 | `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo específico. |
 
+As consultas estão sem prefixo de versão no código atualmente montado. A
+política de compatibilidade para futuras mudanças incompatíveis continua sendo
+registrada nas especificações, mas `/v1/` ainda não é uma rota montada neste
+checkout.
+
 O formato real do webhook é o envelope DigiSac. Um exemplo mínimo de mensagem:
 
 ```json
@@ -395,6 +406,13 @@ também é verificada pelo processo de teste. O projeto, rede e armazenamento
 temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
 fora da execução canônica.
+
+`POST /webhook/debug` é uma superfície interna de diagnóstico: usa a mesma
+validação HMAC quando `WEBHOOK_SECRET` está configurado, não escreve nem
+enfileira trabalho e devolve `raw_payload` somente na resposta de diagnóstico.
+Esse corpo bruto não deve ser copiado para logs, snapshots, filas ou consultas.
+`src/api/debug_routes.py` contém um handler não montado e não anunciado; ele não
+é um contrato operacional.
 
 ## Operação
 

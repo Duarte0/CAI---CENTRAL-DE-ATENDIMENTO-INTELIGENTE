@@ -145,11 +145,13 @@ Important key families include:
 The former legacy buffer and debounce key families are scheduled for removal
 with the complete finalization refactor.
 
-## 5. Persistent finalization mode
+## 5. Finalization modes
 
-Persistent DigiSac-history finalization is the only supported mode. The
-\`DIGISAC_HISTORY_FINALIZATION_ENABLED\` flag will be removed in the complete
-refactor.
+The current checkout has a persistent-history mode and a feature-flagged legacy
+Redis-buffer compatibility mode. `DIGISAC_HISTORY_FINALIZATION_ENABLED=true`
+selects persistent history; `false` is the code default and selects the legacy
+path. Persistent history is the approved long-term architecture. Removing the
+flag and legacy path is approved, but the refactor is not implemented here.
 
 ### 5.1 Persistent DigiSac-history mode
 
@@ -176,12 +178,12 @@ The IA worker then:
 Persistent cycle publication is guarded by \`enqueued_at\`. Reconcilers only
 republish due work and recover jobs whose publication/lease has expired.
 
-### 5.2 Legacy Redis-buffer mode (scheduled for removal)
+### 5.2 Legacy Redis-buffer mode (implemented compatibility path; scheduled for removal)
 
-The former mode appended messages to \`buffer:{conversation_id}\` and used
-Redis debounce generations. Its flag, key families, debounce logic, IA worker
-buffer handling, and single-replica recovery limitation will be removed. The
-persistent cycle mode remains as the only mode after the refactor.
+When the flag is `false`, the API appends messages to `buffer:{conversation_id}`
+and uses Redis debounce generations. Its flag, key families, debounce logic, IA
+worker buffer handling, and single-replica recovery limitation will be removed.
+The persistent cycle mode remains as the only mode after that refactor.
 
 ## 6. Persistent cycle state machine
 
@@ -294,18 +296,25 @@ Implemented routes include:
 | Route | Purpose |
 | --- | --- |
 | \`POST /webhook/digisac\` | Authenticated production webhook ingestion. |
-| \`POST /webhook/debug\` | Normalization/debug view without normal processing writes. |
+| \`POST /webhook/debug\` | Internal diagnostic view, HMAC-validated when configured, without normal processing writes; currently returns \`raw_payload\`. |
 | \`GET /health\` | PostgreSQL and Redis readiness. |
 | \`GET /queues\` | Redis queue and dead-letter metrics. |
-| \`GET /v1/conversations/{conversation_id}/status\` | Conversation processing status. |
-| \`GET /v1/conversations/{conversation_id}/result\` | Latest conversation result. |
-| \`GET /v1/conversations/{conversation_id}/cycles\` | Persistent cycle list. |
-| \`GET /v1/cycles/{cycle_id}/status\` | Persistent cycle status. |
-| \`GET /v1/cycles/{cycle_id}/result\` | Persistent cycle result. |
+| \`GET /conversations/{conversation_id}/status\` | Conversation processing status. |
+| \`GET /conversations/{conversation_id}/result\` | Latest conversation result. |
+| \`GET /conversations/{conversation_id}/cycles\` | Persistent cycle list. |
+| \`GET /cycles/{cycle_id}/status\` | Persistent cycle status. |
+| \`GET /cycles/{cycle_id}/result\` | Persistent cycle result. |
 
 The webhook normally returns \`202\`; safely ignored events return \`200\` with an
-ignore reason. Missing persisted entities return \`404\`. Logs and operational
-responses should expose IDs and status without raw bodies or secrets.
+ignore reason. Missing persisted entities return \`404\`. The mounted debug
+route uses the same HMAC validation when configured, performs no writes or
+queue publication, and currently returns the received \`raw_payload\` only in
+that internal diagnostic response. Logs and normal operational responses must
+expose IDs and status without raw bodies or secrets. The unmounted
+\`src/api/debug_routes.py\` handler is not an advertised or mounted contract.
+The query routes above are currently unversioned in the mounted FastAPI app;
+future `/v1/` compatibility is a policy/reference target, not an implemented
+prefix in this checkout.
 
 ## 11. Deployment topology
 
@@ -351,18 +360,20 @@ migrations first, then recreate API and IA worker with the new value.
 The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
-- The full intended test suite is not fully versioned or deterministic; legacy
-  ticket-closure tests currently assume the Redis path while the workspace flag
-  enables persistent cycles.
-- PostgreSQL-marked tests require an isolated disposable PostgreSQL service;
-  static checks do not prove deployment/runtime health.
-- No CI runner currently enforces compile, strict Pyright, offline tests, and
-  PostgreSQL integration tests together.
+- The local canonical runner proves the tracked static, offline, migration, and
+  PostgreSQL baseline on a disposable target, but static/local evidence does
+  not prove production availability or release readiness.
+- Broader durable-operation verification remains Phase 1 item 4; no hosted CI
+  runner currently enforces the matrix.
 - Data retention is indefinite; no automatic deletion or archival is planned.
 - Historical assignment events are preserved chronologically to track department
   routing from ticket open to close and support future Acessórias integration.
-- The legacy Redis-buffer mode is approved for complete deprecation and removal;
-  persistent history is the only long-term mode.
+- The legacy Redis-buffer mode is still implemented behind the flag and approved
+  for complete deprecation and removal; persistent history is the only long-term
+  mode.
+- The mounted debug response currently returns raw payload to its internal
+  caller after HMAC validation when configured; Phase 1 item 5 still owns the
+  least-privilege, redaction, retention, and audience decision.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.
