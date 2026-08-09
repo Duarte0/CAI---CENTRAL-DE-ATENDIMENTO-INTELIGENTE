@@ -33,7 +33,7 @@ documentation. Status describes this checkout, not production availability._
 - **[completed] Isolated offline behavioral suite.** Both
   `PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q
   --ignore=tests/test_webhook_local.py` and the same command with `false`
-  produced **120 passed, 28 skipped** on 2026-08-09. The skipped tests require
+  produced **128 passed, 33 skipped** on 2026-08-09. The skipped tests require
   `CAI_TEST_DATABASE_URL`; the live webhook test remains opt-in. The test-owned
   fixture selects persistent finalization and restores environment/settings
   state after each test.
@@ -42,23 +42,22 @@ documentation. Status describes this checkout, not production availability._
   PostgreSQL 16 and a dynamically published host port, or uses the explicit
   `postgres-test:5432` Docker-network form when the runner is containerized.
   The observed run passed compileall, Pyright, offline pytest (**128 passed,
-  28 skipped**), process connectivity, Alembic
-  `0014_retry_scheduling`, and PostgreSQL pytest (**28 passed, 128
-  deselected**). The 28 offline skips are not PostgreSQL runtime evidence; the
+  33 skipped**), process connectivity, Alembic
+  `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 128
+  deselected**). The 33 offline skips are not PostgreSQL runtime evidence; the
   dedicated PostgreSQL stage had no prerequisite skips.
 
 ### Implemented but not reproducibly release-verified
 
-- **[completed] Canonical offline test suite is tracked and isolated.** 148
+- **[completed] Canonical offline test suite is tracked and isolated.** 161
   tests are collected locally (excluding the opt-in live webhook test), and the
   persistent close/reopen, duplicate-cycle, bot, negative-webhook, and
   publication-recovery coverage is versioned with the fixture boundary. A clean
   checkout can reproduce the offline evidence without a personal `.env` value.
 - **[completed] PostgreSQL migration/integration baseline.** The versioned
   runner proves the exact disposable target from the test process, migrates it
-  to Alembic head, and executes all 28 PostgreSQL tests. No production or
-  developer database was used. Phase 1 item 4 remains responsible for broader
-  operational verification beyond this baseline.
+  to Alembic head, and executes all 33 PostgreSQL tests. No production or
+  developer database was used.
 
 ## Priority plan
 
@@ -82,9 +81,9 @@ documentation. Status describes this checkout, not production availability._
      tracked persistent-cycle coverage; and
    - the clean-checkout offline command passes without personal `.env` input.
 
-   Evidence: the canonical command produces **120 passed, 28 skipped** with
-   either externally supplied flag value. The additional runner tests are
-   included in the full runner's **128 passed, 28 skipped** offline stage.
+   Evidence: the canonical command produces **128 passed, 33 skipped** with
+   either externally supplied flag value, including the focused operational
+   recovery tests skipped without `CAI_TEST_DATABASE_URL`.
 
 2. **[P0 | completed] Establish an executable PostgreSQL verification runner**
    (SPEC-0004 §§4–5; SPEC-0001–0003 acceptance).
@@ -137,7 +136,7 @@ documentation. Status describes this checkout, not production availability._
    Evidence: the documentation-only reconciliation was validated against the
    source, migrations, tests, and the observed `scripts/verify.py` run on
    2026-08-09. That run passed compileall, Pyright, offline pytest (128 passed,
-   28 skipped), Alembic `0014_retry_scheduling`, and PostgreSQL pytest (28
+   33 skipped), Alembic `0014_retry_scheduling`, and PostgreSQL pytest (33
    passed, 128 deselected). It does not claim production verification.
 
    Dependency: item 1 for reproducible test references. This supersedes the
@@ -146,7 +145,7 @@ documentation. Status describes this checkout, not production availability._
 
 ### Phase 1 — Close operational and exposed-surface gaps
 
-4. **[P1 | pending] Verify broader durable operation on the executable runner**
+4. **[P1 | completed] Verify broader durable operation on the executable runner**
    (SPEC-0001–0003).
 
    Outcome: Alembic head and the durable cycle/media paths are proven together
@@ -155,9 +154,15 @@ documentation. Status describes this checkout, not production availability._
    Completion criteria: extend the already successful runner baseline with
    broader operational checks for cycle claim/lease, publication recovery,
    due-media wake-up, blocked-image behavior, and idempotent queue publication.
-   The current runner has already executed all 28 PostgreSQL tests against its
-   disposable target; investigate failures as implementation defects only after
-   the runner has a confirmed reachable target.
+   `tests/test_operational_recovery_db.py` supplies the deterministic queue
+   transport and the runner executed all 33 PostgreSQL tests against its
+   disposable target.
+
+   Evidence: the 2026-08-09 run passed compileall, Pyright, offline pytest
+   (**128 passed, 33 skipped**), PostgreSQL 16 connectivity, Alembic
+   `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 128
+   deselected**). The focused tests use only synthetic identifiers and the
+   runner-owned disposable database; no production behavior or schema changed.
 
    Dependency: item 2. Do not run backfills or migrations against the active
    deployment under this item; production rollout still requires separately
@@ -250,6 +255,5 @@ documentation. Status describes this checkout, not production availability._
 
 ## Recommended next pass
 
-**Phase 1 item 4** — extend the verified baseline into broader durable-operation
-checks as needed. Product/security decisions in Phase 1–2 need owner input
-first.
+**Phase 1 item 5** — resolve the raw-payload diagnostic policy. Product/security
+decisions in that item still need owner input first.

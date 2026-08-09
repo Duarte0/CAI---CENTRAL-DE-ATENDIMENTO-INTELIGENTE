@@ -363,8 +363,9 @@ records these delivery limitations:
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target, but static/local evidence does
   not prove production availability or release readiness.
-- Broader durable-operation verification remains Phase 1 item 4; no hosted CI
-  runner currently enforces the matrix.
+- Phase 1 item 4 now has focused disposable-runner coverage for durable cycle
+  publication recovery, due-only media recovery, queue deduplication, and
+  dependent image wake-up; no hosted CI runner currently enforces the matrix.
 - Data retention is indefinite; no automatic deletion or archival is planned.
 - Historical assignment events are preserved chronologically to track department
   routing from ticket open to close and support future Acessórias integration.

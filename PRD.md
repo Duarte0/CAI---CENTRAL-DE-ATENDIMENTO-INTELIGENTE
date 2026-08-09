@@ -277,15 +277,16 @@ The observed local runner evidence on 2026-08-09 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 128 passed, 28 skipped (the skips are deliberately absent
+- offline pytest: 128 passed, 33 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
 - Alembic: `0014_retry_scheduling` applied and verified on the runner target; and
-- PostgreSQL pytest: 28 passed, 128 deselected, with no prerequisite skips.
+- PostgreSQL pytest: 33 passed, 128 deselected, with no prerequisite skips. The
+  additional operational slice covers durable cycle publication recovery,
+  due-only media recovery, queue deduplication, and dependent image wake-up.
 
 This evidence is local and disposable, not production availability or release
-readiness. Broader durable-operation verification remains Phase 1 item 4, and
-there is no hosted CI runner enforcing the matrix. The mounted debug payload
-policy remains the separate Phase 1 item 5 decision.
+readiness. There is no hosted CI runner enforcing the matrix. The mounted debug
+payload policy remains the separate Phase 1 item 5 decision.
 
 ## 10. Product decisions
 

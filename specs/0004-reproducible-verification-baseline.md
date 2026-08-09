@@ -1,8 +1,8 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** itens 1 e 2 implementados
-- **Versão:** 1.2
-- **Prioridade/Fase:** P0 / fase 0
+- **Status:** itens 1 e 2 implementados; verificação operacional do item 4 concluída
+- **Versão:** 1.3
+- **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` itens 1–4; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
@@ -14,9 +14,18 @@ do `.env` e `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
 fornece a URL exata ao subprocesso PostgreSQL. A execução observada produziu
-**128 passed, 28 skipped** na etapa offline, **28 passed, 128 deselected** na
-etapa PostgreSQL e zero diagnósticos no Pyright. Os 28 skips pertencem apenas à
+**128 passed, 33 skipped** na etapa offline, **33 passed, 128 deselected** na
+etapa PostgreSQL e zero diagnósticos no Pyright. Os 33 skips pertencem apenas à
 etapa offline, onde o banco deliberadamente não é fornecido.
+
+A verificação operacional do item 4 do plano foi adicionada ao mesmo contrato
+de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
+de fila determinístico e identificadores sintéticos para verificar claim/lease
+de ciclo, liberação após falha de publicação, agenda futura, recuperação de
+áudio/imagem sem duplicação e despertar seletivo de ciclos bloqueados por
+imagem. A execução observada produziu **33 passed, 128 deselected** no destino
+PostgreSQL 16 descartável; isso não comprova Redis, fornecedores, réplicas ou
+produção.
 
 ## Objetivo e não objetivos
 
@@ -49,4 +58,4 @@ hostname interno `postgres-test:5432` sem tocar em outros projetos Compose.
 
 ## Decisão registrada
 
-O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline com flag explícita e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`. A execução observada em 2026-08-09 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.
+O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline com flag explícita e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional do item 4. A execução observada em 2026-08-09 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.

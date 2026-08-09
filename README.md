@@ -378,7 +378,7 @@ O `conftest.py` seleciona o modo persistente e restaura a configuração por
 teste; por isso o resultado canônico não depende do valor da flag no `.env`. A
 verificação de isolamento repete o comando com
 `DIGISAC_HISTORY_FINALIZATION_ENABLED=false` e deve produzir o mesmo resultado.
-Em 2026-08-09, cada execução produziu **120 passed, 28 skipped**; os skips
+Em 2026-08-09, a execução produziu **128 passed, 33 skipped**; os skips
 exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
 `tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
 real e só deve ser incluído se ela estiver em execução.
@@ -406,6 +406,13 @@ também é verificada pelo processo de teste. O projeto, rede e armazenamento
 temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
 fora da execução canônica.
+
+Na execução observada do runner após a verificação operacional, a etapa
+PostgreSQL produziu **33 passed, 128 deselected**. Esses testes cobrem, no
+destino descartável, claim/lease de ciclos, publicação concorrente e sua
+liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
+fila e o despertar somente dos ciclos dependentes de uma imagem recuperada.
+Isso não é evidência de Redis, fornecedores, réplicas ou produção.
 
 `POST /webhook/debug` é uma superfície interna de diagnóstico: usa a mesma
 validação HMAC quando `WEBHOOK_SECRET` está configurado, não escreve nem

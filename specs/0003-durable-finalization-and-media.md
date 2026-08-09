@@ -6,6 +6,16 @@
 - **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` itens 2, 4 e 8; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002
 - **Dependências:** SPEC-0001, SPEC-0002
 
+## Status de implementação
+
+Os contratos de ciclo persistente, reserva de mídia, agenda, publicação e
+recuperação estão implementados no código atual. A verificação operacional
+adicional do item 4 do plano foi executada no runner PostgreSQL 16 descartável
+com **33 testes aprovados**, incluindo concorrência de ciclos, liberação após
+falha de publicação, recuperação due-only de áudio/imagem e despertar seletivo
+de ciclos bloqueados por imagem. Esta nota registra evidência local; não altera
+o contrato nem afirma verificação de Redis, fornecedores ou produção.
+
 ## Objetivo e não objetivos
 
 Definir a finalização por histórico DigiSac e os contratos de mídia, contexto e recuperação. O buffer Redis legado, seu debounce, chaves, tratamento no worker e fixtures serão removidos no refactor completo; isso não define SLA de fornecedor, reprocessamento amplo, mudança de modelo ou resposta automática ao cliente.
