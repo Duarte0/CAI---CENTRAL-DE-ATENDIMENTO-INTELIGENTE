@@ -20,7 +20,6 @@ dist/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
-tests/*
 !tests/conftest.py
 !tests/test_identifiers.py
 !tests/test_postgres_evolution.py

@@ -1,0 +1,141 @@
+import json
+
+import pytest
+from fastapi import Response
+
+from src.api import routes
+from src.core.config import settings
+
+
+class Redis:
+    def __init__(self):
+        self.values = {}
+        self.queues = {}
+
+    async def set(self, key, value, **_kwargs):
+        self.values[key] = value
+        return True
+
+    async def get(self, key):
+        return self.values.get(key)
+
+    async def delete(self, *keys):
+        for key in keys:
+            self.values.pop(key, None)
+        return len(keys)
+
+    async def rpush(self, key, value):
+        self.queues.setdefault(key, []).append(value)
+        return len(self.queues[key])
+
+
+async def send(monkeypatch, redis, payload):
+    async def parse(_request):
+        return payload, None
+
+    monkeypatch.setattr(routes, "parse_webhook_payload", parse)
+    return await routes.digisac_webhook(request=None, response=Response(), redis=redis)
+
+
+@pytest.mark.asyncio
+async def test_text_webhook_does_not_buffer_or_schedule(monkeypatch):
+    redis = Redis()
+    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
+    monkeypatch.setattr(routes, "reserve_transcription", lambda *_args: None)
+    payload = {
+        "event": "message.created",
+        "data": {
+            "id": "message",
+            "ticketId": "ticket",
+            "type": "chat",
+            "text": "Olá",
+            "isFromMe": False,
+            "isFromBot": False,
+            "timestamp": "2026-07-28T12:00:00Z",
+        },
+    }
+    result = await send(monkeypatch, redis, payload)
+    assert result["status"] == "received"
+    assert redis.values == {}
+    assert redis.queues == {}
+
+
+@pytest.mark.asyncio
+async def test_close_persists_cycle_before_publishing(monkeypatch):
+    redis = Redis()
+    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
+    monkeypatch.setattr(
+        routes, "capture_ticket_assignment", lambda *_args: _async(False)
+    )
+    cycle = {
+        "public_id": "cycle-public",
+        "conversation_id": "ticket",
+        "protocol": "123",
+        "status": "pending",
+        "attempt_count": 0,
+        "created_at": "2026-07-28T12:00:00+00:00",
+        "next_attempt_at": None,
+    }
+    calls = []
+
+    async def close(**kwargs):
+        calls.append(kwargs)
+        return cycle, True
+
+    async def transition(*_args, **_kwargs):
+        return cycle
+
+    monkeypatch.setattr(routes, "close_cycle", close)
+    monkeypatch.setattr(routes, "transition_cycle", transition)
+    result = await send(
+        monkeypatch,
+        redis,
+        {
+            "event": "ticket.updated",
+            "data": {
+                "id": "ticket",
+                "isOpen": False,
+                "protocol": "123",
+                "updatedAt": "2026-07-28T12:00:00Z",
+            },
+        },
+    )
+    assert calls and calls[0]["conversation_id"] == "ticket"
+    assert json.loads(redis.queues["ia_queue"][0])["cycle_id"] == "cycle-public"
+    assert result["cycle_id"] == "cycle-public"
+
+
+@pytest.mark.asyncio
+async def test_reopen_creates_cycle_without_queue(monkeypatch):
+    redis = Redis()
+    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
+    monkeypatch.setattr(
+        routes, "capture_ticket_assignment", lambda *_args: _async(False)
+    )
+
+    async def opened(**_kwargs):
+        return {
+            "public_id": "cycle-two",
+            "conversation_id": "ticket",
+        }, True
+
+    monkeypatch.setattr(routes, "create_open_cycle", opened)
+    result = await send(
+        monkeypatch,
+        redis,
+        {
+            "event": "ticket.updated",
+            "data": {
+                "id": "ticket",
+                "isOpen": True,
+                "updatedAt": "2026-07-28T13:00:00Z",
+            },
+        },
+    )
+    assert result["status"] == "ticket_reopened"
+    assert result["cycle_id"] == "cycle-two"
+    assert redis.queues == {}
+
+
+async def _async(value):
+    return value
