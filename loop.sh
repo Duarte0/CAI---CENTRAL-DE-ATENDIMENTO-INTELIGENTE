@@ -1,326 +1,176 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Uso:
-# ./codex-loop.sh                  Build ilimitado
-# ./codex-loop.sh 20               Build por 20 iterações
-# ./codex-loop.sh build 20         Build por 20 iterações
-# ./codex-loop.sh plan 1
-# ./codex-loop.sh specs 1
-# ./codex-loop.sh issues 10
-#
-# Variáveis de ambiente:
-#   CODEX_SOL_MODEL / CODEX_TERRA_MODEL / CODEX_LUNA_MODEL
-#   CODEX_LOG_DIR         diretório de logs (default: .codex-logs)
-#   NO_PROGRESS_LIMIT     iterações sem mudança de git status antes de parar (default: 2)
-#   ERROR_LIMIT           falhas consecutivas do `codex exec` antes de parar (default: 3)
+# Uso: ./loop.sh [plan|specs|issues|build|<N>] [max_iterações]
+# Env: CODEX_TERRA_MODEL, CODEX_LUNA_MODEL, CODEX_LOG_DIR, NO_PROGRESS_LIMIT, ERROR_LIMIT
 
-SOL_MODEL="${CODEX_SOL_MODEL:-gpt-5.6-sol}"
-TERRA_MODEL="${CODEX_TERRA_MODEL:-gpt-5.6-terra}"
-LUNA_MODEL="${CODEX_LUNA_MODEL:-gpt-5.6-luna}"
-
+TERRA="${CODEX_TERRA_MODEL:-gpt-5.6-terra}"
+LUNA="${CODEX_LUNA_MODEL:-gpt-5.6-luna}"
 LOG_DIR="${CODEX_LOG_DIR:-.codex-logs}"
 NO_PROGRESS_LIMIT="${NO_PROGRESS_LIMIT:-2}"
 ERROR_LIMIT="${ERROR_LIMIT:-3}"
 
-ITERATION=0
-NO_PROGRESS=0
-ERROR_STREAK=0
+ITERATION=0; NO_PROGRESS=0; ERROR_STREAK=0
+TOTAL_INPUT=0; TOTAL_CACHED=0; TOTAL_OUTPUT=0; TOTAL_REASONING=0
 
-# Acumuladores de tokens (para o resumo final)
-TOTAL_INPUT=0
-TOTAL_CACHED=0
-TOTAL_OUTPUT=0
-TOTAL_REASONING=0
-
-MODE=""
-PROMPT_FILE=""
-MAX_ITERATIONS=0
-MODEL=""
-EFFORT="medium"
-
-# ---------- Cores (só se for terminal) ----------
 if [[ -t 1 ]]; then
-    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
-    C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'
-    C_CYAN=$'\033[36m'; C_MAGENTA=$'\033[35m'
+    R=$'\033[0m' DIM=$'\033[2m' GRN=$'\033[32m' YLW=$'\033[33m' RED=$'\033[31m' CYN=$'\033[36m'
 else
-    C_RESET=""; C_BOLD=""; C_DIM=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""; C_MAGENTA=""
+    R=""; DIM=""; GRN=""; YLW=""; RED=""; CYN=""
 fi
 
 log()  { printf '%s\n' "$*"; }
-info() { printf '%s%s%s\n' "$C_CYAN" "$*" "$C_RESET"; }
-ok()   { printf '%s%s%s\n' "$C_GREEN" "$*" "$C_RESET"; }
-warn() { printf '%s%s%s\n' "$C_YELLOW" "$*" "$C_RESET"; }
-err()  { printf '%s%s%s\n' "$C_RED" "$*" "$C_RESET" >&2; }
+info() { printf '%s%s%s\n' "$CYN" "$*" "$R"; }
+ok()   { printf '%s%s%s\n' "$GRN" "$*" "$R"; }
+warn() { printf '%s%s%s\n' "$YLW" "$*" "$R"; }
+err()  { printf '%s%s%s\n' "$RED" "$*" "$R" >&2; }
 
 fmt_num() {
-    # separador de milhar simples, sem depender de locale
-    local n="${1:-0}"
-    n="${n//[^0-9]/}"   # remove aspas, espaços ou lixo que o jq possa emitir
-    [[ -z "$n" ]] && n=0
+    local n="${1//[^0-9]/}"; [[ -z "$n" ]] && n=0
     printf '%s' "$n" | rev | sed 's/\([0-9]\{3\}\)/\1./g; s/\.$//' | rev
 }
-
-fmt_duration() {
-    local s="${1:-0}"
-    printf '%dm%02ds' "$((s / 60))" "$((s % 60))"
-}
+fmt_dur() { printf '%dm%02ds' "$(($1/60))" "$(($1%60))"; }
 
 case "${1:-}" in
-plan)
-    MODE="plan"
-    PROMPT_FILE="PROMPT_plan.md"
-    MAX_ITERATIONS="${2:-1}"
-    MODEL="$TERRA_MODEL"
-    EFFORT="medium"
-    ;;
-
-specs)
-    MODE="specs"
-    PROMPT_FILE="PROMPT_specs.md"
-    MAX_ITERATIONS="${2:-1}"
-    MODEL="$TERRA_MODEL"
-    EFFORT="medium"
-    ;;
-
-issues)
-    MODE="issues"
-    PROMPT_FILE="PROMPT_issues.md"
-    MAX_ITERATIONS="${2:-0}"
-    MODEL="$TERRA_MODEL"
-    EFFORT="medium"
-    ;;
-
-build)
-    MODE="build"
-    PROMPT_FILE="PROMPT_build.md"
-    MAX_ITERATIONS="${2:-0}"
-    MODEL="$LUNA_MODEL"
-    EFFORT="high"
-    ;;
-
-"")
-    MODE="build"
-    PROMPT_FILE="PROMPT_build.md"
-    MAX_ITERATIONS=0
-    MODEL="$LUNA_MODEL"
-    EFFORT="high"
-    ;;
-
-[0-9]*)
-    MODE="build"
-    PROMPT_FILE="PROMPT_build.md"
-    MAX_ITERATIONS="$1"
-    MODEL="$LUNA_MODEL"
-    EFFORT="high"
-    ;;
-
-*)
-    err "Modo desconhecido: $1"
-    log
-    log "Modos válidos:"
-    log "  plan | specs | issues | build | <número>"
-    exit 1
-    ;;
+    plan)   MODE=plan;   PROMPT=PROMPT_plan.md;   MAX="${2:-1}"; MODEL="$TERRA"; EFFORT=medium ;;
+    specs)  MODE=specs;  PROMPT=PROMPT_specs.md;  MAX="${2:-1}"; MODEL="$TERRA"; EFFORT=medium ;;
+    issues) MODE=issues; PROMPT=PROMPT_issues.md; MAX="${2:-0}"; MODEL="$LUNA"; EFFORT=medium ;;
+    build)  MODE=build;  PROMPT=PROMPT_build.md;  MAX="${2:-0}"; MODEL="$LUNA";  EFFORT=high   ;;
+    "")     MODE=build;  PROMPT=PROMPT_build.md;  MAX=0;         MODEL="$LUNA";  EFFORT=high   ;;
+    [0-9]*) MODE=build;  PROMPT=PROMPT_build.md;  MAX="$1";      MODEL="$LUNA";  EFFORT=high   ;;
+    *) err "Modo inválido: $1. Use: plan | specs | issues | build | <N>"; exit 1 ;;
 esac
 
-if [[ ! -f "$PROMPT_FILE" ]]; then
-    err "Erro: arquivo $PROMPT_FILE não encontrado."
-    exit 1
-fi
+[[ -f "$PROMPT" ]]                               || { err "Arquivo não encontrado: $PROMPT"; exit 1; }
+git rev-parse --is-inside-work-tree &>/dev/null  || { err "Execute dentro de um repositório Git."; exit 1; }
+command -v codex &>/dev/null                     || { err "'codex' não encontrado no PATH."; exit 1; }
+command -v jq    &>/dev/null                     || { err "'jq' é necessário. Instale: apt install jq"; exit 1; }
 
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    err "Erro: execute o script dentro de um repositório Git."
-    exit 1
-fi
-
-if ! command -v codex >/dev/null 2>&1; then
-    err "Erro: o comando 'codex' não está instalado ou não está no PATH."
-    exit 1
-fi
-
-if ! command -v jq >/dev/null 2>&1; then
-    err "Erro: 'jq' é necessário para processar a saída --json do codex."
-    err "Instale com: sudo apt install jq  (ou brew install jq)"
-    exit 1
-fi
-
-CURRENT_BRANCH="$(git branch --show-current)"
-mkdir -p "$LOG_DIR"
-RUN_ID="$(date +%Y%m%d-%H%M%S)"
-RUN_LOG_DIR="$LOG_DIR/${MODE}-${RUN_ID}"
+BRANCH="$(git branch --show-current)"
+RUN_LOG_DIR="$LOG_DIR/${MODE}-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_LOG_DIR"
-
-SCRIPT_START=$(date +%s)
+START=$(date +%s)
 
 echo "=========================================="
-echo "Modo:       $MODE"
-echo "Prompt:     $PROMPT_FILE"
-echo "Modelo:     $MODEL"
-echo "Potência:   $EFFORT"
-echo "Branch:     $CURRENT_BRANCH"
-echo "Logs:       $RUN_LOG_DIR/"
-
-if [[ "$MAX_ITERATIONS" -eq 0 ]]; then
-    echo "Iterações:  ilimitadas"
-else
-    echo "Iterações:  $MAX_ITERATIONS"
-fi
-
+echo "Modo:      $MODE  |  Modelo: $MODEL  |  Esforço: $EFFORT"
+echo "Branch:    $BRANCH"
+echo "Logs:      $RUN_LOG_DIR/"
+echo "Iterações: $( [[ "$MAX" -eq 0 ]] && echo ilimitadas || echo "$MAX" )"
 echo "=========================================="
 
 print_summary() {
-    local end_ts elapsed
-    end_ts=$(date +%s)
-    elapsed=$((end_ts - SCRIPT_START))
-    echo
-    echo "=========================================="
-    ok "Resumo da execução"
-    echo "=========================================="
-    log "Iterações executadas : $ITERATION"
-    log "Duração total         : $(fmt_duration "$elapsed")"
-    log "Tokens de entrada     : $(fmt_num "$TOTAL_INPUT")"
-    log "Tokens em cache       : $(fmt_num "$TOTAL_CACHED")"
-    log "Tokens de saída       : $(fmt_num "$TOTAL_OUTPUT")"
-    log "Tokens de raciocínio  : $(fmt_num "$TOTAL_REASONING")"
-    log "Total (in+out+reason) : $(fmt_num "$((TOTAL_INPUT + TOTAL_OUTPUT + TOTAL_REASONING))")"
-    log "Logs completos em     : $RUN_LOG_DIR/"
+    local now elapsed
+    now=$(date +%s); elapsed=$((now - START))
+    echo; echo "=========================================="
+    ok "Resumo"
+    log "Iterações : $ITERATION  |  Duração: $(fmt_dur $elapsed)"
+    log "Tokens    : in=$(fmt_num $TOTAL_INPUT) cache=$(fmt_num $TOTAL_CACHED) out=$(fmt_num $TOTAL_OUTPUT) reason=$(fmt_num $TOTAL_REASONING)"
+    log "Total     : $(fmt_num $((TOTAL_INPUT + TOTAL_OUTPUT + TOTAL_REASONING)))"
+    log "Logs      : $RUN_LOG_DIR/"
     echo "=========================================="
 }
 
-trap 'warn "\nInterrompido pelo usuário."; print_summary; exit 130' INT TERM
+extract_usage() {
+    # Lê JSONL linha a linha, acumula tokens de todos os eventos turn.completed
+    local file="$1" i=0 c=0 o=0 r=0 line usage
+    while IFS= read -r line; do
+        type=$(printf '%s' "$line" | jq -r '.type // ""' 2>/dev/null) || continue
+        [[ "$type" == "turn.completed" ]] || continue
+        usage=$(printf '%s' "$line" | jq -r '
+            .usage // {} |
+            "\(.input_tokens // 0) \(.cached_input_tokens // .cache_read_input_tokens // 0) \(.output_tokens // 0) \(.reasoning_output_tokens // .reasoning_tokens // 0)"
+        ' 2>/dev/null) || continue
+        read -r li lc lo lr <<< "$usage"
+        i=$((i + ${li//[^0-9]/0}))
+        c=$((c + ${lc//[^0-9]/0}))
+        o=$((o + ${lo//[^0-9]/0}))
+        r=$((r + ${lr//[^0-9]/0}))
+    done < "$file"
+    echo "$i $c $o $r"
+}
 
-# Extrai texto legível do stream JSONL do codex e imprime em tempo real.
-# OBS: os nomes de campo abaixo (item.text, item.command, etc.) são um
-# best-effort baseado no formato conhecido do `codex exec --json`. Se a sua
-# versão do codex usar nomes diferentes, rode uma iteração, inspecione
-# $RUN_LOG_DIR/iter-N.jsonl com `jq .` e ajuste o filtro abaixo.
 render_stream() {
     jq -r '
-        .type as $t
-        | if $t == "thread.started" then
-            "\u001b[2m[thread] \(.thread_id // "?")\u001b[0m"
-          elif $t == "item.completed" then
-            (.item.type // "item") as $it
-            | (.item.text // .item.command // .item.aggregated_output // (.item | tostring)) as $body
-            | "\u001b[35m[\($it)]\u001b[0m \($body)"
-          elif $t == "turn.completed" then
-            "\u001b[2m[turn concluída]\u001b[0m"
-          elif $t == "error" then
-            "\u001b[31m[erro] \(.message // .error // (. | tostring))\u001b[0m"
-          else
-            empty
-          end
+        if   .type == "thread.started" then "\u001b[2m[thread] \(.thread_id // "?")\u001b[0m"
+        elif .type == "item.completed" then "\u001b[35m[\(.item.type // "item")]\u001b[0m \(.item.text // .item.command // .item.aggregated_output // (.item | tostring))"
+        elif .type == "turn.completed" then "\u001b[2m[turn concluída]\u001b[0m"
+        elif .type == "error"          then "\u001b[31m[erro] \(.message // .error // (. | tostring))\u001b[0m"
+        else empty end
     ' 2>/dev/null || true
 }
 
-# Soma os tokens de todos os eventos turn.completed de uma iteração e
-# retorna 4 números separados por espaço: input cached output reasoning
-extract_usage() {
-    local file="$1"
-    jq -s '
-        [ .[] | select(.type == "turn.completed") | .usage // {} ]
-        | reduce .[] as $u (
-            {input:0, cached:0, output:0, reasoning:0};
-            {
-              input:     (.input     + (($u.input_tokens             // $u.input             // 0) | tonumber? // 0)),
-              cached:    (.cached    + (($u.cached_input_tokens      // $u.cached_tokens      // $u.cached // 0) | tonumber? // 0)),
-              output:    (.output    + (($u.output_tokens            // $u.output            // 0) | tonumber? // 0)),
-              reasoning: (.reasoning + (($u.reasoning_output_tokens  // $u.reasoning_tokens   // 0) | tonumber? // 0))
-            }
-          )
-        | "\(.input) \(.cached) \(.output) \(.reasoning)"
-    ' "$file" 2>/dev/null || echo "0 0 0 0"
-}
+trap 'warn "\nInterrompido."; print_summary; exit 130' INT TERM
 
 while true; do
-    if [[ "$MAX_ITERATIONS" -gt 0 && "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
-        info "Limite de iterações alcançado: $MAX_ITERATIONS"
-        break
-    fi
+    [[ "$MAX" -gt 0 && "$ITERATION" -ge "$MAX" ]] && { info "Limite atingido: $MAX"; break; }
 
-    echo
-    echo "------------------------------------------"
-    info "Iniciando iteração $((ITERATION + 1))"
-    echo "------------------------------------------"
+    echo; info "--- Iteração $((ITERATION+1)) ---"
 
     BEFORE="$(git status --porcelain)"
-    ITER_LOG="$RUN_LOG_DIR/iter-$((ITERATION + 1)).jsonl"
+    ITER_LOG="$RUN_LOG_DIR/iter-$((ITERATION+1)).jsonl"
     ITER_START=$(date +%s)
 
     set +e
-    codex exec \
-        --dangerously-bypass-approvals-and-sandbox \
-        --model "$MODEL" \
-        --config "model_reasoning_effort=\"$EFFORT\"" \
-        --ephemeral \
-        --json \
-        - < "$PROMPT_FILE" \
-        | tee "$ITER_LOG" \
-        | render_stream
-    CODEX_EXIT=${PIPESTATUS[0]}
+    codex exec --dangerously-bypass-approvals-and-sandbox \
+        --model "$MODEL" --config "model_reasoning_effort=\"$EFFORT\"" \
+        --ephemeral --json - < "$PROMPT" \
+        | tee "$ITER_LOG" | render_stream
+    EXIT=${PIPESTATUS[0]}
     set -e
 
-    ITERATION=$((ITERATION + 1))
+    ITERATION=$((ITERATION+1))
     ITER_END=$(date +%s)
     AFTER="$(git status --porcelain)"
 
-    if [[ "$CODEX_EXIT" -ne 0 ]]; then
-        ERROR_STREAK=$((ERROR_STREAK + 1))
-        err "codex exec falhou (exit $CODEX_EXIT) na iteração $ITERATION. Falhas seguidas: $ERROR_STREAK/$ERROR_LIMIT"
-        if [[ "$ERROR_STREAK" -ge "$ERROR_LIMIT" ]]; then
-            err "Parando por excesso de falhas consecutivas do codex."
-            print_summary
-            exit 1
-        fi
+    if [[ "$EXIT" -ne 0 ]]; then
+        ERROR_STREAK=$((ERROR_STREAK+1))
+        err "codex falhou (exit $EXIT) — streak: $ERROR_STREAK/$ERROR_LIMIT"
+        [[ "$ERROR_STREAK" -ge "$ERROR_LIMIT" ]] && { err "Parando por excesso de falhas."; print_summary; exit 1; }
         continue
     fi
     ERROR_STREAK=0
 
-    read -r ITER_INPUT ITER_CACHED ITER_OUTPUT ITER_REASONING <<< "$(extract_usage "$ITER_LOG")"
-    TOTAL_INPUT=$((TOTAL_INPUT + ITER_INPUT))
-    TOTAL_CACHED=$((TOTAL_CACHED + ITER_CACHED))
-    TOTAL_OUTPUT=$((TOTAL_OUTPUT + ITER_OUTPUT))
-    TOTAL_REASONING=$((TOTAL_REASONING + ITER_REASONING))
+    read -r I C O RS <<< "$(extract_usage "$ITER_LOG")"
+    TOTAL_INPUT=$((TOTAL_INPUT+I)); TOTAL_CACHED=$((TOTAL_CACHED+C))
+    TOTAL_OUTPUT=$((TOTAL_OUTPUT+O)); TOTAL_REASONING=$((TOTAL_REASONING+RS))
 
     echo
-    log "Duração: $(fmt_duration "$((ITER_END - ITER_START))")  |  ${C_DIM}tokens${C_RESET} in=$(fmt_num "$ITER_INPUT") cache=$(fmt_num "$ITER_CACHED") out=$(fmt_num "$ITER_OUTPUT") reasoning=$(fmt_num "$ITER_REASONING")"
-    log "${C_DIM}Acumulado${C_RESET} in=$(fmt_num "$TOTAL_INPUT") cache=$(fmt_num "$TOTAL_CACHED") out=$(fmt_num "$TOTAL_OUTPUT") reasoning=$(fmt_num "$TOTAL_REASONING")"
+    log "$(fmt_dur $((ITER_END-ITER_START)))  |  ${DIM}in=$(fmt_num $I) cache=$(fmt_num $C) out=$(fmt_num $O) reason=$(fmt_num $RS)${R}"
 
-    if [[ "$BEFORE" == "$AFTER" ]]; then
-        NO_PROGRESS=$((NO_PROGRESS + 1))
-        warn "Iteração $ITERATION sem alterações. Sem progresso: $NO_PROGRESS/$NO_PROGRESS_LIMIT"
+    LABEL="$(jq -r 'select(.type=="item.completed") | .item.text // ""' "$ITER_LOG" 2>/dev/null \
+        | grep -Eo 'BUILD_COMPLETED|BUILD_BLOCKED|BUILD_COMPLETE|ISSUES_COMPLETE|ISSUES_BLOCKED|ISSUE_CREATED' \
+        | tail -1 || true)"
 
-        if [[ "$NO_PROGRESS" -ge "$NO_PROGRESS_LIMIT" ]]; then
-            warn "Parando por falta de progresso."
-            break
-        fi
-    else
-        NO_PROGRESS=0
-        # resumo curto do que mudou no working tree
-        git diff --stat 2>/dev/null | tail -n 5 || true
-    fi
+    [[ -n "$LABEL" ]] && info "Label: $LABEL"
 
-    if [[ "$MODE" == "build" && "$MAX_ITERATIONS" -eq 0 ]]; then
-        if [[ -d issues ]]; then
-            OPEN_COUNT="$(
-                rg -l '^status:\s*open\s*$' issues -g '*.md' 2>/dev/null \
-                    | rg -v '0000' \
-                    | wc -l
-            )"
+    case "$LABEL" in
+        ISSUES_COMPLETE|BUILD_COMPLETE)  ok "Concluído: $LABEL"; break ;;
+        ISSUES_BLOCKED|BUILD_BLOCKED)   warn "Bloqueado: $LABEL"; break ;;
+        ISSUE_CREATED) NO_PROGRESS=0; ok "Iteração $ITERATION OK (ISSUE_CREATED)."; continue ;;
+    esac
+
+    if [[ "$MODE" == "build" ]]; then
+        if [[ "$BEFORE" == "$AFTER" ]]; then
+            NO_PROGRESS=$((NO_PROGRESS+1))
+            warn "Sem progresso no git: $NO_PROGRESS/$NO_PROGRESS_LIMIT"
+            [[ "$NO_PROGRESS" -ge "$NO_PROGRESS_LIMIT" ]] && { warn "Parando."; break; }
         else
-            OPEN_COUNT=0
+            NO_PROGRESS=0
+            git diff --stat 2>/dev/null | tail -n 5 || true
         fi
-
-        ok "Iteração $ITERATION concluída. Issues abertas: $OPEN_COUNT"
-
-        if [[ "$OPEN_COUNT" -eq 0 ]]; then
-            ok "Todas as issues foram encerradas."
-            break
+        if [[ "$MAX" -eq 0 && -d issues ]]; then
+            OPEN=$(grep -rl '^status:[[:space:]]*open[[:space:]]*$' issues/ --include='*.md' 2>/dev/null | grep -v '0000' | wc -l | tr -d '[:space:]')
+            OPEN=${OPEN:-0}
+            ok "Iteração $ITERATION OK. Issues abertas: $OPEN"
+            [[ "$OPEN" -eq 0 ]] && { ok "Todas as issues encerradas."; break; }
+        else
+            ok "Iteração $ITERATION OK."
         fi
     else
-        ok "Iteração $ITERATION concluída."
+        NO_PROGRESS=$((NO_PROGRESS+1))
+        warn "Sem label reconhecido: $NO_PROGRESS/$NO_PROGRESS_LIMIT"
+        [[ "$NO_PROGRESS" -ge "$NO_PROGRESS_LIMIT" ]] && { warn "Parando."; break; }
+        ok "Iteração $ITERATION OK."
     fi
 done
 

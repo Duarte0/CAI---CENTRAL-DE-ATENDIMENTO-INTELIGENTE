@@ -47,6 +47,7 @@ logs/
 .agents/skills/graphify/
 graphify-out/
 .graphify-cache/
+.codex-logs/*
 
 # ---------- Node (usado só pelo Codex CLI no stage ralph) ----------
 node_modules/
