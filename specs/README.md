@@ -7,7 +7,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-09. PRD e arq
 | ID | Especificação | Status | Prioridade/Fase | Dependências | Resumo |
 | --- | --- | --- | --- | --- | --- |
 | SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.1 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações e fronteiras de privacidade. |
-| SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.3 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos, consultas atualmente sem versão e diagnóstico bruto interno sujeito a decisão de segurança. |
+| SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.4 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; não há superfície de diagnóstico de webhook. |
 | SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.3 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente. |
 | SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Itens 1–2 e verificação operacional do item 4 implementados v1.3 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
 
@@ -19,4 +19,4 @@ Não há especificações superseded, deprecated ou template neste conjunto. Um 
 
 1. Planejamento referencia a especificação aplicável e registra dependências/decisões abertas.
 2. A passagem de issues decompõe somente especificações prontas, sem redefinir seus contratos.
-3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. Os itens 1 e 2 e a verificação operacional do item 4 de SPEC-0004 estão implementados; a política do diagnóstico permanece no item 5.
+3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. Os itens 1 e 2, a verificação operacional do item 4 de SPEC-0004 e a remoção das superfícies de diagnóstico de SPEC-0002 estão implementados.

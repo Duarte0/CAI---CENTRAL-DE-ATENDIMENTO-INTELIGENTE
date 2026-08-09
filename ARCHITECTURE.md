@@ -280,7 +280,6 @@ Implemented routes include:
 | Route | Purpose |
 | --- | --- |
 | \`POST /webhook/digisac\` | Authenticated production webhook ingestion. |
-| \`POST /webhook/debug\` | Internal diagnostic view, HMAC-validated when configured, without normal processing writes; currently returns \`raw_payload\`. |
 | \`GET /health\` | PostgreSQL and Redis readiness. |
 | \`GET /queues\` | Redis queue and dead-letter metrics. |
 | \`GET /conversations/{conversation_id}/status\` | Conversation processing status. |
@@ -290,12 +289,9 @@ Implemented routes include:
 | \`GET /cycles/{cycle_id}/result\` | Persistent cycle result. |
 
 The webhook normally returns \`202\`; safely ignored events return \`200\` with an
-ignore reason. Missing persisted entities return \`404\`. The mounted debug
-route uses the same HMAC validation when configured, performs no writes or
-queue publication, and currently returns the received \`raw_payload\` only in
-that internal diagnostic response. Logs and normal operational responses must
-expose IDs and status without raw bodies or secrets. The unmounted
-\`src/api/debug_routes.py\` handler is not an advertised or mounted contract.
+ignore reason. Missing persisted entities return \`404\`. There is no webhook
+diagnostic route. Logs and normal operational responses expose IDs and status
+without raw bodies, headers, secrets, tokens, signed URLs, or binary media.
 The query routes above are currently unversioned in the mounted FastAPI app;
 future `/v1/` compatibility is a policy/reference target, not an implemented
 prefix in this checkout.
@@ -355,9 +351,8 @@ records these delivery limitations:
   routing from ticket open to close and support future Acessórias integration.
 - Persistent DigiSac-history finalization is the only supported mode; the former
   Redis buffer, debounce, feature flag, and legacy worker branch were removed.
-- The mounted debug response currently returns raw payload to its internal
-  caller after HMAC validation when configured; Phase 1 item 5 still owns the
-  least-privilege, redaction, retention, and audience decision.
+- The raw-payload diagnostic surfaces were removed under Phase 1 item 5; no
+  replacement debug route or raw-payload contract exists.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.

@@ -594,43 +594,6 @@ async def digisac_webhook(
     }
 
 
-@app.post("/webhook/debug")
-async def debug_digisac_webhook(
-    request: Request,
-    _: None = Depends(verify_webhook_signature),
-) -> dict[str, Any]:
-    """Inspect a Digisac payload without writing to Redis or queuing work."""
-    raw_payload, payload = await parse_webhook_payload(request)
-    timestamp = payload.get_timestamp()
-    adaptation = DigisacWebhookAdapter.adapt(raw_payload)
-    return {
-        "raw_payload": raw_payload,
-        "extraction": payload.extraction_debug(),
-        "normalized": {
-            "conversation_id": payload.get_conversation_id(),
-            "message_id": payload.get_message_id(),
-            "content": payload.get_content(),
-            "sender_id": payload.get_sender_id(),
-            "event": payload.get_event(),
-            "timestamp": timestamp.isoformat() if timestamp else None,
-        },
-        "digisac_adapter": {
-            "should_process": adaptation.should_process,
-            "ignored_reason": adaptation.ignored_reason,
-            "message": (
-                {
-                    "conversation_id": adaptation.message.conversation_id,
-                    "message_id": adaptation.message.message_id,
-                    "content": adaptation.message.content,
-                    "sender_id": adaptation.message.sender_id,
-                }
-                if adaptation.message
-                else None
-            ),
-        },
-    }
-
-
 @app.get(
     "/conversations/{conversation_id}/status", response_model=ConversationProcessing
 )

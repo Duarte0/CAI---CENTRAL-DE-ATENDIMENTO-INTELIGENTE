@@ -117,14 +117,12 @@ documentation. Status describes this checkout, not production availability._
      variables, routes, Compose behavior, migrations, recovery commands, and
      test commands against source;
    - [x] the 2026-08-09 specification pass reconciled those contracts: SPEC-0003
-     v1.3 records the completed removal of legacy mode, and SPEC-0002 v1.3 records
-     the mounted `/webhook/debug` raw-payload response as an internal diagnostic
-     behavior rather than a sanitized or public API contract. The associated
-     authorization and retention decisions are recorded, while diagnostic
-     redaction and exposure remain limited to internal use under item 5;
+     v1.3 records the completed removal of legacy mode, and SPEC-0002 v1.4 records
+     the production webhook and sanitized operational contract after the
+     diagnostic-surface removal;
    - [x] retain implementation-derived status until product approval rather than
-     claiming approved policy, and update README/API wording to state the
-     resulting debug-payload contract explicitly; and
+     claiming approved policy, and update README/API wording to match the
+     implemented HTTP surface; and
    - [x] update documentation to distinguish the locally verified offline baseline
      from the unverified PostgreSQL/runtime baseline; and
    - [x] keep PostgreSQL as durable source of truth and Redis as coordination,
@@ -166,33 +164,29 @@ documentation. Status describes this checkout, not production availability._
    deployment under this item; production rollout still requires separately
    approved backup and target-state audit.
 
-5. **[P1 | blocked] Resolve raw-payload diagnostic surfaces before any
+5. **[P1 | completed] Remove raw-payload diagnostic surfaces before any
    exposure or contract expansion.**
 
-   `src/api/debug_routes.py` defines an unmounted `/debug/webhook` handler that
-   prints headers and raw request bodies. Separately, the mounted
-   `/webhook/debug` route validates HMAC but returns `raw_payload` to its caller.
-   PRD §8 explicitly describes parsed raw-payload diagnostics, while
-   SPEC-0002 says operational responses must not expose raw bodies and does not
-   define a raw-payload public contract.
-
-   Outcome: one approved, least-privilege diagnostic contract that states
-   whether any raw payload may be returned, logged, retained, or routed, and
-   how access is authenticated and audited.
+   The approved security/operations action deleted the unmounted raw-header and
+   raw-body handler, removed the mounted diagnostic route, and made the
+   production webhook the sole ingestion surface. Operators monitor the system
+   with structured logs and existing operational metrics.
 
    Completion criteria:
 
-   - security/operations approves the intended diagnostic audience, redaction
-     rules, and retention/logging behavior;
-   - code, PRD, architecture, README, and SPEC-0002 agree on the mounted route;
+   - [x] `src/api/debug_routes.py` is deleted;
+   - [x] `POST /webhook/debug` is removed from `src/api/routes.py`;
+   - [x] PRD, architecture, README, SPEC-0002, and the specification index no
+     longer document either debug surface;
+   - [x] focused HTTP tests prove both routes return `404`, production HMAC
+     ordering remains intact, and raw markers do not appear in responses/logs;
      and
-   - the unmounted handler is either removed or has an approved authenticated,
-     redacted use case with tests. It must not be mounted or advertised before
-     that decision.
+   - [x] compileall, Pyright, the canonical offline suite, and the disposable
+     runner were executed with results recorded in issue `0006`.
 
-   Blocker: product/security authorization and diagnostic-data policy. This
-   does not block internal webhook ingestion, but blocks debug-surface exposure
-   or any claim that it is safe for third-party consumers.
+   Evidence: issue `0006` records the focused route/security result and the
+   canonical verification results from the post-change run on 2026-08-09. No
+   production target, migration, Redis data, or deployment topology changed.
 
 ### Phase 2 — Product and data-policy decisions
 
@@ -230,11 +224,8 @@ documentation. Status describes this checkout, not production availability._
 - SPEC-0003, PRD §10, and ARCHITECTURE now record the completed removal of the
   legacy finalization mode; persistent-cycle tests and recovery evidence remain
   the verification baseline.
-- The mounted `/webhook/debug` returns `raw_payload` after HMAC validation when
-  configured; the unmounted handler also prints/returns raw headers and body.
-  The mounted response is now documented as an internal diagnostic exception to
-  the general sanitized-response rule, while item 5 owns least-privilege,
-  redaction, retention, and audience policy.
+- The raw-payload diagnostic surfaces were removed under completed Phase 1 item
+  5. No replacement debug endpoint or raw-payload contract exists.
 - Earlier SPEC-0002/PRD wording described query routes as `/v1/`, but
   `src/api/routes.py` currently mounts them without that prefix. The baseline
   now follows the source and records `/v1/`/`/v2/` as future policy only; adding
@@ -253,5 +244,5 @@ documentation. Status describes this checkout, not production availability._
 
 ## Recommended next pass
 
-**Phase 1 item 5** — resolve the raw-payload diagnostic policy. Product/security
-decisions in that item still need owner input first.
+Phase 1 item 5 is complete. The next pass should address a separately approved
+future increment rather than reopening the removed diagnostic surfaces.

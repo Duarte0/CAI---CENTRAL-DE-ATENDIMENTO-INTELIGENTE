@@ -195,7 +195,6 @@ The current HTTP surface is:
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /webhook/digisac` | Authenticated production ingestion. |
-| `POST /webhook/debug` | Internal diagnostic normalization, HMAC-validated when configured, without writing or queueing work; the response currently includes `raw_payload`. |
 | `GET /health` | Verify Redis and PostgreSQL readiness. |
 | `GET /queues` | Expose queue, dead-letter, and cycle metrics. |
 | `GET /conversations/{conversation_id}/status` | Return latest conversation processing state. |
@@ -240,19 +239,15 @@ defined by the schema.
 
 ### Security and privacy boundaries
 
-- HMAC validation is available for production and debug webhook routes.
+- HMAC validation is available for the production webhook route.
 - `WEBHOOK_SECRET` must be configured in production to validate DigiSac
   webhooks and prevent external event injection. Query endpoints have no
   authentication or authorization layer for the single internal operator.
 - Production logs and durable operational records must avoid raw request bodies,
   secrets, signed URLs, and binary media.
-- The mounted debug endpoint validates the same HMAC as production when
-  `WEBHOOK_SECRET` is configured, performs no writes or queue publication, and
-  currently returns the received `raw_payload` plus normalized diagnostic data.
-  It is an internal diagnostic surface, not a public data API. The unmounted
-  `src/api/debug_routes.py` handler is not part of the contract. Redaction,
-  audience, access control, retention, and logging policy remain unresolved and
-  are owned by Phase 1 item 5.
+- There is no webhook diagnostic endpoint. Raw request bodies, headers, secrets,
+  tokens, signed URLs, and binary media are not returned or logged by supported
+  routes. Operators use structured logs and existing operational metrics.
 - Persisted snapshots contain safe metadata and extracted text, not download
   credentials or media binaries.
 - Data is retained indefinitely for historical analysis, FAQ-corpus use, and
@@ -278,8 +273,9 @@ The observed local runner evidence on 2026-08-09 is:
   due-only media recovery, queue deduplication, and dependent image wake-up.
 
 This evidence is local and disposable, not production availability or release
-readiness. There is no hosted CI runner enforcing the matrix. The mounted debug
-payload policy remains the separate Phase 1 item 5 decision.
+readiness. There is no hosted CI runner enforcing the matrix. The raw-payload
+diagnostic surfaces were removed under Phase 1 item 5; no debug endpoint is part
+of the supported HTTP surface.
 
 ## 10. Product decisions
 

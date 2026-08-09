@@ -241,7 +241,6 @@ Cada worker deve rodar em seu próprio processo.
 | Método | Rota | Descrição |
 | --- | --- | --- |
 | `POST` | `/webhook/digisac` | Recebe eventos DigiSac; normalmente responde `202`. |
-| `POST` | `/webhook/debug` | Normaliza e devolve um payload sem escrever ou enfileirar. Protegido pelo mesmo HMAC, quando ativo. |
 | `GET` | `/health` | Verifica Redis e PostgreSQL. |
 | `GET` | `/queues` | Contadores das filas, dead-letters e ciclos por estado. |
 | `GET` | `/conversations/{id}/status` | Estado do ciclo mais recente ou do fluxo legado. |
@@ -379,12 +378,9 @@ liberação após falha, agenda futura, recuperação de áudio/imagem sem dupli
 fila e o despertar somente dos ciclos dependentes de uma imagem recuperada.
 Isso não é evidência de Redis, fornecedores, réplicas ou produção.
 
-`POST /webhook/debug` é uma superfície interna de diagnóstico: usa a mesma
-validação HMAC quando `WEBHOOK_SECRET` está configurado, não escreve nem
-enfileira trabalho e devolve `raw_payload` somente na resposta de diagnóstico.
-Esse corpo bruto não deve ser copiado para logs, snapshots, filas ou consultas.
-`src/api/debug_routes.py` contém um handler não montado e não anunciado; ele não
-é um contrato operacional.
+Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
+superfície de ingestão; respostas e logs operacionais expõem somente campos
+estruturados e motivos sanitizados, nunca o corpo bruto da requisição.
 
 ## Operação
 

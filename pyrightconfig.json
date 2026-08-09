@@ -1,6 +1,5 @@
 {
   "include": [
-    "src/api/debug_routes.py",
     "src/api/routes.py",
     "src/api/webhook_adapter.py",
     "src/core/db.py",
