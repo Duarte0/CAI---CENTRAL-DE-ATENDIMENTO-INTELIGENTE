@@ -41,6 +41,14 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip)
 
 
+@pytest.fixture(autouse=True)
+def persistent_finalization(monkeypatch):
+    """Make every test independent of a developer's finalization setting."""
+    monkeypatch.setenv("DIGISAC_HISTORY_FINALIZATION_ENABLED", "true")
+    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
+    yield
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def postgres_state(request):
     global _schema_ready
@@ -53,6 +61,7 @@ async def postgres_state(request):
         return
     assert TEST_DATABASE_URL
     previous_url = settings.database_url
+    previous_environment_url = os.environ.get("DATABASE_URL")
     settings.database_url = TEST_DATABASE_URL
     os.environ["DATABASE_URL"] = TEST_DATABASE_URL
     await close_database()
@@ -84,3 +93,7 @@ async def postgres_state(request):
     finally:
         await close_database()
         settings.database_url = previous_url
+        if previous_environment_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_environment_url

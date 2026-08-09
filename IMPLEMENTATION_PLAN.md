@@ -30,22 +30,23 @@ documentation. Status describes this checkout, not production availability._
 - **[completed] Static and configuration checks.** `python -m compileall -q
   src tests alembic`, `npx --yes pyright` (0 diagnostics), and `docker compose
   config -q` for both Compose files passed.
-- **[completed, conditional] Offline behavioral suite.** With
-  `DIGISAC_HISTORY_FINALIZATION_ENABLED=false` explicitly set,
-  `PYTHONPATH=/app pytest -q --ignore=tests/test_webhook_local.py` produced
-  **127 passed, 31 skipped** on 2026-08-09. The skipped tests require
-  `CAI_TEST_DATABASE_URL`; `pytest --collect-only` found 158 tests excluding
-  the opt-in live webhook test.
+- **[completed] Isolated offline behavioral suite.** Both
+  `PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q
+  --ignore=tests/test_webhook_local.py` and the same command with `false`
+  produced **120 passed, 28 skipped** on 2026-08-09. The skipped tests require
+  `CAI_TEST_DATABASE_URL`; the live webhook test remains opt-in. The test-owned
+  fixture selects persistent finalization and restores environment/settings
+  state after each test.
 
 ### Implemented but not reproducibly release-verified
 
-- **[in progress] Broader test suite and contracts exist only in the working
-  tree.** 158 tests are collected locally (excluding the opt-in live webhook
-  test), but `.gitignore` tracks only four test files; PRD, architecture,
-  specifications, and the rewritten README are also uncommitted workspace
-  artifacts. A clean checkout therefore cannot reproduce the current evidence.
+- **[completed] Canonical offline test suite is tracked and isolated.** 148
+  tests are collected locally (excluding the opt-in live webhook test), and the
+  persistent close/reopen, duplicate-cycle, bot, negative-webhook, and
+  publication-recovery coverage is versioned with the fixture boundary. A clean
+  checkout can reproduce the offline evidence without a personal `.env` value.
 - **[pending verification] PostgreSQL migration/integration baseline.** The
-  31 database tests did not run without `CAI_TEST_DATABASE_URL`. The supplied
+  28 database tests did not run without `CAI_TEST_DATABASE_URL`. The supplied
   Compose test service validates syntactically but fixes host port 5433, which
   is occupied by another local project. An isolated PostgreSQL 16 container on
   5434 was reachable only inside the container; tests received connection
@@ -56,7 +57,7 @@ documentation. Status describes this checkout, not production availability._
 
 ### Phase 0 — Make the existing baseline deliverable and reproducible
 
-1. **[P0 | pending] Version and isolate the canonical test suite**
+1. **[P0 | completed] Version and isolate the canonical test suite**
    (SPEC-0004 §§1–3).
 
    Outcome: a clean checkout contains the offline and PostgreSQL test families
@@ -74,10 +75,9 @@ documentation. Status describes this checkout, not production availability._
      tracked persistent-cycle coverage; and
    - the clean-checkout offline command passes without personal `.env` input.
 
-   Evidence/risk: with this workspace's `.env` setting the history flag true,
-   the same command produces **117 passed, 31 skipped, 10 failed**. All ten
-   failures are legacy ticket-closure assumptions (missing Redis buffer or
-   unavailable cycle schema), not evidence to change the application default.
+   Evidence: the canonical command produces **120 passed, 28 skipped** with
+   either externally supplied flag value. The skipped PostgreSQL families remain
+   unverified until item 2 supplies a reachable disposable database.
 
 2. **[P0 | pending] Establish an executable PostgreSQL verification runner**
    (SPEC-0004 §§4–5; SPEC-0001–0003 acceptance).
@@ -138,7 +138,7 @@ documentation. Status describes this checkout, not production availability._
    Outcome: Alembic head and the durable cycle/media paths are proven together
    on a fresh disposable database.
 
-   Completion criteria: the runner in item 2 executes all 31 currently skipped
+   Completion criteria: the runner in item 2 executes all 28 currently skipped
    database tests and retains coverage for cycle claim/lease, publication
    recovery, due-media wake-up, blocked-image behavior, and idempotent queue
    publication. Investigate failures as implementation defects only after the
@@ -205,9 +205,8 @@ documentation. Status describes this checkout, not production availability._
 
 - The prior plan's claim that PRD, architecture, and `specs/` were absent is
   obsolete. Those implementation-derived workspace artifacts are now referenced
-  by SPEC-0001–0004 v1.1; all are currently untracked, as are the broader test
-  modules. Versioning them with the canonical test suite remains part of item
-  1/3 delivery.
+  by SPEC-0001–0004 v1.1. Item 1 now versions the canonical test modules and
+  isolates their persistent-mode evidence; the PostgreSQL runner remains item 2.
 - SPEC-0003, PRD §10, and ARCHITECTURE now record the approved removal of the
   legacy finalization mode; the implementation refactor and replacement tests
   remain delivery work.
@@ -222,12 +221,12 @@ documentation. Status describes this checkout, not production availability._
   service definition, not an automated or currently portable runner.
 - `tests/test_webhook_local.py` is intentionally live/opt-in and remains outside
   the canonical automation unless a local API is deliberately started.
-- No application code, test, migration, infrastructure configuration, or
-  production data change is proposed by this planning pass.
+- Item 1 changes test configuration, persistent-cycle coverage, and verification
+  documentation only; it changes no application code, migration,
+  infrastructure configuration, or production data.
 
 ## Recommended next pass
 
-**`issues`** — SPEC-0004 is ready to decompose into the independently
-actionable Phase 0 test versioning/isolation and disposable PostgreSQL-runner
-issues. Use **`build`** only after those issues are approved. Product/security
-decisions in Phase 1–2 need owner input first.
+**`build` item 2** — establish the executable disposable PostgreSQL runner and
+verify the skipped database families. Product/security decisions in Phase 1–2
+need owner input first.

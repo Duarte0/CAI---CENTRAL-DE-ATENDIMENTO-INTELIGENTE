@@ -4,7 +4,6 @@ import pytest
 from fastapi import Response
 
 from src.api import routes
-from src.core.config import settings
 
 
 class Redis:
@@ -38,9 +37,8 @@ async def send(monkeypatch, redis, payload):
 
 
 @pytest.mark.asyncio
-async def test_text_webhook_does_not_buffer_or_schedule(monkeypatch):
+async def test_text_webhook_does_not_publish_an_ia_cycle(monkeypatch):
     redis = Redis()
-    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
     monkeypatch.setattr(routes, "reserve_transcription", lambda *_args: None)
     payload = {
         "event": "message.created",
@@ -63,7 +61,6 @@ async def test_text_webhook_does_not_buffer_or_schedule(monkeypatch):
 @pytest.mark.asyncio
 async def test_close_persists_cycle_before_publishing(monkeypatch):
     redis = Redis()
-    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
     monkeypatch.setattr(
         routes, "capture_ticket_assignment", lambda *_args: _async(False)
     )
@@ -108,7 +105,6 @@ async def test_close_persists_cycle_before_publishing(monkeypatch):
 @pytest.mark.asyncio
 async def test_reopen_creates_cycle_without_queue(monkeypatch):
     redis = Redis()
-    monkeypatch.setattr(settings, "digisac_history_finalization_enabled", True)
     monkeypatch.setattr(
         routes, "capture_ticket_assignment", lambda *_args: _async(False)
     )

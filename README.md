@@ -358,11 +358,17 @@ docker compose -p cai exec ia_worker python -m src.utils.backfill_redis_history
 Testes offline:
 
 ```bash
-PYTHONPATH=/app pytest -q --ignore=tests/test_webhook_local.py
-python -m compileall -q src tests
+PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q --ignore=tests/test_webhook_local.py
+python -m compileall -q src tests alembic
 npx --yes pyright
 ```
 
+O `conftest.py` seleciona o modo persistente e restaura a configuração por
+teste; por isso o resultado canônico não depende do valor da flag no `.env`. A
+verificação de isolamento repete o comando com
+`DIGISAC_HISTORY_FINALIZATION_ENABLED=false` e deve produzir o mesmo resultado.
+Em 2026-08-09, cada execução produziu **120 passed, 28 skipped**; os skips
+exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
 `tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
 real e só deve ser incluído se ela estiver em execução.
 
@@ -371,7 +377,7 @@ Para testes que exigem PostgreSQL:
 ```bash
 docker compose -f docker-compose.test.yml up -d --wait
 export CAI_TEST_DATABASE_URL="postgresql://cai_test:cai_test@localhost:5433/cai_test"
-PYTHONPATH=/app pytest -q --ignore=tests/test_webhook_local.py
+PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q --ignore=tests/test_webhook_local.py
 docker compose -f docker-compose.test.yml down
 ```
 

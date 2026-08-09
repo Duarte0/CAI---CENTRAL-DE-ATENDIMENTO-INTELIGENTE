@@ -1,10 +1,20 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** pronto para issues; ainda não implementado
+- **Status:** item 1 implementado; runner PostgreSQL do item 2 pendente
 - **Versão:** 1.1
 - **Prioridade/Fase:** P0 / fase 0
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` itens 1–4; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
+
+## Status de implementação
+
+O item 1 da fase 0 foi implementado em 2026-08-09. Os 27 módulos de teste são
+rastreáveis, o `conftest.py` seleciona o modo persistente sem herdar a flag do
+`.env` e `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
+comando offline canônico, executado com a flag externa tanto em `true` quanto em
+`false`, produziu **120 passed, 28 skipped** em cada execução. Os 28 skips são
+famílias PostgreSQL sem `CAI_TEST_DATABASE_URL`; o runner descartável, a
+conectividade e a verificação de migrations continuam no item 2.
 
 ## Objetivo e não objetivos
 
@@ -12,7 +22,10 @@ Fazer um checkout limpo conter e executar a suíte canônica sem `.env` pessoal,
 
 ## Estado de referência
 
-O plano confirma 127 testes aprovados e 31 ignorados com o modo legado explicitamente selecionado; os 31 exigem `CAI_TEST_DATABASE_URL`. O diretório local contém 26 módulos `test_*.py`, mas `.gitignore` ainda ignora `tests/*` salvo quatro arquivos, portanto a evidência não é reproduzível num checkout limpo. O Compose de teste fixa a porta de host 5433 e não é um runner portátil comprovado.
+O diretório contém 27 módulos `test_*.py` rastreáveis. O comando canônico
+exclui deliberadamente `test_webhook_local.py`, coleta 148 testes e, sem
+`CAI_TEST_DATABASE_URL`, produz 120 aprovados e 28 ignorados. O Compose de teste
+fixa a porta de host 5433 e ainda não é um runner portátil comprovado.
 
 ## Requisitos
 
