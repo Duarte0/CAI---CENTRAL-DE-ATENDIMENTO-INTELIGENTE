@@ -28,8 +28,8 @@ documentation. Status describes this checkout, not production availability._
 ### Completed verification (local, non-production)
 
 - **[completed] Static and configuration checks.** `python -m compileall -q
-  src tests alembic`, `npx --yes pyright` (0 diagnostics), and `docker compose
-  config -q` for both Compose files passed.
+  src tests alembic scripts`, `npx --yes pyright` (0 diagnostics), and
+  `docker compose config -q` for both Compose files passed.
 - **[completed] Isolated offline behavioral suite.** Both
   `PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q
   --ignore=tests/test_webhook_local.py` and the same command with `false`
@@ -37,6 +37,15 @@ documentation. Status describes this checkout, not production availability._
   `CAI_TEST_DATABASE_URL`; the live webhook test remains opt-in. The test-owned
   fixture selects persistent finalization and restores environment/settings
   state after each test.
+- **[completed] Disposable PostgreSQL verification runner.** `PYTHONPATH=/app
+  python scripts/verify.py` creates a uniquely named Compose project with
+  PostgreSQL 16 and a dynamically published host port, or uses the explicit
+  `postgres-test:5432` Docker-network form when the runner is containerized.
+  The observed run passed compileall, Pyright, offline pytest (**128 passed,
+  28 skipped**), process connectivity, Alembic
+  `0014_retry_scheduling`, and PostgreSQL pytest (**28 passed, 128
+  deselected**). The 28 offline skips are not PostgreSQL runtime evidence; the
+  dedicated PostgreSQL stage had no prerequisite skips.
 
 ### Implemented but not reproducibly release-verified
 
@@ -45,13 +54,11 @@ documentation. Status describes this checkout, not production availability._
   persistent close/reopen, duplicate-cycle, bot, negative-webhook, and
   publication-recovery coverage is versioned with the fixture boundary. A clean
   checkout can reproduce the offline evidence without a personal `.env` value.
-- **[pending verification] PostgreSQL migration/integration baseline.** The
-  28 database tests did not run without `CAI_TEST_DATABASE_URL`. The supplied
-  Compose test service validates syntactically but fixes host port 5433, which
-  is occupied by another local project. An isolated PostgreSQL 16 container on
-  5434 was reachable only inside the container; tests received connection
-  refusal from this execution environment. No migration/head or worker-runtime
-  conclusion should be drawn from those attempts.
+- **[completed] PostgreSQL migration/integration baseline.** The versioned
+  runner proves the exact disposable target from the test process, migrates it
+  to Alembic head, and executes all 28 PostgreSQL tests. No production or
+  developer database was used. Phase 1 item 4 remains responsible for broader
+  operational verification beyond this baseline.
 
 ## Priority plan
 
@@ -76,30 +83,30 @@ documentation. Status describes this checkout, not production availability._
    - the clean-checkout offline command passes without personal `.env` input.
 
    Evidence: the canonical command produces **120 passed, 28 skipped** with
-   either externally supplied flag value. The skipped PostgreSQL families remain
-   unverified until item 2 supplies a reachable disposable database.
+   either externally supplied flag value. The additional runner tests are
+   included in the full runner's **128 passed, 28 skipped** offline stage.
 
-2. **[P0 | pending] Establish an executable PostgreSQL verification runner**
+2. **[P0 | completed] Establish an executable PostgreSQL verification runner**
    (SPEC-0004 §§4–5; SPEC-0001–0003 acceptance).
 
-   Outcome: CI or an equivalent versioned runner starts an isolated PostgreSQL
-   16 service, applies Alembic head, supplies `CAI_TEST_DATABASE_URL`, and runs
+   Outcome: the versioned local runner starts an isolated PostgreSQL 16
+   service, applies Alembic head, supplies `CAI_TEST_DATABASE_URL`, and runs
    the database families without contacting a developer or production database.
 
    Completion criteria:
 
-   - parameterize or otherwise avoid the fixed host-port collision in
-     `docker-compose.test.yml`; document host and in-container connection forms;
-   - prove that the runner can connect from the test process, not merely that
-     PostgreSQL is healthy inside its container;
-   - run compileall, strict Pyright, offline tests, and all PostgreSQL tests in
-     the runner; preserve separate results for pass, skip, and prerequisite
-     failure; and
-   - fail automation on any canonical stage while continuing to exclude the
+   - [x] avoid the fixed host-port collision in `docker-compose.test.yml` and
+     document host and in-container connection forms;
+   - [x] prove connection from the test process, not merely PostgreSQL health
+     inside its container;
+   - [x] run compileall, strict Pyright, offline tests, Alembic verification,
+     and all PostgreSQL tests with separate stage results; and
+   - [x] fail automation on any canonical stage while continuing to exclude the
      opt-in live webhook test.
 
-   Dependency: item 1. Risk: the test fixture truncates its target database,
-   so its URL must be demonstrably disposable.
+   Dependency: item 1 satisfied. Risk addressed: the runner owns the unique
+   Compose project, temporary database, network form, and cleanup before the
+   fixture truncates its target.
 
 3. **[P0 | pending] Reconcile and version the documentation/spec baseline.**
 
@@ -206,7 +213,8 @@ documentation. Status describes this checkout, not production availability._
 - The prior plan's claim that PRD, architecture, and `specs/` were absent is
   obsolete. Those implementation-derived workspace artifacts are now referenced
   by SPEC-0001–0004 v1.1. Item 1 now versions the canonical test modules and
-  isolates their persistent-mode evidence; the PostgreSQL runner remains item 2.
+  isolates their persistent-mode evidence; item 2 now supplies the executable
+  PostgreSQL runner.
 - SPEC-0003, PRD §10, and ARCHITECTURE now record the approved removal of the
   legacy finalization mode; the implementation refactor and replacement tests
   remain delivery work.
@@ -217,16 +225,18 @@ documentation. Status describes this checkout, not production availability._
   contract reconciliation.
 - The current code search found no TODO/FIXME/stub backlog. Inspected `pass`
   statements are exception or migration control flow, not placeholders.
-- There is no CI configuration. `docker-compose.test.yml` is a useful test
-  service definition, not an automated or currently portable runner.
+- There is no hosted CI configuration; `scripts/verify.py` is the canonical
+  local runner. `docker-compose.test.yml` remains the disposable service
+  definition used by that runner.
 - `tests/test_webhook_local.py` is intentionally live/opt-in and remains outside
   the canonical automation unless a local API is deliberately started.
-- Item 1 changes test configuration, persistent-cycle coverage, and verification
-  documentation only; it changes no application code, migration,
-  infrastructure configuration, or production data.
+- Item 2 changes only the disposable test Compose publication, verification
+  tooling/tests, and versioned verification documentation; it changes no
+  application behavior, Alembic migration, production data, or active Compose
+  project.
 
 ## Recommended next pass
 
-**`build` item 2** — establish the executable disposable PostgreSQL runner and
-verify the skipped database families. Product/security decisions in Phase 1–2
-need owner input first.
+**Phase 1 item 4** — extend the verified baseline into broader durable-operation
+checks as needed. Product/security decisions in Phase 1–2 need owner input
+first.

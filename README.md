@@ -372,17 +372,29 @@ exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL
 `tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
 real e só deve ser incluído se ela estiver em execução.
 
-Para testes que exigem PostgreSQL:
+Verificação canônica completa, incluindo PostgreSQL descartável:
 
 ```bash
-docker compose -f docker-compose.test.yml up -d --wait
-export CAI_TEST_DATABASE_URL="postgresql://cai_test:cai_test@localhost:5433/cai_test"
-PYTHONPATH=/app DIGISAC_HISTORY_FINALIZATION_ENABLED=true pytest -q --ignore=tests/test_webhook_local.py
-docker compose -f docker-compose.test.yml down
+PYTHONPATH=/app python scripts/verify.py
 ```
 
-Em uma rede Docker isolada, use o hostname e a porta interna definidos pelo
-Compose de testes em vez de `localhost`.
+O runner executa compileall, Pyright estrito, a suíte offline com o modo
+persistent explicitamente ativo e, em seguida, todos os testes marcados
+`postgres`. Ele cria um projeto Compose com nome único, PostgreSQL 16 em
+armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
+porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
+desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
+ao destino, aplica e verifica Alembic `0014_retry_scheduling` e só então
+fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
+
+Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
+dinâmica retornada por Compose. Quando o runner está dentro de um container
+sem acesso ao loopback do host, ele conecta somente o container do próprio
+runner à rede Compose temporária e usa `postgres-test:5432`; essa conexão
+também é verificada pelo processo de teste. O projeto, rede e armazenamento
+temporários são removidos mesmo quando uma etapa falha. Os resultados offline
+e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
+fora da execução canônica.
 
 ## Operação
 

@@ -2,7 +2,9 @@ services:
   postgres-test:
     image: postgres:16.14-alpine
     ports:
-      - "127.0.0.1:5433:5432"
+      - target: 5432
+        published: 0
+        host_ip: 127.0.0.1
     environment:
       POSTGRES_DB: cai_test
       POSTGRES_USER: cai_test

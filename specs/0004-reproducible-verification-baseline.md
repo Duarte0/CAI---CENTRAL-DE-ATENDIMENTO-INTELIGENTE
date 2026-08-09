@@ -1,20 +1,22 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** item 1 implementado; runner PostgreSQL do item 2 pendente
-- **Versão:** 1.1
+- **Status:** itens 1 e 2 implementados
+- **Versão:** 1.2
 - **Prioridade/Fase:** P0 / fase 0
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` itens 1–4; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
 
-O item 1 da fase 0 foi implementado em 2026-08-09. Os 27 módulos de teste são
-rastreáveis, o `conftest.py` seleciona o modo persistente sem herdar a flag do
-`.env` e `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
-comando offline canônico, executado com a flag externa tanto em `true` quanto em
-`false`, produziu **120 passed, 28 skipped** em cada execução. Os 28 skips são
-famílias PostgreSQL sem `CAI_TEST_DATABASE_URL`; o runner descartável, a
-conectividade e a verificação de migrations continuam no item 2.
+Os itens 1 e 2 da fase 0 foram implementados em 2026-08-09. Os módulos de teste
+são rastreáveis, o `conftest.py` seleciona o modo persistente sem herdar a flag
+do `.env` e `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
+runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
+comprova a conexão do próprio processo, aplica e verifica Alembic head e
+fornece a URL exata ao subprocesso PostgreSQL. A execução observada produziu
+**128 passed, 28 skipped** na etapa offline, **28 passed, 128 deselected** na
+etapa PostgreSQL e zero diagnósticos no Pyright. Os 28 skips pertencem apenas à
+etapa offline, onde o banco deliberadamente não é fornecido.
 
 ## Objetivo e não objetivos
 
@@ -22,10 +24,11 @@ Fazer um checkout limpo conter e executar a suíte canônica sem `.env` pessoal,
 
 ## Estado de referência
 
-O diretório contém 27 módulos `test_*.py` rastreáveis. O comando canônico
-exclui deliberadamente `test_webhook_local.py`, coleta 148 testes e, sem
-`CAI_TEST_DATABASE_URL`, produz 120 aprovados e 28 ignorados. O Compose de teste
-fixa a porta de host 5433 e ainda não é um runner portátil comprovado.
+O diretório contém os módulos `test_*.py` rastreáveis e o comando canônico
+exclui deliberadamente `test_webhook_local.py`. O Compose de teste publica
+PostgreSQL 16 em porta de host dinâmica (`published: 0`) e o runner usa um
+projeto, rede e armazenamento temporários; em execução containerizada, usa o
+hostname interno `postgres-test:5432` sem tocar em outros projetos Compose.
 
 ## Requisitos
 
@@ -38,12 +41,12 @@ fixa a porta de host 5433 e ainda não é um runner portátil comprovado.
 
 ## Aceitação
 
-- O runner local canônico (por exemplo, `./run_tests.sh`) executa `python -m compileall -q src tests alembic`, `npx --yes pyright` sem diagnósticos e a suíte offline com `DIGISAC_HISTORY_FINALIZATION_ENABLED` explicitamente definido, não herdado do `.env`.
-- O banco descartável aplica Alembic head e executa os testes PostgreSQL a partir do processo de teste, não apenas de dentro do container.
-- O runner fornece `CAI_TEST_DATABASE_URL` ao processo de teste para uma instância PostgreSQL 16 isolada e descartável.
-- A colisão da porta fixa 5433 em `docker-compose.test.yml` é resolvida para que o PostgreSQL descartável seja acessível pelo processo de teste.
-- Nenhum comando canônico usa uma URL, volume ou porta de produção/desenvolvimento sem isolamento demonstrado.
+- [x] O runner local canônico `PYTHONPATH=/app python scripts/verify.py` executa compileall, `npx --yes pyright` sem diagnósticos e a suíte offline com `DIGISAC_HISTORY_FINALIZATION_ENABLED` explicitamente definido, não herdado do `.env`.
+- [x] O banco descartável aplica Alembic head e executa os testes PostgreSQL a partir do mesmo processo de teste, usando a forma host publicada ou a forma interna Docker quando o runner está containerizado.
+- [x] O runner fornece `CAI_TEST_DATABASE_URL` ao processo de teste para uma instância PostgreSQL 16 isolada e descartável.
+- [x] A colisão da porta fixa 5433 em `docker-compose.test.yml` é resolvida com publicação dinâmica.
+- [x] Nenhum comando canônico usa uma URL, volume ou porta de produção/desenvolvimento sem isolamento demonstrado.
 
 ## Decisão registrada
 
-O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline com flag explícita e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`.
+O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline com flag explícita e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`. A execução observada em 2026-08-09 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.
