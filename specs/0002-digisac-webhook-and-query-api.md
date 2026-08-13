@@ -1,7 +1,7 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
-- **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas versionadas
-- **Versão:** 1.4
+- **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas sem versão
+- **Versão:** 1.5
 - **Prioridade/Fase:** P0 / baseline de requisitos
 - **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` itens 5 e 7; SPEC-0001
 - **Dependências:** SPEC-0001

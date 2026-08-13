@@ -203,6 +203,10 @@ The current HTTP surface is:
 | `GET /cycles/{cycle_id}/status` | Return a persistent cycle record. |
 | `GET /cycles/{cycle_id}/result` | Return a persistent cycle result. |
 
+The mounted conversation and cycle query routes are currently unversioned.
+`/v1/` and `/v2/` remain future compatibility policy only; they are not aliases
+or implemented routes in this checkout.
+
 Normal webhook processing returns `202`. Safely ignored events return `200` with
 an ignore reason. Missing conversations, cycles, or unavailable results return
 `404`; malformed payloads return `400`; invalid webhook signatures return `401`;
@@ -265,14 +269,17 @@ The observed local runner evidence on 2026-08-09 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 118 passed, 33 skipped (the skips are deliberately absent
+- offline pytest: 122 passed, 33 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
 - Alembic: `0014_retry_scheduling` applied and verified on the runner target; and
-- PostgreSQL pytest: 33 passed, 118 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 33 passed, 122 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, and dependent image wake-up.
 
-This evidence is local and disposable, not production availability or release
+The runner's offline stage does not select a finalization setting; it isolates
+the disposable database credentials and injects the runner-owned URL only for
+the PostgreSQL stage. This evidence is local and disposable, not verification
+of Redis, DigiSac, Groq, replicas, deployment availability, or production
 readiness. There is no hosted CI runner enforcing the matrix. The raw-payload
 diagnostic surfaces were removed under Phase 1 item 5; no debug endpoint is part
 of the supported HTTP surface.

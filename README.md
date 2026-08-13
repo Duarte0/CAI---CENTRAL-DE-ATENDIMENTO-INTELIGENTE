@@ -84,9 +84,10 @@ camada transitória de transporte e coordenação.
 ## Finalização persistente por histórico DigiSac
 
 Cada abertura/reabertura cria uma sequência e cada fechamento persiste um ciclo
-antes de publicá-lo. O worker consulta todas as páginas de
-`GET /api/v1/messages?where[ticketId]=...`, deduplica e ordena as mensagens,
-filtra conteúdo fora do ciclo e salva o snapshot usado na análise.
+antes de publicá-lo. O worker consulta todas as páginas da API externa da
+DigiSac, em `GET /api/v1/messages?where[ticketId]=...`, deduplica e ordena as
+mensagens, filtra conteúdo fora do ciclo e salva o snapshot usado na análise.
+Esse `/api/v1` pertence à DigiSac e não é uma rota de consulta montada pelo CAI.
 
 Os estados do ciclo incluem, entre outros, espera por histórico, espera por
 mídia, bloqueio por imagem, classificação, conclusão, conclusão com avisos e
@@ -243,16 +244,15 @@ Cada worker deve rodar em seu próprio processo.
 | `POST` | `/webhook/digisac` | Recebe eventos DigiSac; normalmente responde `202`. |
 | `GET` | `/health` | Verifica Redis e PostgreSQL. |
 | `GET` | `/queues` | Contadores das filas, dead-letters e ciclos por estado. |
-| `GET` | `/conversations/{id}/status` | Estado do ciclo mais recente ou do fluxo legado. |
+| `GET` | `/conversations/{id}/status` | Estado persistente do ciclo mais recente. |
 | `GET` | `/conversations/{id}/result` | Resultado mais recente disponível. |
 | `GET` | `/conversations/{id}/cycles` | Lista ciclos persistidos da conversa. |
 | `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo. |
 | `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo específico. |
 
-As consultas estão sem prefixo de versão no código atualmente montado. A
-política de compatibilidade para futuras mudanças incompatíveis continua sendo
-registrada nas especificações, mas `/v1/` ainda não é uma rota montada neste
-checkout.
+As consultas estão montadas sem prefixo de versão. `/v1/` e `/v2/` permanecem
+somente como política de compatibilidade futura; não são aliases nem rotas
+montadas neste checkout.
 
 O formato real do webhook é o envelope DigiSac. Um exemplo mínimo de mensagem:
 
@@ -341,9 +341,10 @@ python -m compileall -q src tests alembic
 npx --yes pyright
 ```
 
-O modo persistente é o único caminho suportado e não depende de uma flag no
-`.env`. Em 2026-08-09, a execução produziu **118 passed, 33 skipped**; os skips
-exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
+O modo persistente por histórico DigiSac é o único caminho suportado e não
+depende de uma flag no `.env`. Em 2026-08-09, a execução produziu **122 passed,
+33 skipped**; os skips exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema
+ou o runtime PostgreSQL.
 `tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
 real e só deve ser incluído se ela estiver em execução.
 
@@ -353,9 +354,9 @@ Verificação canônica completa, incluindo PostgreSQL descartável:
 PYTHONPATH=/app python scripts/verify.py
 ```
 
-O runner executa compileall, Pyright estrito, a suíte offline com o modo
-persistent explicitamente ativo e, em seguida, todos os testes marcados
-`postgres`. Ele cria um projeto Compose com nome único, PostgreSQL 16 em
+O runner executa compileall, Pyright estrito, a suíte offline sem selecionar
+qualquer flag de finalização e, em seguida, todos os testes marcados `postgres`.
+Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
@@ -372,11 +373,13 @@ e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
 fora da execução canônica.
 
 Na execução observada do runner após a verificação operacional, a etapa
-PostgreSQL produziu **33 passed, 118 deselected**. Esses testes cobrem, no
+PostgreSQL produziu **33 passed, 122 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
 fila e o despertar somente dos ciclos dependentes de uma imagem recuperada.
-Isso não é evidência de Redis, fornecedores, réplicas ou produção.
+Os resultados offline e PostgreSQL são evidência local descartável; não
+comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
+produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

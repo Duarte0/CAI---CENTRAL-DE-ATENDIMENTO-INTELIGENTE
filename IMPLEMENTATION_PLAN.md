@@ -1,248 +1,160 @@
 # Implementation Plan
 
-_Planning baseline: 2026-08-09. Source code, Alembic migrations, configuration,
-and executed tests take precedence over this plan and the implementation-derived
-documentation. Status describes this checkout, not production availability._
+_Planning baseline: 2026-08-13. Code, Alembic migrations, configuration and
+tests take precedence over this plan. Status describes this checkout and
+recorded local evidence, never production availability._
 
 ## Evidence-based current state
 
-### Completed implementation
+### Completed and locally verified
 
-- **[completed] Durable conversation analysis.** The API, PostgreSQL cycle
-  state, Redis coordination, Groq classification, and separate audio/image
-  workers implement the persistent DigiSac-history flow. Persistent cycles record history snapshot and
-  ordered membership, reconcile scheduled media, and block terminal image
-  failures rather than classify incomplete context. References: PRD §§5–8,
-  ARCHITECTURE §§3–9, SPEC-0001–0003.
-- **[completed] Schema and recovery foundation.** Alembic owns the schema
-  through `0014_retry_scheduling`; the additive identity, message, cycle, and
-  media-scheduling migrations plus audit/backfill/import utilities are present.
-  Compose runs migration before application services. The legacy SQLite SQL in
-  `migrations/` is import/documentation support, not the live schema authority.
-- **[completed] Image documents.** Commit `878a464` normalizes `document`
-  messages whose MIME type is `image/*` as images, reserves visual extraction,
-  and renders successful output as image content. The seven focused tests in
-  `test_media_detection.py` pass.
+- **[completed] Persistent conversation analysis and recovery**
+  (PRD §§5–8; SPEC-0001–0003). FastAPI ingestion, PostgreSQL cycle state,
+  Redis coordination, DigiSac-history reconstruction, Groq classification, and
+  separate audio/image workers are implemented. PostgreSQL persists before
+  publication; leases, `next_attempt_at`, reconciliation, and idempotent
+  identity recover interrupted work. Terminal image failure blocks only its
+  dependent cycle; terminal audio failure is represented as a warning.
+- **[completed] Persistent-only finalization** (PRD §5.4; SPEC-0003;
+  issue 0005). The feature flag, Redis buffer/debounce, legacy worker branch,
+  API fallbacks, models, and legacy tests were removed. Targeted search finds
+  no active legacy code or setting.
+- **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
+  owns schema through `0014_durable_retry_scheduling`; migrations, backfills,
+  import, and audit utilities are versioned. Application code verifies rather
+  than creates schema.
+- **[completed] Webhook hardening and supported HTTP surface** (SPEC-0002;
+  issue 0006). Production HMAC-before-parse handling remains; raw-payload
+  diagnostic routes/modules are removed and focused tests prove both historical
+  paths return `404`.
+- **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
+  0002, 0004). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  target, verifies process connectivity and Alembic head, then runs the
+  PostgreSQL-marked family. Its latest recorded execution (issue 0006,
+  2026-08-09) passed compileall, strict Pyright, offline pytest (**122 passed,
+  33 skipped**), Alembic `0014_retry_scheduling`, and PostgreSQL pytest
+  (**33 passed, 122 deselected**). The 33 offline skips are expected missing
+  `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
-### Completed verification (local, non-production)
+### Implemented, with bounded verification only
 
-- **[completed] Static and configuration checks.** `python -m compileall -q
-  src tests alembic scripts`, `npx --yes pyright` (0 diagnostics), and
-  `docker compose config -q` for both Compose files passed.
-- **[completed] Isolated offline behavioral suite.** Both
-  `PYTHONPATH=/app pytest -q
-  --ignore=tests/test_webhook_local.py` and the same command with `false`
-  produced **118 passed, 33 skipped** on 2026-08-09. The skipped tests require
-  `CAI_TEST_DATABASE_URL`; the live webhook test remains opt-in. The test-owned
-  fixture selects persistent finalization and restores environment/settings
-  state after each test.
-- **[completed] Disposable PostgreSQL verification runner.** `PYTHONPATH=/app
-  python scripts/verify.py` creates a uniquely named Compose project with
-  PostgreSQL 16 and a dynamically published host port, or uses the explicit
-  `postgres-test:5432` Docker-network form when the runner is containerized.
-  The observed run passed compileall, Pyright, offline pytest (**118 passed,
-  33 skipped**), process connectivity, Alembic
-  `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 118
-  deselected**). The 33 offline skips are not PostgreSQL runtime evidence; the
-  dedicated PostgreSQL stage had no prerequisite skips.
+- **[completed | local-only evidence] External integrations and deployment.**
+  Redis, DigiSac, Groq, Docker Compose, migrations, and the opt-in live webhook
+  test are implemented, but the checked-in runner deliberately substitutes a
+  deterministic queue and disposable PostgreSQL. There is no recorded current
+  verification against a running Redis deployment, DigiSac/Groq provider,
+  replicas, or production target. This is a release-evidence limitation, not a
+  code defect or an authorized rollout task.
+- **[completed | opt-in] Live webhook test.** `tests/test_webhook_local.py`
+  intentionally remains outside canonical automation and requires a separately
+  started local API.
 
-### Implemented but not reproducibly release-verified
+### Planning signals
 
-- **[completed] Canonical offline test suite is tracked and isolated.** 161
-  tests are collected locally (excluding the opt-in live webhook test), and the
-  persistent close/reopen, duplicate-cycle, bot, negative-webhook, and
-  publication-recovery coverage is versioned with the fixture boundary. A clean
-  checkout can reproduce the offline evidence without a personal `.env` value.
-- **[completed] PostgreSQL migration/integration baseline.** The versioned
-  runner proves the exact disposable target from the test process, migrates it
-  to Alembic head, and executes all 33 PostgreSQL tests. No production or
-  developer database was used.
+- The current canonical collection contains **155 tests** when the live webhook
+  test is excluded; the most recent passing evidence above is therefore
+  historical rather than a fresh full-suite run.
+- Targeted TODO/placeholder/stub searches found no implementation backlog.
+  Remaining `pass` statements are migration or exception-control flow.
+- All seven implementation issues are `closed`; no open issue supplies an
+  eligible build item. Earlier Phase 0/1 plan work is complete and must not be
+  reopened.
 
 ## Priority plan
 
-### Phase 0 — Make the existing baseline deliverable and reproducible
+### Phase 1 — Reconcile stale verification and compatibility documentation
 
-1. **[P0 | completed] Version and isolate the canonical test suite**
-   (SPEC-0004 §§1–3).
+1. **[P1 | completed] Correct the implementation-derived documentation
+   baseline** (PRD §§5.4, 7, 9; ARCHITECTURE §§10, 13; SPEC-0002–0006).
 
-   Outcome: a clean checkout contains the offline and PostgreSQL test families
-   that currently provide evidence, and each family uses the sole persistent
-   finalization contract rather than inheriting a developer `.env`.
-
-   Completion criteria:
-
-   - replace the blanket `tests/*` ignore policy with an explicit tracked-suite
-     policy; retain only justified local artifacts such as
-     `test_webhook_local.py` as opt-in;
-   - make fixtures/environment independent of obsolete mode settings;
-   - remove legacy-mode fixtures and replace `test_ticket_closure.py` with
-     tracked persistent-cycle coverage; and
-   - the clean-checkout offline command passes without personal `.env` input.
-
-   Evidence: the canonical command produces **118 passed, 33 skipped** with
-  including the focused operational recovery tests skipped without
-  `CAI_TEST_DATABASE_URL`.
-
-2. **[P0 | completed] Establish an executable PostgreSQL verification runner**
-   (SPEC-0004 §§4–5; SPEC-0001–0003 acceptance).
-
-   Outcome: the versioned local runner starts an isolated PostgreSQL 16
-   service, applies Alembic head, supplies `CAI_TEST_DATABASE_URL`, and runs
-   the database families without contacting a developer or production database.
+   Outcome: documentation and active specifications describe the current
+   persistent-only code and the latest recorded verification evidence without
+   implying a deployed or versioned API.
 
    Completion criteria:
 
-   - [x] avoid the fixed host-port collision in `docker-compose.test.yml` and
-     document host and in-container connection forms;
-   - [x] prove connection from the test process, not merely PostgreSQL health
-     inside its container;
-   - [x] run compileall, strict Pyright, offline tests, Alembic verification,
-     and all PostgreSQL tests with separate stage results; and
-   - [x] fail automation on any canonical stage while continuing to exclude the
-     opt-in live webhook test.
+   - [x] replace README's obsolete “fluxo legado” status wording and its claim that
+     the runner explicitly enables a removed persistent-finalization flag;
+   - [x] correct SPEC-0002's status line so it matches its contract and
+     `src/api/routes.py`: query routes are unversioned;
+   - [x] make the plan, README, PRD, architecture, SPEC-0004, and spec index use
+     the latest issue-0006 test evidence (**122/33** offline; **33/122**
+     PostgreSQL) or clearly label any older result as historical; and
+   - [x] retain `/v1/` and `/v2/` solely as future compatibility policy, with no
+     mounted-route claim.
 
-   Dependency: item 1 satisfied. Risk addressed: the runner owns the unique
-   Compose project, temporary database, network form, and cleanup before the
-   fixture truncates its target.
+   Specification outcome: SPEC-0005 defines the bounded documentation
+   reconciliation and is implemented as v1.1. SPEC-0006 defines the
+   implementation-ready OpenAPI/HTTP contract and remains ready for issue
+   decomposition. This item is complete; no application behavior changed.
 
-3. **[P0 | completed] Reconcile and version the documentation/spec baseline.**
+   Evidence: issue 0007 reconciled the affected documents against the current
+   source, runner, and issue-0006 result. The canonical offline evidence is
+   **122 passed, 33 skipped** and the disposable PostgreSQL evidence is
+   **33 passed, 122 deselected**; neither implies external-runtime or
+   production readiness.
 
-   Outcome: README, PRD, architecture, and `specs/` are a single,
-  implementation-derived baseline with product decisions explicitly recorded,
-  and are versioned with their referenced tests.
+   Dependencies: none. Risk: stale operational instructions could make an
+   operator attempt a removed configuration path or infer nonexistent API
+   compatibility. No product decision is required; source already resolves the
+   behavior. This item is documentation/spec work, not an application change.
 
-   Completion criteria:
+### Phase 2 — Conditional release/production evidence (not ready to build)
 
-   - [x] review and version the existing working-tree documentation after verifying
-     variables, routes, Compose behavior, migrations, recovery commands, and
-     test commands against source;
-   - [x] the 2026-08-09 specification pass reconciled those contracts: SPEC-0003
-     v1.3 records the completed removal of legacy mode, and SPEC-0002 v1.4 records
-     the production webhook and sanitized operational contract after the
-     diagnostic-surface removal;
-   - [x] retain implementation-derived status until product approval rather than
-     claiming approved policy, and update README/API wording to match the
-     implemented HTTP surface; and
-   - [x] update documentation to distinguish the locally verified offline baseline
-     from the unverified PostgreSQL/runtime baseline; and
-   - [x] keep PostgreSQL as durable source of truth and Redis as coordination,
-     while documenting the persistent-only worker and its durable recovery
-     boundary.
+2. **[P2 | blocked | decision/operations] Define and authorize a production
+   acceptance run only when a deployment is intended** (PRD §§8–10;
+   ARCHITECTURE §§11, 13; SPEC-0004).
 
-   Evidence: the documentation-only reconciliation was validated against the
-   source, migrations, tests, and the observed `scripts/verify.py` run on
-   2026-08-09. That run passed compileall, Pyright, offline pytest (118 passed,
-   33 skipped), Alembic `0014_retry_scheduling`, and PostgreSQL pytest (33
-   passed, 118 deselected). It does not claim production verification.
+   Outcome: an approved, non-destructive runbook could establish evidence for
+   the currently unverified external boundaries: deployment topology, Redis,
+   DigiSac/Groq credentials and provider behavior, and the opt-in live webhook.
 
-   Dependency: item 1 for reproducible test references. This supersedes the
-   previous plan item that proposed creating PRD/architecture/spec files: they
-   now exist and this item reconciles their implementation status and evidence.
+   Completion criteria: product/operations identifies the environment, target,
+   acceptable test data, backup/rollback ownership, secrets handling, and
+   release acceptance threshold; only then write a scoped operational spec and
+   issue. The existing disposable runner remains the required precondition.
 
-### Phase 1 — Close operational and exposed-surface gaps
+   Blockers: no production target, credentials, rollout authority, SLA, or
+   acceptance threshold is defined in the authoritative documents. Do not
+   infer any of them. Hosted CI remains optional under PRD §10 and is not a
+   missing implementation item.
 
-4. **[P1 | completed] Verify broader durable operation on the executable runner**
-   (SPEC-0001–0003).
+## Completed history and superseded work
 
-   Outcome: Alembic head and the durable cycle/media paths are proven together
-   on a fresh disposable database.
+- **[completed]** Canonical test isolation (issue 0001), disposable PostgreSQL
+  runner (0002), documentation baseline (0003), durable recovery coverage
+  (0004), legacy finalization removal (0005), raw-payload diagnostic-surface
+  removal (0006), and persistent implementation documentation reconciliation
+  (0007).
+- **[superseded]** Any plan item proposing PRD/architecture/spec creation,
+  legacy-finalization removal, diagnostic-route removal, fixed-port test
+  Compose work, or broader database recovery coverage. These artifacts and
+  their focused evidence already exist.
+- **[non-work]** Automatic retention/archival, query authentication/rate
+  limiting, mounted `/v1/` aliases, hosted CI, provider/model replacement, and
+  Acessórias routing are not implied by the current requirements. They require
+  a future approved product/spec increment.
 
-   Completion criteria: extend the already successful runner baseline with
-   broader operational checks for cycle claim/lease, publication recovery,
-   due-media wake-up, blocked-image behavior, and idempotent queue publication.
-   `tests/test_operational_recovery_db.py` supplies the deterministic queue
-   transport and the runner executed all 33 PostgreSQL tests against its
-   disposable target.
+## Dependencies, risks, and recorded discrepancies
 
-   Evidence: the 2026-08-09 run passed compileall, Pyright, offline pytest
-   (**118 passed, 33 skipped**), PostgreSQL 16 connectivity, Alembic
-   `0014_retry_scheduling`, and PostgreSQL pytest (**33 passed, 118
-   deselected**). The focused tests use only synthetic identifiers and the
-   runner-owned disposable database; no production behavior or schema changed.
-
-   Dependency: item 2. Do not run backfills or migrations against the active
-   deployment under this item; production rollout still requires separately
-   approved backup and target-state audit.
-
-5. **[P1 | completed] Remove raw-payload diagnostic surfaces before any
-   exposure or contract expansion.**
-
-   The approved security/operations action deleted the unmounted raw-header and
-   raw-body handler, removed the mounted diagnostic route, and made the
-   production webhook the sole ingestion surface. Operators monitor the system
-   with structured logs and existing operational metrics.
-
-   Completion criteria:
-
-   - [x] `src/api/debug_routes.py` is deleted;
-   - [x] `POST /webhook/debug` is removed from `src/api/routes.py`;
-   - [x] PRD, architecture, README, SPEC-0002, and the specification index no
-     longer document either debug surface;
-   - [x] focused HTTP tests prove both routes return `404`, production HMAC
-     ordering remains intact, and raw markers do not appear in responses/logs;
-     and
-   - [x] compileall, Pyright, the canonical offline suite, and the disposable
-     runner were executed with results recorded in issue `0006`.
-
-   Evidence: issue `0006` records the focused route/security result and the
-   canonical verification results from the post-change run on 2026-08-09. No
-   production target, migration, Redis data, or deployment topology changed.
-
-### Phase 2 — Product and data-policy decisions
-
-6. **[completed] Record retention, archival/deletion, access-control, and legal
-   privacy policy** (PRD §10; SPEC-0001).
-
-   Impact: data is retained indefinitely with no cleanup job, retention schema,
-   or LGPD-driven automation; manual direct-PostgreSQL deletion is case by case.
-   Query access is internal-only without a reader authorization layer, and
-   production webhook validation requires `WEBHOOK_SECRET`.
-
-7. **[completed] Record historical-assignment interpretation and API consumer
-   policy** (PRD §10; SPEC-0001–0002).
-
-   Impact: all observed assignment transfers remain chronological for future
-   Acessórias routing. The internal query API has no rate limiting and is
-   currently mounted without a version prefix; `/v1/` and `/v2/` remain future
-   compatibility policy, not implemented route claims.
-
-8. **[completed] Remove legacy finalization**
-   (PRD §10; ARCHITECTURE §5; SPEC-0003).
-
-   Outcome: removed the flag, Redis-buffer keys, debounce, legacy IA worker
-   handling, single-replica recovery limitation, and legacy test matrix; only
-   the persistent DigiSac-history mode remains. SPEC-0003 now documents the
-   persistent-only contract.
-
-## Discrepancies, dependencies, and non-work
-
-- The prior plan's claim that PRD, architecture, and `specs/` were absent is
-  obsolete. Those implementation-derived workspace artifacts are now referenced
-  by SPEC-0001–0004 v1.1. Item 1 now versions the canonical test modules and
-  isolates their persistent-mode evidence; item 2 now supplies the executable
-  PostgreSQL runner.
-- SPEC-0003, PRD §10, and ARCHITECTURE now record the completed removal of the
-  legacy finalization mode; persistent-cycle tests and recovery evidence remain
-  the verification baseline.
-- The raw-payload diagnostic surfaces were removed under completed Phase 1 item
-  5. No replacement debug endpoint or raw-payload contract exists.
-- Earlier SPEC-0002/PRD wording described query routes as `/v1/`, but
-  `src/api/routes.py` currently mounts them without that prefix. The baseline
-  now follows the source and records `/v1/`/`/v2/` as future policy only; adding
-  versioned aliases is outside this documentation issue.
-- The current code search found no TODO/FIXME/stub backlog. Inspected `pass`
-  statements are exception or migration control flow, not placeholders.
-- There is no hosted CI configuration; `scripts/verify.py` is the canonical
-  local runner. `docker-compose.test.yml` remains the disposable service
-  definition used by that runner.
-- `tests/test_webhook_local.py` is intentionally live/opt-in and remains outside
-  the canonical automation unless a local API is deliberately started.
-- Item 2 changes only the disposable test Compose publication, verification
-  tooling/tests, and versioned verification documentation; it changes no
-  application behavior, Alembic migration, production data, or active Compose
-  project.
+- **Documentation inconsistency (Phase 1, resolved by issue 0007):** README,
+  PRD, architecture, SPEC-0002, SPEC-0004, the index, and this plan now state
+  persistent-only finalization, unversioned mounted queries, and future-only
+  `/v1/`/`/v2/` policy.
+- **Verification evidence drift (Phase 1, resolved by issue 0007):** active
+  documentation now distinguishes **122 passed, 33 skipped** offline from
+  **33 passed, 122 deselected** on disposable PostgreSQL. The evidence remains
+  local and does not prove Redis, provider, replica, deployment, or production
+  readiness.
+- **External-runtime boundary (Phase 2):** local disposable verification is
+  intentionally insufficient to claim provider, Redis, replica, or production
+  readiness. The limitation affects only a future deployment acceptance task.
+- **No migration or infrastructure work is pending** for the completed
+  persistent-only baseline. Any future schema or production operation must be
+  additive, Alembic-owned, and separately authorized.
 
 ## Recommended next pass
 
-Phase 1 item 5 is complete. The next pass should address a separately approved
-future increment rather than reopening the removed diagnostic surfaces.
+Run the **issues** pass for SPEC-0006 / the next approved API-documentation
+increment. Phase 2 remains blocked on its separately authorized operational
+decision.

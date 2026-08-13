@@ -1,7 +1,7 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
 - **Status:** itens 1 e 2 implementados; verificação operacional do item 4 concluída
-- **Versão:** 1.3
+- **Versão:** 1.4
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` itens 1–4; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
@@ -14,16 +14,18 @@ são rastreáveis, o `conftest.py` não seleciona um modo alternativo e
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
 fornece a URL exata ao subprocesso PostgreSQL. A execução observada produziu
-**118 passed, 33 skipped** na etapa offline, **33 passed, 118 deselected** na
+**122 passed, 33 skipped** na etapa offline, **33 passed, 122 deselected** na
 etapa PostgreSQL e zero diagnósticos no Pyright. Os 33 skips pertencem apenas à
 etapa offline, onde o banco deliberadamente não é fornecido.
+Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
+do banco descartável somente na etapa PostgreSQL.
 
 A verificação operacional do item 4 do plano foi adicionada ao mesmo contrato
 de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
 de fila determinístico e identificadores sintéticos para verificar claim/lease
 de ciclo, liberação após falha de publicação, agenda futura, recuperação de
 áudio/imagem sem duplicação e despertar seletivo de ciclos bloqueados por
-imagem. A execução observada produziu **33 passed, 118 deselected** no destino
+imagem. A execução observada produziu **33 passed, 122 deselected** no destino
 PostgreSQL 16 descartável; isso não comprova Redis, fornecedores, réplicas ou
 produção.
 

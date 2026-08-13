@@ -293,8 +293,8 @@ ignore reason. Missing persisted entities return \`404\`. There is no webhook
 diagnostic route. Logs and normal operational responses expose IDs and status
 without raw bodies, headers, secrets, tokens, signed URLs, or binary media.
 The query routes above are currently unversioned in the mounted FastAPI app;
-future `/v1/` compatibility is a policy/reference target, not an implemented
-prefix in this checkout.
+future `/v1/` and `/v2/` compatibility are policy/reference targets, not
+implemented aliases or prefixes in this checkout.
 
 ## 11. Deployment topology
 
@@ -341,8 +341,13 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target, but static/local evidence does
-  not prove production availability or release readiness.
+  PostgreSQL baseline on a disposable target. Its observed 2026-08-09 evidence
+  was **122 passed, 33 skipped** offline and **33 passed, 122 deselected** in
+  PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
+  replica, deployment, or production availability or release readiness.
+- The runner's offline stage does not select a finalization setting and removes
+  the test database prerequisite before execution; only the PostgreSQL stage
+  receives the runner-owned disposable database URL.
 - Phase 1 item 4 now has focused disposable-runner coverage for durable cycle
   publication recovery, due-only media recovery, queue deduplication, and
   dependent image wake-up; no hosted CI runner currently enforces the matrix.
