@@ -28,6 +28,21 @@ Read fully: the issue, every spec it references, relevant `IMPLEMENTATION_PLAN.m
 
 Before touching code, confirm with targeted searches: what's already implemented, what's missing, which tests cover it, which interfaces/callers/downstream components are affected, and what the repo's actual build/lint/typecheck/migration/test commands are. Don't assume a framework, layout, or package manager — use what's actually there.
 
+## Specialized skills
+
+  Before implementing a change, inspect the repository instructions and identify any installed
+  skills/plugins applicable to the selected issue.
+
+  Read the applicable skill instructions before using them and follow their required workflow.
+  If a selected skill requires design or concept approval before implementation, do not skip that
+  gate.
+
+  For frontend work, apply the repository's visual, implementation, and browser-validation
+  workflow when relevant. Record the applicable skills/capabilities and required evidence in the
+  issue or final report.
+
+  Do not treat passing tests or builds as proof that a required skill workflow was followed.
+
 ## Dependencies and third-party docs
 
 Prefer versions already in manifests/lockfiles. When integrating a library or service: check the installed package, local types, and existing adapters first; consult current official docs when more info is needed and network access is available; don't rely on guessed APIs when a primary source exists; don't upgrade or add a dependency the issue doesn't require; don't auto-pick the newest version; keep the lockfile consistent.

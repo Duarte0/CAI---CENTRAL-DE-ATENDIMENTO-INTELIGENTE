@@ -30,10 +30,10 @@ recorded local evidence, never production availability._
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
   0002, 0004). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. Its latest recorded execution (issue 0006,
-  2026-08-09) passed compileall, strict Pyright, offline pytest (**122 passed,
+  PostgreSQL-marked family. The last recorded full execution (issue 0008,
+  2026-08-13) passed compileall, strict Pyright, offline pytest (**127 passed,
   33 skipped**), Alembic `0014_retry_scheduling`, and PostgreSQL pytest
-  (**33 passed, 122 deselected**). The 33 offline skips are expected missing
+  (**33 passed, 127 deselected**). The 33 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -56,9 +56,11 @@ recorded local evidence, never production availability._
   the 33 PostgreSQL-dependent tests without a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
-- All eight implementation issues are `closed`; no open issue supplies an
-  eligible build item. Earlier Phase 0/1 plan work is complete and must not be
-  reopened.
+- All eight implementation issues are `closed`. Earlier Phase 0/1 delivery
+  work is complete and must not be reopened. Two concrete P1 follow-ups remain:
+  reconcile stale active-document traceability/evidence, then correct the
+  `financial` taxonomy omission in the model prompt. Broader classification
+  policy changes remain blocked on product decisions.
 
 ## Priority plan
 
@@ -84,9 +86,9 @@ recorded local evidence, never production availability._
      mounted-route claim.
 
    Specification outcome: SPEC-0005 defines the bounded documentation
-   reconciliation and is implemented as v1.1. SPEC-0006 defines the
-   implementation-ready OpenAPI/HTTP contract. This item is complete; no
-   application behavior changed.
+   reconciliation and is implemented as v1.1. SPEC-0006 was subsequently
+   implemented as v1.1 by issue 0008. This item is complete; no application
+   behavior changed.
 
    Evidence: issue 0007 reconciled the affected documents against the current
    source, runner, and issue-0006 result. The canonical offline evidence is
@@ -127,9 +129,87 @@ recorded local evidence, never production availability._
    migrations, handlers, providers, credentials, or external production
    systems were changed or invoked.
 
-### Phase 2 — Conditional release/production evidence (not ready to build)
+### Phase 2 — Documentation reconciliation (ready to specify)
 
-3. **[P2 | blocked | decision/operations] Define and authorize a production
+3. **[P1 | pending | documentation/specification] Reconcile stale
+   traceability, status language, and verification evidence** (PRD §9;
+   ARCHITECTURE §13; SPEC-0001–0006).
+
+   Outcome: active documentation refers to stable specifications, issues, and
+   delivery outcomes rather than obsolete plan-item numbers, and accurately
+   marks the implemented OpenAPI and latest recorded verification baseline.
+   Historical issue references and their original evidence remain intact.
+
+   Completion criteria:
+
+   - [ ] replace obsolete plan-item references in the README, PRD, architecture,
+     and active SPEC-0001–0006 with stable SPEC/issue references or descriptive
+     completed outcomes;
+   - [ ] update SPEC-0004, SPEC-0006, and the specification index so their
+     status and narrative distinguish completed runner/OpenAPI delivery from
+     future work; remove SPEC-0006's now-stale claim that generated OpenAPI
+     lacks `servers`, security schemes, and response schemas;
+   - [ ] reconcile active-document verification counts to the issue-0008
+     baseline (**127 passed, 33 skipped** offline; **33 passed, 127
+     deselected** PostgreSQL), retaining **122/33** and **33/122** only as
+     explicitly dated issue-0007 historical evidence; and
+   - [ ] recheck active-document cross-references and the spec index, preserving
+     the distinction between completed delivery, local-only verification, and
+     future work.
+
+   Dependencies: none. Risk: stale links misstate ownership and can reopen
+   completed work. This is documentation-only; it does not change requirements,
+   code, tests, migrations, infrastructure, or historical issue records.
+
+### Phase 3 — Contract parity and decision-gated evolution
+
+4. **[P1 | pending | implementation] Restore canonical `intent_type` parity
+   in the model prompt** (PRD §6; SPEC-0001; `src/core/intents.py`;
+   `src/workers/ia_worker.py`; `tests/test_ia_worker_intent.py`).
+
+   Outcome: every taxonomy value accepted by normalization/persistence and
+   published in the PRD can be produced deliberately by the model. The current
+   direct mismatch is that `financial` is canonical but absent from both the
+   prompt's allowed-value list and its classification guidance.
+
+   Completion criteria:
+
+   - [ ] update the prompt's allowed-value list and guidance to include
+     `financial`, without changing the four-field output shape, persistence
+     schema, HTTP projection, or existing precedence rules;
+   - [ ] add focused prompt/normalization tests that detect divergence between
+     the prompt and `VALID_INTENT_TYPES`, including `financial`; and
+   - [ ] run the applicable offline suite, strict Pyright, and canonical runner
+     when the issue changes the test matrix; record external-provider evidence
+     separately if it is not run.
+
+   Dependencies: the existing PRD/SPEC-0001 canonical taxonomy; schedule after
+   Phase 2 so the updated contract is referenced consistently. Risk: no
+   provider-backed quality evidence exists, so this item restores contract
+   parity but does not claim classification accuracy. No migration or
+   infrastructure change is expected.
+
+5. **[P2 | blocked | product decision] Define any broader AI classification
+   quality contract before changing behavior** (PRD §6; SPEC-0001;
+   `src/workers/ia_worker.py`).
+
+   Outcome: a dedicated specification can make future quality work testable
+   without silently changing business classification behavior.
+
+   Decisions required: whether to expand or rank taxonomy precedence beyond
+   the current prompt, whether confidence needs a different semantic or format,
+   which summary facts and speaker distinctions are mandatory, and whether
+   `description` remains model-formatted text or becomes application-formatted
+   or structured output. The current four-field output contract remains in
+   force until these decisions are recorded.
+
+   Dependencies: product owner decision and a dedicated specification before an
+   implementation issue. This item does not authorize prompt, schema, API, or
+   persisted-output changes.
+
+### Phase 4 — Conditional release/production evidence (not ready to build)
+
+6. **[P2 | blocked | decision/operations] Define and authorize a production
    acceptance run only when a deployment is intended** (PRD §§8–10;
    ARCHITECTURE §§11, 13; SPEC-0004).
 
@@ -154,10 +234,11 @@ recorded local evidence, never production availability._
   (0004), legacy finalization removal (0005), raw-payload diagnostic-surface
   removal (0006), and persistent implementation documentation reconciliation
   (0007), and generated OpenAPI HTTP contract publication (0008).
-- **[superseded]** Any plan item proposing PRD/architecture/spec creation,
-  legacy-finalization removal, diagnostic-route removal, fixed-port test
-  Compose work, or broader database recovery coverage. These artifacts and
-  their focused evidence already exist.
+- **[superseded]** Any prior plan item proposing PRD/architecture/spec work
+  already completed by the existing artifacts, legacy-finalization removal,
+  diagnostic-route removal, fixed-port test Compose work, or broader database
+  recovery coverage. The Phase 2 documentation repair and Phase 3 taxonomy
+  parity correction remain required before their respective follow-on work.
 - **[non-work]** Automatic retention/archival, query authentication/rate
   limiting, mounted `/v1/` aliases, hosted CI, provider/model replacement, and
   Acessórias routing are not implied by the current requirements. They require
@@ -169,12 +250,25 @@ recorded local evidence, never production availability._
   PRD, architecture, SPEC-0002, SPEC-0004, the index, and this plan now state
   persistent-only finalization, unversioned mounted queries, and future-only
   `/v1/`/`/v2/` policy.
-- **Verification evidence drift (Phase 1, resolved by issue 0007):** active
-  documentation now distinguishes **122 passed, 33 skipped** offline from
-  **33 passed, 122 deselected** on disposable PostgreSQL. The evidence remains
-  local and does not prove Redis, provider, replica, deployment, or production
-  readiness.
-- **External-runtime boundary (Phase 2):** local disposable verification is
+- **Documentation drift (Phase 2):** PRD §9, ARCHITECTURE §13, SPEC-0001–0006,
+  and the index still contain obsolete plan-item references; some retain the
+  issue-0007 **122/33** and **33/122** counts or SPEC-0006 future-tense gap
+  language despite issue 0008. Item 3 repairs those records without changing
+  historical issue files. All such evidence remains local and does not prove
+  Redis, provider, replica, deployment, or production readiness.
+- **Taxonomy parity defect (Phase 3):** `financial` appears in PRD §6,
+  `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, but is omitted
+  from the model prompt's allowed list and guidance. Item 4 is a bounded
+  implementation correction; it does not decide broader taxonomy semantics.
+- **Classification-policy boundary (Phase 3):** precedence expansion,
+  confidence semantics, summary invariants, and structured-description choices
+  are not approved product requirements. Item 5 is blocked until they are
+  decided; preserve the four-field output contract in the meantime.
+- **Traceability drift (Phase 2):** active PRD/architecture/specification text
+  still cites obsolete Phase/item numbers from the prior plan structure. This is
+  stale documentation, not an implementation gap; historical issue references
+  must remain as evidence.
+- **External-runtime boundary (Phase 4):** local disposable verification is
   intentionally insufficient to claim provider, Redis, replica, or production
   readiness. The limitation affects only a future deployment acceptance task.
 - **HTTP documentation boundary (Phase 1, resolved by issue 0008):** the
@@ -187,6 +281,9 @@ recorded local evidence, never production availability._
 
 ## Recommended next pass
 
-No eligible open build issue remains in the current issue set. Phase 2 remains
-blocked on its separately authorized operational decision; it requires a new
-approved operational specification before implementation work is scheduled.
+The next pass should be **specs**: complete the bounded documentation
+reconciliation in item 3, preserving historical issue evidence. Then use the
+**issues** pass to create the focused Phase 3 taxonomy-parity issue. Do not
+create an issue for broader classification-policy changes until item 5's
+product decisions are recorded. Phase 4 remains blocked on separately
+authorized operational scope.
