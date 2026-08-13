@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Mapping, cast
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 
 from src.api.middleware import verify_webhook_signature
+from src.api.openapi import install_openapi_contract
 from src.api.webhook_adapter import DigisacMessage, DigisacWebhookAdapter
 from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES
 from src.core.config import settings
@@ -652,3 +653,6 @@ async def cycle_result(cycle_id: str) -> dict[str, Any]:
     if not result.get("classification_public_id"):
         raise HTTPException(status_code=404, detail="Cycle result not available")
     return result
+
+
+install_openapi_contract(app)

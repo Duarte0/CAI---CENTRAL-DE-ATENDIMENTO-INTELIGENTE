@@ -51,12 +51,12 @@ recorded local evidence, never production availability._
 
 ### Planning signals
 
-- The current canonical collection contains **155 tests** when the live webhook
-  test is excluded; the most recent passing evidence above is therefore
-  historical rather than a fresh full-suite run.
+- The current canonical collection contains **160 tests** when the live webhook
+  test is excluded; the latest issue-0008 run passed **127 tests** and skipped
+  the 33 PostgreSQL-dependent tests without a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
-- All seven implementation issues are `closed`; no open issue supplies an
+- All eight implementation issues are `closed`; no open issue supplies an
   eligible build item. Earlier Phase 0/1 plan work is complete and must not be
   reopened.
 
@@ -85,8 +85,8 @@ recorded local evidence, never production availability._
 
    Specification outcome: SPEC-0005 defines the bounded documentation
    reconciliation and is implemented as v1.1. SPEC-0006 defines the
-   implementation-ready OpenAPI/HTTP contract and remains ready for issue
-   decomposition. This item is complete; no application behavior changed.
+   implementation-ready OpenAPI/HTTP contract. This item is complete; no
+   application behavior changed.
 
    Evidence: issue 0007 reconciled the affected documents against the current
    source, runner, and issue-0006 result. The canonical offline evidence is
@@ -99,9 +99,37 @@ recorded local evidence, never production availability._
    compatibility. No product decision is required; source already resolves the
    behavior. This item is documentation/spec work, not an application change.
 
+2. **[P1 | completed] Publish the generated OpenAPI HTTP contract**
+   (SPEC-0006; issue 0008).
+
+   Outcome: the existing FastAPI application now composes a cached OpenAPI 3.1
+   document from its mounted routes and source-backed HTTP projections. Swagger
+   UI, ReDoc, and `/openapi.json` remain FastAPI's standard documentation
+   endpoints; the eight unversioned business operations, conditional webhook
+   HMAC, response variants, identifiers, processing states, and error boundary
+   are documented without changing handler behavior.
+
+   Completion evidence:
+
+   - [x] generated document has the effective application metadata, safe local
+     server, four tags, eight business paths, request/response schemas, and
+     sanitized examples;
+   - [x] webhook security is conditional in the description and limited to the
+     webhook operation; query operations retain no authentication contract;
+   - [x] README, SPEC-0006, and the specification index link the three standard
+     documentation URLs and describe the current consumer boundary; and
+   - [x] focused documentation tests, offline suite, disposable PostgreSQL
+     runner, compileall, strict Pyright, `git diff --check`, and Graphify pass.
+
+   Evidence: focused OpenAPI tests **5 passed**; offline pytest **127 passed,
+   33 skipped**; disposable PostgreSQL pytest **33 passed, 127 deselected**;
+   compileall, Pyright, runner, and documentation searches passed. No
+   migrations, handlers, providers, credentials, or external production
+   systems were changed or invoked.
+
 ### Phase 2 — Conditional release/production evidence (not ready to build)
 
-2. **[P2 | blocked | decision/operations] Define and authorize a production
+3. **[P2 | blocked | decision/operations] Define and authorize a production
    acceptance run only when a deployment is intended** (PRD §§8–10;
    ARCHITECTURE §§11, 13; SPEC-0004).
 
@@ -125,7 +153,7 @@ recorded local evidence, never production availability._
   runner (0002), documentation baseline (0003), durable recovery coverage
   (0004), legacy finalization removal (0005), raw-payload diagnostic-surface
   removal (0006), and persistent implementation documentation reconciliation
-  (0007).
+  (0007), and generated OpenAPI HTTP contract publication (0008).
 - **[superseded]** Any plan item proposing PRD/architecture/spec creation,
   legacy-finalization removal, diagnostic-route removal, fixed-port test
   Compose work, or broader database recovery coverage. These artifacts and
@@ -149,12 +177,16 @@ recorded local evidence, never production availability._
 - **External-runtime boundary (Phase 2):** local disposable verification is
   intentionally insufficient to claim provider, Redis, replica, or production
   readiness. The limitation affects only a future deployment acceptance task.
+- **HTTP documentation boundary (Phase 1, resolved by issue 0008):** the
+  generated document describes current response projections without adding
+  response enforcement. The `processing` source enum discrepancy and unmapped
+  Redis failures remain documented limitations rather than new HTTP behavior.
 - **No migration or infrastructure work is pending** for the completed
   persistent-only baseline. Any future schema or production operation must be
   additive, Alembic-owned, and separately authorized.
 
 ## Recommended next pass
 
-Run the **issues** pass for SPEC-0006 / the next approved API-documentation
-increment. Phase 2 remains blocked on its separately authorized operational
-decision.
+No eligible open build issue remains in the current issue set. Phase 2 remains
+blocked on its separately authorized operational decision; it requires a new
+approved operational specification before implementation work is scheduled.

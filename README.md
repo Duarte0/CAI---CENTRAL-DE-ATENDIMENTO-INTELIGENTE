@@ -237,7 +237,27 @@ python -m src.workers.image_worker
 
 Cada worker deve rodar em seu próprio processo.
 
-## API
+## API HTTP
+
+A API HTTP local fica disponível em `http://localhost:8000`. O contrato gerado
+está publicado em [`/openapi.json`](http://localhost:8000/openapi.json), com
+Swagger UI em [`/docs`](http://localhost:8000/docs) e ReDoc em
+[`/redoc`](http://localhost:8000/redoc). Esses links documentam as rotas sem
+prefixo de versão montadas neste checkout; `/v1/` e `/v2/` são somente política
+de compatibilidade futura.
+
+O webhook DigiSac pode exigir HMAC-SHA256 em `X-Digisac-Signature` quando
+`WEBHOOK_SECRET` estiver configurado. O digest pode ser hexadecimal ou usar o
+formato `sha256=<digest>`. As consultas internas (`/health`, `/queues`, status,
+resultados e ciclos) não têm autenticação adicional atualmente. O aceite `202`
+do webhook é assíncrono e não significa classificação concluída: estados
+intermediários e terminais ficam disponíveis nas rotas de status, enquanto o
+resultado só existe quando a classificação persistida está disponível.
+
+Respostas conhecidas usam o corpo `{"detail":"..."}` para erros mapeados,
+incluindo `404`, `401` e a indisponibilidade de banco em `/health` (`503`).
+Erros de validação de tipos seguem o formato padrão FastAPI (`422`); falhas
+não mapeadas de Redis ou servidor não têm um envelope de negócio estável.
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
