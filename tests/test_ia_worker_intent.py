@@ -1,6 +1,9 @@
-import pytest
+import re
 from types import SimpleNamespace
 
+import pytest
+
+from src.core.intents import VALID_INTENT_TYPES
 from src.workers.ia_worker import IAWorker
 
 
@@ -25,6 +28,15 @@ def test_parse_result_accepts_valid_intent_type():
     )
 
     assert result["intent_type"] == "problem"
+
+
+def test_parse_result_accepts_financial_intent_type():
+    result = _worker_without_init()._parse_result(
+        '{"intent_type":"financial","confidence":0.94,"title":"Fluxo de caixa",'
+        '"description":"Cliente solicita orientação financeira."}'
+    )
+
+    assert result["intent_type"] == "financial"
 
 
 def test_parse_result_normalizes_unknown_intent_type():
@@ -166,6 +178,22 @@ def test_prompt_classifies_client_intent_with_both_authors_in_context():
     assert "As ações tomadas pelo atendente" in prompt
     assert '"department"' not in prompt
     assert '"agent"' not in prompt
+
+
+def test_prompt_intent_taxonomy_matches_shared_canonical_values():
+    prompt = _worker_without_init()._build_prompt("Cliente: Preciso de ajuda")
+    match = re.search(r'"intent_type": "um de: ([^"]+)"', prompt)
+
+    assert match is not None
+    assert tuple(match.group(1).split(", ")) == VALID_INTENT_TYPES
+
+
+def test_prompt_guides_financial_intent_without_changing_payment_precedence():
+    prompt = _worker_without_init()._build_prompt("Cliente: Preciso de orientação")
+
+    assert re.search(r'"financial"\s+para questões\s+financeiras gerais', prompt)
+    assert '"payment" para pagamento' in prompt
+    assert '"billing" para cobrança' in prompt
 
 
 def test_payment_and_protocol_example_is_not_instructed_as_other():

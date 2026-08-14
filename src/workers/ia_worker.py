@@ -1165,7 +1165,7 @@ Para o campo "confidence", siga estas regras numeradas:
 
 Responda apenas com um objeto JSON no seguinte formato, sem nenhum texto adicional:
 {{
-  "intent_type": "um de: question, problem, request, complaint, payment, billing, document, protocol, other",
+  "intent_type": "um de: question, problem, request, complaint, payment, billing, financial, document, protocol, other",
   "confidence": NÚMERO entre 0.0 e 1.0,
   "title": "título curto e abrangente",
   "description": "descrição estruturada e detalhada"
@@ -1180,7 +1180,9 @@ reclama de um valor cobrado mas a mensagem deixa clara a intenção/ação final
 pagar (a intenção de pagar sempre prevalece sobre a reclamação do valor);
 "billing" para cobrança, boleto ou valor cobrado quando NÃO há confirmação ou
 intenção de pagamento na mesma conversa (ex.: cliente apenas questiona ou
-contesta o valor, sem indicar que vai pagar); "document" para envio, reenvio
+contesta o valor, sem indicar que vai pagar); "financial" para questões
+financeiras gerais, como fluxo de caixa, empréstimos ou investimentos;
+"document" para envio, reenvio
 ou pendência de documento; e "protocol" para protocolo ou andamento de
 processo. Se houver pagamento seguido de protocolo, escolha "payment" quando a
 ação do cliente foi pagar e "protocol" quando o foco for acompanhar/protocolar.

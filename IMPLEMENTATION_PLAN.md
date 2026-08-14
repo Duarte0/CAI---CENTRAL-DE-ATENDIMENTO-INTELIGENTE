@@ -52,8 +52,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **179 tests** when the live webhook
-  test is excluded; the latest issue-0012 run passed **143 tests** and skipped
+- The current canonical collection contains **182 tests** when the live webhook
+  test is excluded; the latest issue-0010 run passed **146 tests** and skipped
   the 36 PostgreSQL-dependent tests without a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -62,11 +62,10 @@ currently in progress._
   `tests/test_webhook_local.py` and attempts `localhost:8000` during collection;
   without a deliberately started local API it fails before executing the suite.
   This is a test-entrypoint ergonomics gap, not a failed canonical run.
-- Issues 0001–0009 and 0012 are `closed`. Earlier baseline delivery work is
-  complete and must not be reopened. Issues 0010–0011 remain open as concrete
-  follow-ups: restore the `financial` taxonomy omission in the model prompt and
-  make the live webhook test opt-in for default collection. Broader
-  classification policy changes remain blocked on product decisions.
+- Issues 0001–0010 and 0012 are `closed`. Earlier baseline delivery work is
+  complete and must not be reopened. Issue 0011 remains open as the concrete
+  follow-up to make the live webhook test opt-in for default collection.
+  Broader classification policy changes remain blocked on product decisions.
 
 ## Priority plan
 
@@ -175,15 +174,15 @@ authorizes application changes until its own issues/build pass.
 
 ### Separate pending work
 
-- **[P1 | pending | ready for issues | implementation] Restore `financial` taxonomy
+- **[P1 | completed locally | implementation] Restore `financial` taxonomy
   parity in the IA prompt** (PRD §6; SPEC-0001; `src/core/intents.py`;
-  `src/workers/ia_worker.py`; `tests/test_ia_worker_intent.py`). Outcome: every
-  canonical intent, including `financial`, is named in model instructions and
-  guidance while preserving the four-field output contract and current
-  persistence/API semantics. Completion criteria: focused tests derive or
-  compare prompt taxonomy against `VALID_INTENT_TYPES`; offline tests, Pyright,
-  and the canonical runner pass. No migration or provider-backed quality claim
-  is required.
+  `src/workers/ia_worker.py`; `tests/test_ia_worker_intent.py`). The prompt now
+  names and guides every canonical intent while preserving the four-field
+  output contract and current persistence/API semantics. Issue 0010 validation
+  passed focused pytest (**16 passed**), offline pytest (**146 passed, 36
+  skipped**), compileall, strict Pyright, disposable PostgreSQL/Alembic head,
+  and PostgreSQL pytest (**36 passed, 146 deselected**). No migration or
+  provider-backed quality claim was made.
 - **[P2 | pending | ready for issues | test hygiene] Make the live webhook check safe for
   default test collection** (SPEC-0004; `tests/test_webhook_local.py`;
   `scripts/verify.py`). Outcome: a bare pytest invocation does not make an HTTP
@@ -203,8 +202,9 @@ authorizes application changes until its own issues/build pass.
   runner (0002), documentation baseline (0003), durable recovery coverage
   (0004), legacy finalization removal (0005), raw-payload diagnostic-surface
   removal (0006), and persistent implementation documentation reconciliation
-  (0007), generated OpenAPI HTTP contract publication (0008), and active
-  document traceability/evidence reconciliation (0009).
+  (0007), generated OpenAPI HTTP contract publication (0008), active document
+  traceability/evidence reconciliation (0009), and financial taxonomy prompt
+  parity (0010).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -229,10 +229,10 @@ authorizes application changes until its own issues/build pass.
   and issue-0008 (**127/33**, **33/127**) results remain dated historical
   evidence. All results remain local and do not prove Redis, providers,
   replicas, deployment, or production readiness.
-- **Taxonomy parity defect:** `financial` appears in PRD §6,
-  `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, but is omitted
-  from the model prompt's allowed list and guidance. This is a bounded
-  implementation correction; it does not decide broader taxonomy semantics.
+- **Taxonomy parity defect (resolved by issue 0010):** `financial` appears in
+  PRD §6, `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, and is
+  now present in the model prompt's allowed list and bounded guidance. The
+  correction does not decide broader taxonomy semantics.
 - **Classification-policy boundary:** precedence expansion,
   confidence semantics, summary invariants, and structured-description choices
   are not approved product requirements. This work is blocked until they are
@@ -260,6 +260,6 @@ authorizes application changes until its own issues/build pass.
 
 ## Recommended next pass
 
-The next pass may be **issues** for the ready taxonomy and P2 test-hygiene
-items. Milestones B and C remain blocked by their listed
+The next pass may be **issues** for the remaining P2 test-hygiene item.
+Milestones B and C remain blocked by their listed
 dependencies and decisions.

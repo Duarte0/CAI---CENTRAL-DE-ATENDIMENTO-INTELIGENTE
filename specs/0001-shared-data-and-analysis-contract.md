@@ -1,7 +1,7 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; decisões de produto registradas abaixo
-- **Versão:** 1.1
+- **Status:** baseline ativo, derivado da implementação; issue 0010 corrigiu a paridade da taxonomia no prompt; decisões de produto registradas abaixo
+- **Versão:** 1.2
 - **Prioridade/Fase:** P0 / baseline de requisitos
 - **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0015_acessorias_directory`; SPEC-0007
 - **Dependências:** nenhuma
@@ -15,6 +15,12 @@ Esta especificação registra retenção indefinida, sem exclusão ou arquivamen
 ## Estado de referência
 
 `PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0015_acessorias_directory`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
+
+**Evidência de implementação (2026-08-14):** issue 0010 alinhou o prompt do
+worker com `VALID_INTENT_TYPES`, incluindo `financial` na lista permitida e na
+orientação delimitada. Os testes verificam a paridade derivada, a preservação
+do resultado canônico e a normalização/rejeição já existentes; não houve
+alteração de schema, persistência, API, precedência ou política do provedor.
 
 ## Contrato de dados e integridade
 
