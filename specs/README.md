@@ -13,7 +13,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.3 | P1 / reconciliação documental | SPEC-0002–0004 | Corrige a documentação ativa sobre fluxo persistente único, rotas sem versão, OpenAPI publicado e a evidência de verificação registrada. |
 | SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.1 | P1 / documentação de compatibilidade | SPEC-0001–0005 | Publica OpenAPI/Swagger/ReDoc e introdução para consumidores a partir das oito rotas HTTP atualmente montadas. |
 | SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.1; issue 0012 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com reconciliação completa paginada, retry e segurança; não cria Request nem identidade DigiSac. |
-| SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.2 pelo issue 0013; paginação bloqueia apenas full backfill | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket e hydration individual idempotentes; não faz resolução de empresa. |
+| SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.3; issues 0013 e 0014 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, hydration individual e full backfill idempotentes; sem resolução de empresa. |
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Ativo v1.0; bloqueado pela decisão de variante móvel | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência, vínculos muitos-para-muitos e resolução por ciclo; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Ativo v1.0; bloqueado por SPEC-0007–0009 e governança | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Configuração auditável do departamento atual sem usar IA; não cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Ativo v1.0; bloqueado por SPEC-0007–0010 e contrato Request | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Efeito externo idempotente e reconciliável, sem alterar classificações ou cobrir ciclo de vida. |
@@ -42,9 +42,11 @@ SPEC-0008–SPEC-0011 são os contratos canônicos dependentes para **DigiSac
 Contact Identity Foundation**, **DigiSac–Acessórias Identity Resolution**,
 **Department Mapping** e **Durable Request Creation**. SPEC-0008 e seu slice de
 persistência/upsert de ticket/hydration individual foram implementados pelo
-issue 0013; somente seu full backfill aguarda a evidência de paginação Contacts.
-As demais issues continuam bloqueadas pelas dependências e decisões abertas
-enumeradas em cada contrato.
+issue 0013. O issue 0014 implementa o full backfill: `perPage` alto pode
+concluir uma página no tenant atual, e `page=N` com `currentPage`/`lastPage`
+mantém o fallback paginado, deduplicado por `contact.id` e seguro contra não
+avanço. As demais issues continuam
+bloqueadas pelas dependências e decisões abertas enumeradas em cada contrato.
 Milestone F continua fora do conjunto: exige decisão de produto após a criação
 de Request ser comprovada. Não alterar as SPEC-0001–0006 concluídas para
 atribuir retroativamente esses comportamentos; elas continuam descrevendo

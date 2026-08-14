@@ -95,8 +95,10 @@ de Request.
 Essa fundação não adiciona endpoints públicos, não altera o contrato da IA e não
 cria Requests automaticamente. Telefone, nome, `idFromService`, `jidId`,
 `lidId` e grupos permanecem apenas metadata/evidência; não há matching ou
-confirmação automática. O full backfill paginado de Contacts continua fora do
-slice até a semântica de avanço do provider ser validada.
+confirmação automática. O full backfill interno de Contacts valida a resposta
+de página única ou o fallback `page=N`, deduplica por `contact.id` e publica
+somente um snapshot completo em uma transação PostgreSQL; não cria rota pública
+nem autoridade de diretório no Redis.
 
 ## Finalização persistente por histórico DigiSac
 
@@ -257,6 +259,13 @@ python -m src.workers.image_worker
 ```
 
 Cada worker deve rodar em seu próprio processo.
+
+O backfill completo interno de Contacts pode ser executado após as migrations
+com credencial DigiSac configurada:
+
+```bash
+PYTHONPATH=/app python -m src.utils.backfill_digisac_contacts
+```
 
 ## API HTTP
 

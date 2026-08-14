@@ -413,9 +413,11 @@ records these delivery limitations:
   Redis buffer, debounce, feature flag, and legacy worker branch were removed.
 - The raw-payload diagnostic surfaces were removed under issue `0006`; no
   replacement debug route or raw-payload contract exists.
-- Full paginated DigiSac Contacts backfill remains outside issue `0013` until
-  the provider's page-advance semantics are validated; individual hydration and
-  ticket-snapshot ingestion are the implemented bounded slice.
+- DigiSac Contacts full backfill is implemented under issue `0014` as an
+  internal, typed acquisition and transactional PostgreSQL publication. It
+  supports a validated one-page response and `page=N` fallback with global
+  `contact.id` deduplication; it does not add an HTTP route or Redis directory
+  authority.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.
@@ -430,6 +432,9 @@ they limit release verification and future evolution decisions.
 - PostgreSQL access and cycle coordination: \`src/core/db.py\` and
   \`alembic/versions/0001_initial.py\` through
   \`0016_digisac_contact_identity.py\`.
+- DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
+  \`src/core/digisac_contact_backfill.py\`, and
+  \`src/utils/backfill_digisac_contacts.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

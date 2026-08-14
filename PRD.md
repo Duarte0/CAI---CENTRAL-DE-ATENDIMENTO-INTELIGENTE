@@ -175,9 +175,9 @@ CAI now retains a minimal local DigiSac-contact representation keyed by
 `contact.idFromService` is not an Acessórias matching key. Ticket webhooks are
 the preferred incremental source when they include the complete contact;
 message references schedule deduplicated individual hydration outside the
-webhook request path. The Contacts API is reserved for that need-based
-hydration and a future paginated backfill whose page advancement is still
-unverified.
+webhook request path. The Contacts API also supports the implemented internal
+full backfill: it validates one-page or `page=N` responses, deduplicates by
+opaque `contact.id`, and publishes only a complete snapshot.
 
 The local Acessórias directory durably retains companies (active and inactive),
 company contacts, departments, and current company-department relationships.
@@ -320,8 +320,8 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012` and `0013` added the Acessórias directory and DigiSac contact
-identity foundations. The observed local
+issues `0012`, `0013`, and `0014` added the Acessórias directory, DigiSac contact
+identity foundation, and complete Contacts backfill. The observed local
 runner evidence on 2026-08-14 is:
 
 - compileall: passed;

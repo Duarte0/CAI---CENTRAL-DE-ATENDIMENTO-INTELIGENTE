@@ -61,6 +61,17 @@ class DigisacContact:
     provider_deleted_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class DigisacContactPage:
+    """Validated page metadata and typed contacts from the Contacts endpoint."""
+
+    contacts: tuple[DigisacContact, ...]
+    total: int
+    limit: int
+    current_page: int
+    last_page: int
+
+
 def _optional_contact_string(value: Any) -> str | None:
     if value is None:
         return None
@@ -284,6 +295,57 @@ class DigisacClient:
         if contact.external_id != normalized_id:
             raise DigisacResponseError("DigiSac contact response id mismatch")
         return contact
+
+    def get_contacts_page(self, *, page: int, per_page: int) -> DigisacContactPage:
+        """Fetch and validate one page of the configured Contacts directory."""
+        if page <= 0 or per_page <= 0:
+            raise ValueError("Contacts pagination values must be positive")
+        payload = self._get_json(
+            "contacts",
+            params={"perPage": per_page, "page": page},
+        )
+        data = payload.get("data")
+        total = payload.get("total")
+        limit = payload.get("limit")
+        current_page = payload.get("currentPage")
+        last_page = payload.get("lastPage")
+        if any(
+            type(value) is not int
+            for value in (total, limit, current_page, last_page)
+        ):
+            raise DigisacResponseError(
+                "DigiSac contacts pagination has an invalid structure"
+            )
+        if (
+            not isinstance(data, list)
+            or total < 0
+            or limit <= 0
+            or current_page <= 0
+            or last_page <= 0
+            or current_page != page
+            or last_page < current_page
+            or len(data) > limit
+            or last_page != max(1, (total + limit - 1) // limit)
+            or (total == 0 and data)
+            or (total > 0 and not data)
+        ):
+            raise DigisacResponseError(
+                "DigiSac contacts pagination has an invalid structure"
+            )
+        contacts: list[DigisacContact] = []
+        for raw_contact in data:
+            if not isinstance(raw_contact, Mapping):
+                raise DigisacResponseError(
+                    "DigiSac contact response is not an object"
+                )
+            contacts.append(normalize_contact(raw_contact))
+        return DigisacContactPage(
+            contacts=tuple(contacts),
+            total=total,
+            limit=limit,
+            current_page=current_page,
+            last_page=last_page,
+        )
 
     def get_ticket_history(self, conversation_id: str) -> DigisacHistory:
         ticket = self.get_ticket(conversation_id)

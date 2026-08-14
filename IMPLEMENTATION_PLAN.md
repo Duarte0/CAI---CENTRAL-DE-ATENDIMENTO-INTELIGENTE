@@ -107,7 +107,8 @@ currently in progress._
 2. **[P0 | completed locally | implemented] Milestone B —
    DigiSac Contact Identity Foundation** (SPEC-0008). Outcome: persist the minimal contact representation keyed by
    `contact.id`, with ticket-webhook upsert, need-based Contacts API hydration
-   and full paginated backfill only after page-advance evidence. Preserve
+   and full backfill with single-page optimization and paginated fallback.
+   Preserve
    raw/normalized number, group status,
    relevant provider metadata, and sync state; do not query Contacts for every
    message or use `idFromService` as a matching key.
@@ -116,17 +117,22 @@ currently in progress._
    surface, configured Bearer authority, contact identity/payloads, ticket
    snapshot source, hydration strategy, source precedence, groups and safe
    observability. Issue 0013 implements the migration/model, ticket-webhook
-   upsert and deduplicated individual hydration. Full paginated backfill remains
-   excluded until the provider's page-advance semantics are validated; no
-   automatic company resolution is introduced here.
+   upsert and deduplicated individual hydration. Authorized provider evidence
+   validates high `perPage`, advancement by `page=N`, and termination from
+   `currentPage`/`lastPage`; it permits a one-page fetch for the current tenant
+   but requires a paginated fallback, global `contact.id` deduplication, and
+   failure on invalid/non-advancing pages. Issue 0014 implements the remaining
+   full-backfill execution without automatic company resolution.
 
    Build evidence (2026-08-14): migration `0016_digisac_contact_identity`,
    timestamp-aware contact upsert, individual Contacts retry boundary,
    durable hydration claims/recovery, ticket/message webhook integration, and
-   deterministic unit/PostgreSQL coverage are implemented. The canonical runner
-   passed compileall, strict Pyright, offline pytest (**160 passed, 40
-   skipped**), Alembic head verification, and PostgreSQL pytest (**40 passed,
-   160 deselected**). This is local synthetic/disposable evidence only; no
+   deterministic unit/PostgreSQL coverage are implemented. Issue 0014 adds the
+   typed Contacts page boundary, global `contact.id` deduplication, atomic
+   publication with transaction locking, and an internal CLI. The canonical
+   runner passed compileall, strict Pyright, offline pytest (**169 passed, 42
+   skipped**), Alembic head verification, and PostgreSQL pytest (**42 passed,
+   169 deselected**). This is local synthetic/disposable evidence only; no
    DigiSac credential, provider synchronization, Redis runtime, deployment, or
    production claim was used.
 
@@ -175,9 +181,12 @@ currently in progress._
 ### Specification boundary and next gate
 
 SPEC-0007–SPEC-0011 supply the independently verifiable contracts for
-Milestones A–E. Milestones A and B are implemented locally under issues 0012
-and 0013. Milestone B's remaining evidence gate is limited to page advancement
-for the separate full Contacts backfill.
+Milestones A–E. Milestone A is implemented locally under issue 0012. Milestone
+B's incremental slice is implemented locally under issue 0013, and its
+full Contacts-backfill slice is implemented locally under issue 0014. Authorized
+provider evidence covers single-page execution and the `page=N` fallback; local
+tests cover the typed boundary, validation, deduplication, and failure-safe
+publication.
 Milestone C also needs the testable Brazilian
 mobile-variant decision in SPEC-0009; Milestones D and E retain their own
 governance and Request-contract blocks. No specification in this sequence
@@ -273,5 +282,5 @@ authorizes application changes until its own issues/build pass.
 
 ## Recommended next pass
 
-No open issue remains in the current issue set. Future work is gated by the
-listed Milestone B–E dependencies and decisions.
+No open issue remains in the current issue set. Later work remains gated by the
+listed Milestone C–E dependencies and decisions.

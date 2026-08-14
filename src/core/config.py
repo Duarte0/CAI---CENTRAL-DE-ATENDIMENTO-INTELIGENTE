@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     digisac_history_request_timeout_seconds: float = 15.0
     digisac_history_max_attempts: int = 3
     digisac_history_retry_base_seconds: float = 2.0
+    digisac_contact_backfill_per_page: int = 5000
     digisac_contact_hydration_interval_seconds: float = 5.0
     finalization_reconcile_interval_seconds: float = 5.0
     finalization_lease_seconds: int = 300
@@ -138,6 +139,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "digisac_history_max_attempts",
+        "digisac_contact_backfill_per_page",
         "finalization_lease_seconds",
         "quoted_message_max_chars",
         "ia_context_safe_input_tokens",

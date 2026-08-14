@@ -478,6 +478,120 @@ def _contact_has_metadata(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _upsert_digisac_contact_cursor(
+    cursor: Any,
+    contact: DigisacContact,
+    normalized_source: str,
+    observed: datetime,
+) -> Mapping[str, Any]:
+    values = {field: getattr(contact, field) for field in _CONTACT_PROVIDER_FIELDS}
+    row = cursor.execute(
+        """
+        SELECT *
+        FROM digisac_contacts
+        WHERE external_id = %s
+        FOR UPDATE
+        """,
+        (contact.external_id,),
+    ).fetchone()
+    if row is None:
+        inserted = cursor.execute(
+            """
+            INSERT INTO digisac_contacts (
+                external_id, name, alternative_name, internal_name,
+                raw_number, normalized_number, is_group, account_id,
+                service_id, provider_created_at, provider_updated_at,
+                provider_deleted_at, last_seen_at, last_source
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s
+            )
+            RETURNING *
+            """,
+            (
+                contact.external_id,
+                *[values[field] for field in _CONTACT_PROVIDER_FIELDS],
+                observed,
+                normalized_source,
+            ),
+        ).fetchone()
+        if inserted is None:
+            raise RuntimeError("PostgreSQL did not return contact")
+        row = inserted
+    else:
+        old_updated = row["provider_updated_at"]
+        new_updated = contact.provider_updated_at
+        older = (
+            old_updated is not None
+            and new_updated is not None
+            and new_updated < old_updated
+        )
+        unordered = old_updated is not None and new_updated is None
+        merged = dict(row)
+        for field in _CONTACT_PROVIDER_FIELDS:
+            incoming = values[field]
+            if incoming is None or older or (unordered and row[field] is not None):
+                merged[field] = row[field]
+            else:
+                merged[field] = incoming
+        if old_updated is not None and (
+            new_updated is None or new_updated < old_updated
+        ):
+            merged["provider_updated_at"] = old_updated
+        elif new_updated is not None:
+            merged["provider_updated_at"] = new_updated
+        merged["last_seen_at"] = max(row["last_seen_at"], observed)
+        merged["last_source"] = (
+            row["last_source"] if older or unordered else normalized_source
+        )
+        updated = cursor.execute(
+            """
+            UPDATE digisac_contacts
+            SET name = %s,
+                alternative_name = %s,
+                internal_name = %s,
+                raw_number = %s,
+                normalized_number = %s,
+                is_group = %s,
+                account_id = %s,
+                service_id = %s,
+                provider_created_at = %s,
+                provider_updated_at = %s,
+                provider_deleted_at = %s,
+                last_seen_at = %s,
+                last_source = %s,
+                updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                *(merged[field] for field in _CONTACT_PROVIDER_FIELDS),
+                merged["last_seen_at"],
+                merged["last_source"],
+                row["id"],
+            ),
+        ).fetchone()
+        if updated is None:
+            raise RuntimeError("PostgreSQL did not update contact")
+        row = updated
+    if normalized_source == "ticket_webhook":
+        cursor.execute(
+            """
+            UPDATE digisac_contact_hydrations
+            SET status = 'succeeded',
+                next_attempt_at = NULL,
+                lease_until = NULL,
+                completed_at = COALESCE(completed_at, now()),
+                failure_category = NULL,
+                failure_message = NULL,
+                updated_at = now()
+            WHERE contact_id = %s
+            """,
+            (row["id"],),
+        )
+    return row
+
+
 def _upsert_digisac_contact_sync(
     contact: DigisacContact,
     source: str,
@@ -491,116 +605,12 @@ def _upsert_digisac_contact_sync(
         if isinstance(observed_at, (str, datetime))
         else datetime.now(timezone.utc)
     )
-    values = {field: getattr(contact, field) for field in _CONTACT_PROVIDER_FIELDS}
     with _get_pool().connection() as connection:
         with connection.transaction():
             with connection.cursor(row_factory=dict_row) as cursor:
-                row = cursor.execute(
-                    """
-                    SELECT *
-                    FROM digisac_contacts
-                    WHERE external_id = %s
-                    FOR UPDATE
-                    """,
-                    (contact.external_id,),
-                ).fetchone()
-                if row is None:
-                    inserted = cursor.execute(
-                        """
-                        INSERT INTO digisac_contacts (
-                            external_id, name, alternative_name, internal_name,
-                            raw_number, normalized_number, is_group, account_id,
-                            service_id, provider_created_at, provider_updated_at,
-                            provider_deleted_at, last_seen_at, last_source
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s
-                        )
-                        RETURNING *
-                        """,
-                        (
-                            contact.external_id,
-                            *[values[field] for field in _CONTACT_PROVIDER_FIELDS],
-                            observed,
-                            normalized_source,
-                        ),
-                    ).fetchone()
-                    if inserted is None:
-                        raise RuntimeError("PostgreSQL did not return contact")
-                    row = inserted
-                else:
-                    old_updated = row["provider_updated_at"]
-                    new_updated = contact.provider_updated_at
-                    older = (
-                        old_updated is not None
-                        and new_updated is not None
-                        and new_updated < old_updated
-                    )
-                    unordered = old_updated is not None and new_updated is None
-                    merged = dict(row)
-                    for field in _CONTACT_PROVIDER_FIELDS:
-                        incoming = values[field]
-                        if incoming is None or older or (
-                            unordered and row[field] is not None
-                        ):
-                            merged[field] = row[field]
-                        else:
-                            merged[field] = incoming
-                    if old_updated is not None and (
-                        new_updated is None or new_updated < old_updated
-                    ):
-                        merged["provider_updated_at"] = old_updated
-                    elif new_updated is not None:
-                        merged["provider_updated_at"] = new_updated
-                    merged["last_seen_at"] = max(row["last_seen_at"], observed)
-                    merged["last_source"] = (
-                        row["last_source"] if older or unordered else normalized_source
-                    )
-                    updated = cursor.execute(
-                        """
-                        UPDATE digisac_contacts
-                        SET name = %s,
-                            alternative_name = %s,
-                            internal_name = %s,
-                            raw_number = %s,
-                            normalized_number = %s,
-                            is_group = %s,
-                            account_id = %s,
-                            service_id = %s,
-                            provider_created_at = %s,
-                            provider_updated_at = %s,
-                            provider_deleted_at = %s,
-                            last_seen_at = %s,
-                            last_source = %s,
-                            updated_at = now()
-                        WHERE id = %s
-                        RETURNING *
-                        """,
-                        (
-                            *(merged[field] for field in _CONTACT_PROVIDER_FIELDS),
-                            merged["last_seen_at"],
-                            merged["last_source"],
-                            row["id"],
-                        ),
-                    ).fetchone()
-                    if updated is None:
-                        raise RuntimeError("PostgreSQL did not update contact")
-                    row = updated
-                if normalized_source == "ticket_webhook":
-                    cursor.execute(
-                        """
-                        UPDATE digisac_contact_hydrations
-                        SET status = 'succeeded',
-                            next_attempt_at = NULL,
-                            lease_until = NULL,
-                            completed_at = COALESCE(completed_at, now()),
-                            failure_category = NULL,
-                            failure_message = NULL,
-                            updated_at = now()
-                        WHERE contact_id = %s
-                        """,
-                        (row["id"],),
-                    )
+                row = _upsert_digisac_contact_cursor(
+                    cursor, contact, normalized_source, observed
+                )
     result = _row_dict(row)
     if result is None:
         raise RuntimeError("PostgreSQL did not return contact state")
@@ -615,6 +625,46 @@ async def upsert_digisac_contact(
 ) -> dict[str, Any]:
     return await asyncio.to_thread(
         _upsert_digisac_contact_sync, contact, source, observed_at
+    )
+
+
+def _publish_digisac_contact_backfill_sync(
+    contacts: Sequence[DigisacContact],
+    observed_at: str | datetime | None = None,
+) -> dict[str, int]:
+    observed = (
+        _parse_timestamp(observed_at)
+        if isinstance(observed_at, (str, datetime))
+        else datetime.now(timezone.utc)
+    )
+    unique_contacts = tuple(
+        {contact.external_id: contact for contact in contacts}.values()
+    )
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                ("cai:digisac_contacts:full_backfill",),
+            )
+            with connection.cursor(row_factory=dict_row) as cursor:
+                for contact in unique_contacts:
+                    _upsert_digisac_contact_cursor(
+                        cursor, contact, "contacts_backfill", observed
+                    )
+    return {
+        "published_count": len(unique_contacts),
+        "unique_count": len(unique_contacts),
+    }
+
+
+async def publish_digisac_contact_backfill(
+    contacts: Sequence[DigisacContact],
+    *,
+    observed_at: str | datetime | None = None,
+) -> dict[str, int]:
+    """Publish a validated snapshot atomically under a process-shared lock."""
+    return await asyncio.to_thread(
+        _publish_digisac_contact_backfill_sync, contacts, observed_at
     )
 
 
