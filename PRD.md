@@ -13,10 +13,10 @@ classifies the customer's intent with Groq, and exposes an auditable result
 through an HTTP API.
 
 CAI is an analysis and operational-support system. The implemented system does
-not open tickets, reply to customers, transfer tickets, or autonomously decide
-the department or agent responsible for a ticket. The Acessórias directory
-foundation is implemented locally; the separate identity, department, and
-external-Request increments remain gated by their own contracts.
+not open DigiSac tickets, reply to customers, transfer tickets, or autonomously
+decide the department or agent responsible for a ticket. The approved
+Acessórias directory, identity, department mapping, and durable external
+Request increments are implemented locally behind their own contracts.
 
 The requirements in this document describe capabilities present in the current
 repository. Product policies approved by the product owner are recorded as
@@ -74,11 +74,12 @@ CAI does not currently:
   manual deletion by direct PostgreSQL query only when needed;
 - provide a general-purpose public API contract beyond the implemented routes.
 
-The first Acessórias increment does not create or update Requests, synchronize
-Users, expose resolution/refresh endpoints or a UI, use fuzzy name matching,
-or change the IA contract. A unique phone match is a candidate, not an
-automatic confirmation; DigiSac groups remain unresolved unless an explicit
-confirmed link exists.
+The directory foundation does not create or update Requests, synchronize Users,
+expose resolution/refresh endpoints or a UI, use fuzzy name matching, or change
+the IA contract. The implemented Request increment creates only external
+Requests of `tipo=E` from eligible durable facts. A unique phone match is a
+candidate, not an automatic confirmation; DigiSac groups remain unresolved
+unless an explicit confirmed link exists.
 
 ## 5. End-to-end workflow
 
@@ -202,6 +203,16 @@ are not mapping inputs. Current company departments are directory state, not a
 constraint that invalidates historical external Requests; a later evaluation
 may record a new outcome without rewriting a terminal snapshot.
 
+Issue 0017 implements the durable Request boundary. A terminal eligible cycle
+with one confirmed company and a current valid mapped department creates at
+most one PostgreSQL operation and one multipart `POST /requests`. Only a
+non-empty provider `id` becomes the persisted `SolID`; safe pre-send failures
+may retry, while uncertain outcomes require `manual_db` reconciliation. The
+operation stores no raw title, description, payload, token, header, provider
+body, or PII and never changes the originating classification. There is no
+public or admin HTTP trigger, and Request lifecycle operations remain outside
+this increment.
+
 
 ## 6. Context and AI contract
 
@@ -267,11 +278,10 @@ and unavailable dependencies cause health failure with `503`.
 ### Durable data
 
 PostgreSQL is the durable source of truth for classifications, ordered message
-links, media states/results, assignment history, DigiSac directory data, and
-persistent cycles. The approved Acessórias directory, identity links,
-resolution records, and later external-Request links will also be Alembic-owned
-durable data. Application startup must verify the schema and must not create or
-mutate tables.
+links, media states/results, assignment history, DigiSac directory data,
+persistent cycles, identity/mapping snapshots, and Acessórias Request
+operations/reconciliation. All are Alembic-owned durable data. Application
+startup must verify the schema and must not create or mutate tables.
 
 Redis is limited to queues, locks, temporary idempotency, and TTL-based
 status/results.
@@ -322,21 +332,22 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`–`0016` added the Acessórias directory, DigiSac contact identity
+issues `0012`–`0017` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
 resolution, and stable-ID department mapping. The observed local
 runner evidence on 2026-08-14 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 177 passed, 56 skipped (the skips are deliberately absent
+- offline pytest: 183 passed, 60 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0018_department_mapping` applied and verified on the runner target;
+- Alembic: `0019_acessorias_request_creation` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 56 passed, 177 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 60 passed, 183 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, dependent image wake-up, and
-  stable-ID department mapping with audited cycle snapshots.
+  stable-ID department mapping with audited cycle snapshots, plus durable
+  Request operation claims, retry classification, and reconciliation.
 
 The runner's offline stage does not select a finalization setting; it isolates
 the disposable database credentials and injects the runner-owned URL only for
@@ -361,7 +372,7 @@ The product owner has decided the following policies:
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issue 0016 through persistent stable-ID configuration and current relationship validation; Request creation remains separately approved work with durable idempotency/reconciliation. |
+| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issue 0016; Request creation is implemented under SPEC-0011/issue 0017 with durable one-cycle uniqueness, conservative retry, and manual reconciliation. |
 
 ## 11. Source traceability
 
@@ -373,7 +384,7 @@ The PRD is derived from:
   `src/core/message_filter.py`, `src/core/media.py`, and
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
-  `0001_initial` through `0016_digisac_contact_identity`;
+  `0001_initial` through `0019_acessorias_request_creation`;
 - worker behavior: `src/workers/ia_worker.py`, `src/workers/audio_worker.py`,
   and `src/workers/image_worker.py`;
 - configuration and deployment: `src/core/config.py`, `.env.example`,

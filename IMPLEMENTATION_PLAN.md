@@ -21,7 +21,7 @@ currently in progress._
   API fallbacks, models, and legacy tests were removed. Targeted search finds
   no active legacy code or setting.
 - **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
-  owns schema through `0018_department_mapping`; migrations, backfills,
+  owns schema through `0019_acessorias_request_creation`; migrations, backfills,
   import, and audit utilities are versioned. Application code verifies rather
   than creates schema.
 - **[completed] Webhook hardening and supported HTTP surface** (SPEC-0002;
@@ -29,12 +29,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0016,
+  PostgreSQL-marked family. The latest recorded full execution (issue 0017,
   2026-08-14) passed compileall, strict Pyright, offline pytest (**177 passed,
-  56 skipped**), Alembic `0018_department_mapping`, and PostgreSQL pytest
-  (**56 passed, 177 deselected**). The 56 offline skips are expected missing
+  60 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
+  (**60 passed, 183 deselected**). The 60 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -188,7 +188,7 @@ currently in progress._
    synthetic/disposable evidence only; no provider, Redis, deployment, or
    production claim was made.
 
-5. **[P1 | implementation-ready after Milestones A–D | specified] Milestone E — Durable Acessórias Request
+5. **[P1 | completed locally | implemented] Milestone E — Durable Acessórias Request
    Creation** (SPEC-0011). Outcome: create a Request only after a persisted valid final
    classification and successful company/department resolution, retaining
    `SolID`, company, department, and originating cycle/classification. A
@@ -201,9 +201,18 @@ currently in progress._
    priority `2`, preserves a single durable operation per cycle, and requires
    conservative retry: no invented idempotency key and no automatic retry when
    the POST outcome is uncertain. Manual `manual_db` reconciliation is the
-   initial operator workflow. Its issue is implementation-ready after
+   initial operator workflow. Issue 0017 implements this operation after
    Milestones A–D supply the declared classification, company and department
    facts; lifecycle work remains Milestone F.
+
+   Build evidence (2026-08-14): the disposable runner passed compileall, strict
+   Pyright, offline pytest (**183 passed, 60 skipped**), Alembic head
+   `0019_acessorias_request_creation`, and PostgreSQL pytest (**60 passed,
+   183 deselected**). Tests cover exact multipart fields, durable operation
+   uniqueness, terminal eligibility, safe retry, uncertain outcomes, claims,
+   manual reconciliation/release, concurrency, rollback guards, and privacy.
+   This is local synthetic/disposable evidence only; no provider credential,
+   Redis, deployment, or production claim was made.
 
 6. **[P2 | pending | optional] Milestone F — Request lifecycle
    integration.** Outcome: future status, interactions, comments, attachments,
@@ -222,8 +231,8 @@ tests cover the typed boundary, validation, deduplication, and failure-safe
 publication.
 Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
-issue 0015. Milestone D is implemented under issue 0016; Milestone E is now
-implementation-ready with its Request contract approved and its A–D facts
+issue 0015. Milestone D is implemented under issue 0016; Milestone E is
+implemented under issue 0017 with its Request contract and A–D facts
 available. No specification in this sequence authorizes application changes
 until its own issues/build pass.
 
@@ -231,7 +240,7 @@ The documentation drift around the issue-0014 backfill and verification counts
 was reconciled during the issue-0015 build sync, and the issue-0016 build sync
 now records department mapping: README, PRD, architecture, SPEC-0008,
 SPEC-0009, SPEC-0010, the specs index, and this plan record the implemented
-backfill, identity resolution, mapping, Alembic `0018`, and the latest local
+backfill, identity resolution, mapping, Request creation, Alembic `0019`, and the latest local
 runner evidence. These results remain disposable/local and do not imply provider,
 Redis, deployment, or production readiness.
 
@@ -325,6 +334,6 @@ Redis, deployment, or production readiness.
 
 ## Recommended next pass
 
-Milestones C and D are complete under issues 0015 and 0016. Milestone E is the
-next eligible implementation increment; its durable Request contract is
-implementation-ready.
+Milestones C and D are complete under issues 0015 and 0016, and Milestone E is
+implemented under issue 0017. Milestone F remains the next optional increment
+and requires a new product decision and specification.

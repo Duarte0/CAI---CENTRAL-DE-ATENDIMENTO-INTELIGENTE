@@ -94,13 +94,27 @@ deduplicada para execução posterior. A resolução preserva evidência
 fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
 imutável por ciclo; confirmação continua exclusivamente manual.
 
-Essa fundação não adiciona endpoints públicos, não altera o contrato da IA e não
-cria Requests automaticamente. Telefone, nome, `idFromService`, `jidId`,
+Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
+etapa implementada pelo issue 0017 cria Requests somente após fatos duráveis de
+ciclo, classificação, identidade confirmada e mapping válido; o efeito externo
+é separado por uma operação PostgreSQL única por ciclo, com `SolID`, claims,
+retry conservador e reconciliação `manual_db`. Telefone, nome, `idFromService`, `jidId`,
 `lidId` e grupos permanecem apenas metadata/evidência; não há matching ou
 confirmação automática. O full backfill interno de Contacts valida a resposta
 de página única ou o fallback `page=N`, deduplica por `contact.id` e publica
 somente um snapshot completo em uma transação PostgreSQL; não cria rota pública
 nem autoridade de diretório no Redis.
+
+### Reconciliação manual de Request
+
+Uma operação em `reconciliation_required` só pode ser resolvida no procedimento
+controlado `manual_db`: depois de consultar a Acessórias, o operador pode
+registrar explicitamente o `SolID` por `reconcile_request_operation`; somente
+com prova de ausência remota pode liberar uma nova tentativa por
+`release_request_operation`. Ambas as operações exigem uma chave idempotente,
+motivo seguro, timestamp durável e ator opcional; nenhum usuário da conversa,
+token, corpo do provider ou conteúdo da classificação é usado como ator ou
+evidência.
 
 ## Finalização persistente por histórico DigiSac
 
@@ -154,6 +168,9 @@ de execução. As principais estruturas são:
   `contact.id`, metadata observada e claims/retries duráveis de hydration;
 - `conversation_processing_cycles` e `conversation_cycle_messages`: estado,
   snapshot, leases, agendamento e auditoria da finalização persistente.
+- `acessorias_request_operations` e `acessorias_request_reconciliations`:
+  operação externa única por ciclo, payload fingerprintado sem conteúdo bruto,
+  claims/leases, `SolID`, falhas sanitizadas e reconciliação administrativa.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -424,7 +441,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0018_department_mapping` e só então
+ao destino, aplica e verifica Alembic `0019_acessorias_request_creation` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -437,14 +454,15 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-14, a etapa offline produziu
-**177 passed, 56 skipped** e a etapa PostgreSQL produziu **56 passed, 177
+**183 passed, 60 skipped** e a etapa PostgreSQL produziu **60 passed, 183
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
 fila, o despertar somente dos ciclos dependentes de uma imagem recuperada, a
 fundação do diretório Acessórias, a identidade/hydration de contatos DigiSac,
-a resolução conservadora de identidade e o mapeamento departamental com
-auditoria e snapshots por ciclo.
+a resolução conservadora de identidade, o mapeamento departamental com
+auditoria e snapshots por ciclo, e a criação durável de Request com retry
+seguro, claims concorrentes, reconciliação de resultado incerto e `SolID`.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

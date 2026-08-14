@@ -18,8 +18,9 @@ and exposes the result through an HTTP API.
 The implemented CAI does not open tickets, reply to customers, transfer tickets,
 or make department/agent decisions through the language model. Its current
 runtime includes the internal Acessórias directory, DigiSac contact identity,
-cross-system identity resolution, and department mapping capabilities. Request
-creation remains a future increment.
+cross-system identity resolution, department mapping, and durable Acessórias
+Request creation capabilities. Request lifecycle operations remain a future
+increment.
 
 \`\`\`mermaid
 flowchart LR
@@ -74,8 +75,8 @@ mapping (SPEC-0010; issue 0016) add provider boundaries and durable local
 records. Contact snapshots from ticket webhooks are upserted by opaque
 `contact.id`; message-only references create a durable, deduplicated need for
 individual hydration outside the request path. The full Contacts backfill uses
-validated one-page or `page=N` responses. Request delivery remains separate
-gated work.
+validated one-page or `page=N` responses. Request delivery is a separate
+durable operation after the mapping boundary.
 
 \`\`\`mermaid
 flowchart LR
@@ -86,7 +87,7 @@ flowchart LR
     DC --> P
     P --> IR[Identity resolver]
     IR --> DM[Department mapping]
-    DM --> FR[Future durable Request integration]
+    DM --> FR[Durable Request operation]
     FC[Persisted CAI classification/cycle] --> IR
     FC --> FR
 \`\`\`
@@ -112,9 +113,9 @@ Department mapping uses the current DigiSac department from assignment history,
 an explicitly administered PostgreSQL rule keyed by stable provider IDs, and
 the confirmed company's current Acessórias relationship. It persists an
 append-only cycle evaluation and does not use IA \`intent_type\`, names, or
-fallback selection. A later Request integration runs only after a persisted
-valid classification and mapping; it has its own durable idempotency,
-reconciliation, and failure state and cannot roll back a completed
+fallback selection. The Request operation runs only after a persisted valid
+classification and mapping; it has its own durable one-cycle uniqueness,
+claim/reconciliation, and failure state and cannot roll back a completed
 classification.
 
 ## 3. Inbound webhook flow
@@ -310,7 +311,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0018_department_mapping\`. The main data groups
+Alembic owns the schema through \`0019_acessorias_request_creation\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -324,6 +325,7 @@ are:
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, and immutable per-cycle outcomes. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, and identity-resolution linkage. |
+| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, sanitized outcomes, and controlled `manual_db` reconciliation. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
 JSONB where defined by the schema, and durable timestamps use \`TIMESTAMPTZ\`.
@@ -397,6 +399,9 @@ application verifies that schema at startup and does not create or mutate it.
   future work.
 - Terminal image failures block classification; terminal audio failures preserve
   a warning marker.
+- A Request operation is persisted before every provider POST; only a non-empty
+  provider `id` confirms completion, and uncertain outcomes cannot auto-post a
+  second Request.
 - Unrelated dead-letter entries are not removed during targeted recovery.
 - No retention, archival, or deletion policy is currently implemented.
 
@@ -407,7 +412,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-14 evidence
-  was **177 passed, 56 skipped** offline and **56 passed, 177 deselected** in
+  was **183 passed, 60 skipped** offline and **60 passed, 183 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -437,7 +442,13 @@ records these delivery limitations:
   an internal PostgreSQL capability. It preserves stable-ID rule versions and
   transitions, validates the current company-department relation only after a
   confirmed cycle identity, and appends sanitized cycle snapshots; it does not
-  add an HTTP route, IA routing, fallback selection, or Request write.
+  add an HTTP route, IA routing, or fallback selection. Request creation is
+  implemented separately under issue `0017`.
+
+- Durable Acessórias Request creation is implemented under issue `0017`. It
+  validates terminal-cycle, confirmed-identity, and current mapping facts,
+  sends only the approved multipart fields, persists `SolID` after a successful
+  local commit, and leaves uncertain provider outcomes for manual reconciliation.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.
@@ -452,7 +463,7 @@ they limit release verification and future evolution decisions.
 - PostgreSQL access and cycle coordination: \`src/core/db.py\`,
   \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0018_department_mapping.py\`.
+  \`0019_acessorias_request_creation.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
@@ -460,6 +471,9 @@ they limit release verification and future evolution decisions.
   and Alembic \`0017_digisac_acessorias_identity.py\`.
 - DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
   and Alembic \`0018_department_mapping.py\`.
+- Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,
+  \`src/workers/ia_worker.py\`, and Alembic
+  \`0019_acessorias_request_creation.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

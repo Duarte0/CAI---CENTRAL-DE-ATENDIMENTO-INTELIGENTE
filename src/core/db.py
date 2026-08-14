@@ -26,7 +26,7 @@ from src.core.identifiers import uuid7
 from src.core.intents import normalize_intent_type
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0018_department_mapping"
+CURRENT_SCHEMA_REVISION = "0019_acessorias_request_creation"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -47,6 +47,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "0015_acessorias_directory",
         "0016_digisac_contact_identity",
         "0017_digisac_acessorias_identity",
+        "0018_department_mapping",
         CURRENT_SCHEMA_REVISION,
     }
 )

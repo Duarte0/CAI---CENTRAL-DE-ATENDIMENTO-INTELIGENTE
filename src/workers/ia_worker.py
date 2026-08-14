@@ -11,6 +11,7 @@ from groq import Groq
 
 from src.core.config import settings
 from src.core.analysis import with_protocol
+from src.core.acessorias_requests import create_request_for_cycle
 from src.core.db import (  # noqa: F401
     close_database,
     get_pending_content_extractions,
@@ -679,6 +680,24 @@ class IAWorker:
                 "lease_expires_at": None,
             },
         )
+        try:
+            request_operation = await create_request_for_cycle(cycle_id)
+            logger.info(
+                "Acessórias Request operation evaluated: cycle_id=%s state=%s "
+                "failure_category=%s",
+                cycle_id,
+                request_operation.get("state"),
+                request_operation.get("failure_category"),
+            )
+        except Exception as exc:
+            # Request delivery is a separate durable operation. A provider or
+            # reconciliation failure must never roll back the classification.
+            logger.error(
+                "Acessórias Request operation could not be evaluated: "
+                "cycle_id=%s error_type=%s",
+                cycle_id,
+                type(exc).__name__,
+            )
         result = with_protocol(result, cycle.get("protocol"))
         if identity.public_id is not None:
             result["classification_public_id"] = str(identity.public_id)

@@ -70,6 +70,8 @@ async def postgres_state(request):
             TRUNCATE TABLE
                 conversation_cycle_identity_resolutions,
                 conversation_cycle_department_mappings,
+                acessorias_request_reconciliations,
+                acessorias_request_operations,
                 department_mapping_transitions,
                 department_mapping_rules,
                 identity_company_link_transitions,
