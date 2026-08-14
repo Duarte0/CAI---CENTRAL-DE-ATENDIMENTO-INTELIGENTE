@@ -186,13 +186,13 @@ PostgreSQL is the local durable authority; Redis is never the identity or
 directory authority.
 
 Identity distinguishes technical match evidence, persisted contact-company
-links, and the resolution used by a conversation/cycle. It supports candidate,
-confirmed, ambiguous, unresolved, and rejected semantics, including one
-DigiSac contact linked to multiple companies. Exact normalized phone, an
-approved deterministic Brazilian mobile variant, and exact normalized email
-may discover candidates; only an explicit/manual confirmation initially
-produces `confirmed`. Group names and numbers are diagnostic only, not
-automatic matching evidence.
+links, audited link transitions, and the resolution used by a conversation/
+cycle. Issue 0015 implements candidate, confirmed, ambiguous, unresolved, and
+rejected semantics, including one DigiSac contact linked to multiple companies.
+Exact normalized phone, an approved deterministic Brazilian mobile variant, and
+exact normalized email may discover candidates; only an explicit/manual
+confirmation initially produces `confirmed`. Group names and numbers are
+diagnostic only, not automatic matching evidence.
 
 Department routing will map the current DigiSac department through persistent
 configuration and validate the selected Acessórias department against the
@@ -320,17 +320,18 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`, `0013`, and `0014` added the Acessórias directory, DigiSac contact
-identity foundation, and complete Contacts backfill. The observed local
+issues `0012`, `0013`, `0014`, and `0015` added the Acessórias directory, DigiSac
+contact identity foundation, complete Contacts backfill, and conservative
+cross-system identity resolution. The observed local
 runner evidence on 2026-08-14 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 160 passed, 40 skipped (the skips are deliberately absent
+- offline pytest: 175 passed, 48 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0016_digisac_contact_identity` applied and verified on the runner target;
+- Alembic: `0017_digisac_acessorias_identity` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 40 passed, 160 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 48 passed, 175 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, and dependent image wake-up.
 

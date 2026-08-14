@@ -23,6 +23,7 @@ POSTGRES_MODULES = {
     "test_digisac_directory.py",
     "test_postgres_evolution.py",
     "test_conversation_cycles_db.py",
+    "test_identity_resolution.py",
 }
 _schema_ready = False
 
@@ -66,6 +67,10 @@ async def postgres_state(request):
         connection.execute(
             """
             TRUNCATE TABLE
+                conversation_cycle_identity_resolutions,
+                identity_company_link_transitions,
+                identity_match_evidence,
+                identity_company_links,
                 digisac_contact_hydrations,
                 digisac_contacts,
                 acessorias_company_departments,

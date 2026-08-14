@@ -84,13 +84,14 @@ camada transitória de transporte e coordenação.
 
 ## Integração Acessórias aprovada
 
-Os issues 0012 e 0013 implementaram localmente a fundação do diretório durável
-da Acessórias e a identidade mínima de contato DigiSac. O contato é persistido
+Os issues 0012–0015 implementaram localmente a fundação do diretório durável
+da Acessórias, a identidade mínima de contato DigiSac, o full backfill e a
+resolução conservadora de identidade. O contato é persistido
 por `contact.id`, snapshots de ticket são reconciliados no PostgreSQL e
 referências `contactId` de mensagens apenas registram hydration individual
-deduplicada para execução posterior. A sequência dependente continua sendo
-resolução conservadora, mapping de departamento e somente então criação durável
-de Request.
+deduplicada para execução posterior. A resolução preserva evidência
+fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
+imutável por ciclo; confirmação continua exclusivamente manual.
 
 Essa fundação não adiciona endpoints públicos, não altera o contrato da IA e não
 cria Requests automaticamente. Telefone, nome, `idFromService`, `jidId`,
@@ -394,7 +395,7 @@ npx --yes pyright
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
-etapa offline produziu **160 passed, 40 skipped**; os skips exigem
+etapa offline produziu **175 passed, 48 skipped**; os skips exigem
 `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
 
 O smoke test live do webhook é opt-in e requer uma API local deliberadamente
@@ -422,7 +423,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0016_digisac_contact_identity` e só então
+ao destino, aplica e verifica Alembic `0017_digisac_acessorias_identity` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -435,11 +436,12 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-14, a etapa PostgreSQL produziu
-**40 passed, 160 deselected**. Esses testes cobrem, no
+**48 passed, 175 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
 fila, o despertar somente dos ciclos dependentes de uma imagem recuperada e a
-fundação do diretório Acessórias e a identidade/hydration de contatos DigiSac.
+fundação do diretório Acessórias, a identidade/hydration de contatos DigiSac e
+a resolução conservadora de identidade.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

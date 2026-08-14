@@ -13,10 +13,11 @@ são rastreáveis, o `conftest.py` não seleciona um modo alternativo e
 `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
-fornece a URL exata ao subprocesso PostgreSQL. A execução observada produziu
-**160 passed, 40 skipped** na etapa offline, **40 passed, 160 deselected** na
-etapa PostgreSQL e zero diagnósticos no Pyright. Os 36 skips pertencem apenas à
-etapa offline, onde o banco deliberadamente não é fornecido.
+fornece a URL exata ao subprocesso PostgreSQL. A execução mais recente
+registrada (issue 0015, 2026-08-14) produziu **175 passed, 48 skipped** na
+etapa offline, **48 passed, 175 deselected** na etapa PostgreSQL e zero
+diagnósticos no Pyright. Os 48 skips pertencem apenas à etapa offline, onde o
+banco deliberadamente não é fornecido.
 Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
 do banco descartável somente na etapa PostgreSQL.
 
@@ -25,10 +26,9 @@ de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
 de fila determinístico e identificadores sintéticos para verificar claim/lease
 de ciclo, liberação após falha de publicação, agenda futura, recuperação de
 áudio/imagem sem duplicação e despertar seletivo de ciclos bloqueados por
-imagem. A execução mais recente observada produziu **36 passed, 151 deselected** no destino
-PostgreSQL 16 descartável; issue 0013 também confirmou migration head
-`0016_digisac_contact_identity` e a cobertura de identidade/hydration de
-contatos; isso não comprova Redis, fornecedores, réplicas ou
+imagem. O issue 0015 também confirmou a migration head
+`0017_digisac_acessorias_identity` e a cobertura de identidade, hydration,
+backfill de contatos e resolução conservadora; isso não comprova Redis, fornecedores, réplicas ou
 produção.
 
 ## Objetivo e não objetivos

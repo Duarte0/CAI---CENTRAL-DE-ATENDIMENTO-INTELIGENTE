@@ -53,6 +53,8 @@ class DigisacContact:
     internal_name: str | None = None
     raw_number: str | None = None
     normalized_number: str | None = None
+    raw_email: str | None = None
+    normalized_email: str | None = None
     is_group: bool | None = None
     account_id: str | None = None
     service_id: str | None = None
@@ -108,6 +110,15 @@ def _normalize_contact_number(value: Any) -> tuple[str | None, str | None]:
     return raw, normalized
 
 
+def _normalize_contact_email(value: Any) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    raw = str(value)
+    if not raw.strip():
+        return None, None
+    return raw, raw.strip().casefold()
+
+
 def normalize_contact(payload: Mapping[str, Any]) -> DigisacContact:
     """Convert an observed provider object into the approved local shape."""
     if not isinstance(payload, Mapping):
@@ -123,6 +134,10 @@ def normalize_contact(payload: Mapping[str, Any]) -> DigisacContact:
     if number_value is None:
         number_value = data.get("number")
     raw_number, normalized_number = _normalize_contact_number(number_value)
+    email_value = payload.get("email")
+    if email_value is None:
+        email_value = data.get("email")
+    raw_email, normalized_email = _normalize_contact_email(email_value)
 
     is_group = payload.get("isGroup")
     if not isinstance(is_group, bool):
@@ -135,6 +150,8 @@ def normalize_contact(payload: Mapping[str, Any]) -> DigisacContact:
         internal_name=_optional_contact_string(payload.get("internalName")),
         raw_number=raw_number,
         normalized_number=normalized_number,
+        raw_email=raw_email,
+        normalized_email=normalized_email,
         is_group=is_group,
         account_id=_optional_contact_string(payload.get("accountId")),
         service_id=_optional_contact_string(payload.get("serviceId")),

@@ -14,12 +14,12 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.1 | P1 / documentação de compatibilidade | SPEC-0001–0005 | Publica OpenAPI/Swagger/ReDoc e introdução para consumidores a partir das oito rotas HTTP atualmente montadas. |
 | SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.1; issue 0012 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com reconciliação completa paginada, retry e segurança; não cria Request nem identidade DigiSac. |
 | SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.3; issues 0013 e 0014 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, hydration individual e full backfill idempotentes; sem resolução de empresa. |
-| SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Ativo v1.0; bloqueado pela decisão de variante móvel | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência, vínculos muitos-para-muitos e resolução por ciclo; confirmação é manual, nunca automática. |
+| SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.1; issue 0015 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência e candidatos conservadores, vínculos muitos-para-muitos e resolução por ciclo; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Ativo v1.0; bloqueado por SPEC-0007–0009 e governança | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Configuração auditável do departamento atual sem usar IA; não cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Ativo v1.0; bloqueado por SPEC-0007–0010 e contrato Request | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Efeito externo idempotente e reconciliável, sem alterar classificações ou cobrir ciclo de vida. |
 
-A evidência mais recente registrada para SPEC-0004 é **160 passed, 40 skipped**
-na etapa offline e **40 passed, 160 deselected** na etapa PostgreSQL
+A evidência mais recente registrada para SPEC-0004 é **175 passed, 48 skipped**
+na etapa offline e **48 passed, 175 deselected** na etapa PostgreSQL
 descartável (issue 0013). Os resultados **151/36** e **36/151** são evidência
 histórica de issue 0011; **146/36** e **36/146** são evidência
 histórica de issue 0010; **143/36** e **36/143** são evidência histórica de
@@ -47,6 +47,10 @@ concluir uma página no tenant atual, e `page=N` com `currentPage`/`lastPage`
 mantém o fallback paginado, deduplicado por `contact.id` e seguro contra não
 avanço. As demais issues continuam
 bloqueadas pelas dependências e decisões abertas enumeradas em cada contrato.
+SPEC-0009 v1.1 foi implementada pelo issue 0015: a variante móvel brasileira
+permanece evidência conservadora, a confirmação inicial é o procedimento
+controlado `manual_db`, e os resultados locais são persistidos somente no
+PostgreSQL.
 Milestone F continua fora do conjunto: exige decisão de produto após a criação
 de Request ser comprovada. Não alterar as SPEC-0001–0006 concluídas para
 atribuir retroativamente esses comportamentos; elas continuam descrevendo
@@ -60,4 +64,4 @@ Não há especificações superseded, deprecated ou template neste conjunto. Um 
 
 1. Planejamento referencia a especificação aplicável e registra dependências/decisões abertas.
 2. A passagem de issues decompõe somente especificações prontas, sem redefinir seus contratos.
-3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. O isolamento da suíte (issue 0001), o runner descartável (0002), a verificação operacional (0004), a remoção das superfícies de diagnóstico (0006), a reconciliação documental (0007 e 0009), a publicação de SPEC-0006 (0008) e o Milestone A de SPEC-0007 (0012) estão implementados.
+3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. O isolamento da suíte (issue 0001), o runner descartável (0002), a verificação operacional (0004), a remoção das superfícies de diagnóstico (0006), a reconciliação documental (0007 e 0009), a publicação de SPEC-0006 (0008), o Milestone A de SPEC-0007 (0012) e o Milestone C de SPEC-0009 (0015) estão implementados.

@@ -67,14 +67,14 @@ media results.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
-The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012) and
-DigiSac Contact Identity Foundation (SPEC-0008; issue 0013) add provider
+The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012),
+DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014), and
+DigiSac–Acessórias identity resolution (SPEC-0009; issue 0015) add provider
 boundaries and durable local records. Contact snapshots from ticket webhooks
 are upserted by opaque `contact.id`; message-only references create a durable,
-deduplicated need for individual hydration outside the request path. No full
-Contacts backfill is enabled because page advancement remains unverified. The
-additions do not change the OpenAPI or Request runtime. Cross-system identity
-resolution, department mapping, and Request delivery remain separate gated work.
+deduplicated need for individual hydration outside the request path. The full
+Contacts backfill uses validated one-page or `page=N` responses. Cross-system
+department mapping and Request delivery remain separate gated work.
 
 \`\`\`mermaid
 flowchart LR
@@ -98,12 +98,14 @@ departments, and current company-department relationships, including inactive
 companies. PostgreSQL is its durable local authority; Redis is not a directory
 or identity source of truth.
 
-The identity resolver will retain separate match evidence, contact-company
-links, and conversation/cycle resolution. It must model candidate, confirmed,
-ambiguous, unresolved, and rejected outcomes and permit a contact to link to
-multiple companies. Exact phone/email evidence can create candidates but not
-automatic confirmation; DigiSac groups remain unresolved absent an explicit
-confirmed link. Raw and normalized identifiers are both retained.
+The identity resolver retains separate match evidence, contact-company links,
+link transitions, and conversation/cycle resolution. It models candidate,
+confirmed, ambiguous, unresolved, and rejected outcomes and permits a contact
+to link to multiple companies. Exact phone/email evidence and the approved
+Brazilian mobile variant create candidates but not automatic confirmation;
+DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
+uses sanitized fingerprints, while raw and normalized directory identifiers
+remain in their canonical foundation records.
 
 Department mapping will use the current DigiSac department through persistent
 configuration, then validate availability against the resolved company's
@@ -305,7 +307,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0016_digisac_contact_identity\`. The main data groups
+Alembic owns the schema through \`0017_digisac_acessorias_identity\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -314,9 +316,10 @@ are:
 | Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, and extracted text. |
 | Assignment | \`ticket_assignment_history\`, \`ticket_assignment_event_keys\` | Chronological, idempotent ticket assignment history. |
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
-| DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata, timestamp-aware observation, and durable individual hydration claims/retries. |
+| DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
-| Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, and ordered membership. |
+| Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, and immutable per-cycle outcomes. |
+| Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, and identity-resolution linkage. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
 JSONB where defined by the schema, and durable timestamps use \`TIMESTAMPTZ\`.
@@ -382,6 +385,9 @@ application verifies that schema at startup and does not create or mutate it.
 - DigiSac contact identity is keyed only by provider \`contact.id\`; hydration
   claims and retry state are durable in PostgreSQL and deduplicated under row
   locks.
+- Identity resolution stores evidence, links, transitions, and cycle outcomes
+  in PostgreSQL; exact matching never confirms automatically, and a manual
+  confirmation is serialized per contact.
 - Cycle and classification identity prevent duplicate terminal analysis.
 - Retry scheduling respects provider timing and does not broadly republish
   future work.
@@ -397,7 +403,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-14 evidence
-  was **160 passed, 40 skipped** offline and **40 passed, 160 deselected** in
+  was **175 passed, 48 skipped** offline and **48 passed, 175 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -418,6 +424,11 @@ records these delivery limitations:
   supports a validated one-page response and `page=N` fallback with global
   `contact.id` deduplication; it does not add an HTTP route or Redis directory
   authority.
+- DigiSac–Acessórias identity resolution is implemented under issue `0015` as
+  an internal PostgreSQL capability. It preserves sanitized evidence, audited
+  many-to-many links, immutable cycle outcomes, and controlled `manual_db`
+  confirmation; it does not add an HTTP route, fuzzy matching, or provider
+  writes.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.
@@ -435,6 +446,8 @@ they limit release verification and future evolution decisions.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
+- DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
+  and Alembic \`0017_digisac_acessorias_identity.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

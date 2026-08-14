@@ -21,7 +21,7 @@ currently in progress._
   API fallbacks, models, and legacy tests were removed. Targeted search finds
   no active legacy code or setting.
 - **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
-  owns schema through `0016_digisac_contact_identity`; migrations, backfills,
+  owns schema through `0017_digisac_acessorias_identity`; migrations, backfills,
   import, and audit utilities are versioned. Application code verifies rather
   than creates schema.
 - **[completed] Webhook hardening and supported HTTP surface** (SPEC-0002;
@@ -29,12 +29,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0015). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0013,
-  2026-08-14) passed compileall, strict Pyright, offline pytest (**160 passed,
-  40 skipped**), Alembic `0016_digisac_contact_identity`, and PostgreSQL pytest
-  (**40 passed, 160 deselected**). The 40 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0015,
+  2026-08-14) passed compileall, strict Pyright, offline pytest (**175 passed,
+  48 skipped**), Alembic `0017_digisac_acessorias_identity`, and PostgreSQL pytest
+  (**48 passed, 175 deselected**). The 48 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -52,8 +52,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **200 tests**; the latest issue-0013
-  run passed **160 tests** and skipped the 40 PostgreSQL-dependent tests without
+- The current canonical collection contains **223 tests**; the latest issue-0015
+  run passed **175 tests** and skipped the 48 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -61,7 +61,7 @@ currently in progress._
   `PYTHONPATH=/app python -m pytest -q` imports `tests/test_webhook_local.py`
   without opening a socket; direct execution remains the only way to send the
   smoke request.
-- Issues 0001–0013 are `closed`. Earlier baseline delivery work is complete and
+- Issues 0001–0015 are `closed`. Earlier baseline delivery work is complete and
   must not be reopened.
   Broader classification policy changes remain blocked on product decisions.
 
@@ -136,7 +136,7 @@ currently in progress._
    DigiSac credential, provider synchronization, Redis runtime, deployment, or
    production claim was used.
 
-3. **[P1 | blocked | specified] Milestone C —
+3. **[P1 | completed locally | implemented] Milestone C —
    DigiSac ↔ Acessórias Identity Resolution** (SPEC-0009). Outcome: persist technical evidence, contact-company
    links, and conversation/cycle resolution separately, with candidate,
    confirmed, ambiguous, unresolved, and rejected states and many-to-many
@@ -144,11 +144,24 @@ currently in progress._
    database confirmation is the initial operation and groups never participate
    in automatic phone/name matching.
 
-   Specification outcome: SPEC-0009 defines evidence provenance,
-   transitions/auditability, manual confirmation, ambiguity/rejection and
-   regression validation. Its implementation issue remains blocked only by the
-   Brazilian mobile-variant transformation being recorded as a testable product
-   decision; SPEC-0007–0008 are now implemented locally.
+   Specification outcome: SPEC-0009 v1.1 defines evidence provenance,
+   conservative exact phone/email and Brazilian mobile-variant candidates,
+   transitions/auditability, manual database confirmation, ambiguity/conflict
+   handling and regression validation. A phone/email evidence or combination of
+   evidence never confirms automatically. The approved `manual_db` procedure
+   requires a confirmation timestamp and makes the actor optional until a
+   trustworthy administrative identity exists. Its implementation issue is
+   eligible once the declared dependencies are implemented; the Brazilian
+   mobile-variant and manual-actor decisions were implemented as specified.
+
+   Build evidence (2026-08-14): migration `0017_digisac_acessorias_identity`,
+   typed deterministic matcher, PostgreSQL evidence/link/transition
+   persistence, immutable cycle resolution, manual confirmation/correction,
+   and deterministic unit/PostgreSQL coverage are implemented. The canonical
+   runner passed compileall, strict Pyright, offline pytest (**175 passed,
+   48 skipped**), Alembic head verification, and PostgreSQL pytest (**48
+   passed, 175 deselected**). This is local synthetic/disposable evidence only;
+   no provider, Redis, deployment, or production claim was made.
 
 4. **[P1 | blocked | specified] Milestone D — DigiSac Department →
    Acessórias Department Mapping** (SPEC-0010). Outcome: add persistent/configurable
@@ -187,10 +200,19 @@ full Contacts-backfill slice is implemented locally under issue 0014. Authorized
 provider evidence covers single-page execution and the `page=N` fallback; local
 tests cover the typed boundary, validation, deduplication, and failure-safe
 publication.
-Milestone C also needs the testable Brazilian
-mobile-variant decision in SPEC-0009; Milestones D and E retain their own
-governance and Request-contract blocks. No specification in this sequence
-authorizes application changes until its own issues/build pass.
+Milestone C has its testable Brazilian mobile-variant rule and controlled
+manual-confirmation procedure recorded in SPEC-0009 and was implemented under
+issue 0015. Milestone D has approved mapping governance and is now
+implementation-ready; Milestone E has its Request contract approved and awaits
+Milestone D. No specification in this sequence authorizes application changes
+until its own issues/build pass.
+
+The documentation drift around the issue-0014 backfill and verification counts
+was reconciled during the issue-0015 build sync: README, PRD, architecture,
+SPEC-0008, SPEC-0009, the specs index, and this plan now record the implemented
+backfill, identity resolution, Alembic `0017`, and the latest local runner
+evidence. These results remain disposable/local and do not imply provider,
+Redis, deployment, or production readiness.
 
 ### Separate pending work
 
@@ -282,5 +304,6 @@ authorizes application changes until its own issues/build pass.
 
 ## Recommended next pass
 
-No open issue remains in the current issue set. Later work remains gated by the
-listed Milestone C–E dependencies and decisions.
+Milestone C is complete under issue 0015. Milestone D is the next eligible
+implementation increment; Milestone E becomes implementation-ready after
+Milestone D is complete.

@@ -19,6 +19,10 @@ O issue 0014 implementa a aquisição tipada, validação, deduplicação global
 publicação transacional e CLI interna do full backfill; a verificação continua
 local/sintética e descartável, sem credencial ou sincronização de produção.
 
+O issue 0015 acrescenta, de forma aditiva, `raw_email` e `normalized_email`
+para permitir a resolução exata prevista na SPEC-0009; esses campos não mudam
+a identidade canônica `contact.id`.
+
 ## Objetivo e não objetivos
 
 Definir a representação local mínima, durável e reconciliável de um contato DigiSac. A identidade externa canônica **deve** ser `contact.id`; `contactId` nos eventos referencia essa mesma identidade. PostgreSQL é a autoridade local; Redis **não pode** ser usado como diretório, estado de hydration ou fonte de identidade.
@@ -53,7 +57,7 @@ ou estendida coerentemente.
 ## Dados, integridade e privacidade
 
 1. Cada contato **deve** ter uma única linha por `contact.id` não vazio, tratado como identificador externo opaco e imutável. ID interno CAI não pode substituí-lo nem reinterpretá-lo.
-2. A representação local **deve** reter somente metadata justificada por identidade, hydration, auditoria e reconciliação: ID externo, `name`, `alternativeName`, `internalName` quando presente, número bruto, número técnico normalizado, `is_group`, `accountId`, `serviceId`, timestamps `createdAt`/`updatedAt`/`deletedAt` quando presentes e metadata local de `synced_at`/`last_seen` e origem. Os nomes finais seguem as convenções do repositório.
+2. A representação local **deve** reter somente metadata justificada por identidade, hydration, auditoria e reconciliação: ID externo, `name`, `alternativeName`, `internalName` quando presente, número bruto, número técnico normalizado, email bruto e sua forma normalizada, `is_group`, `accountId`, `serviceId`, timestamps `createdAt`/`updatedAt`/`deletedAt` quando presentes e metadata local de `synced_at`/`last_seen` e origem. Os nomes finais seguem as convenções do repositório.
 3. Número normalizado **deve** converter dígitos Unicode decimais para ASCII e reter apenas dígitos. Número bruto ausente ou vazio não produz valor normalizado. Ele é evidência, não identidade: SPEC-0008 não conclui que dois números são a mesma pessoa ou empresa.
 4. Grupo informado por `isGroup=true` **deve** ser persistido com `is_group`. Seu número técnico, inclusive formas com hífen, não pode ser tratado como telefone de pessoa/empresa; seu nome não pode confirmar vínculo automático.
 5. `deletedAt` não nulo pode ser preservado como estado/metadata do provider. Ausência em listagem ou reconciliação **não pode** significar deleção, nem produzir remoção física ou apagar vínculos históricos futuros.

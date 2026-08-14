@@ -26,7 +26,7 @@ from src.core.identifiers import uuid7
 from src.core.intents import normalize_intent_type
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0016_digisac_contact_identity"
+CURRENT_SCHEMA_REVISION = "0017_digisac_acessorias_identity"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -45,6 +45,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "0013_conversation_cycles",
         "0014_retry_scheduling",
         "0015_acessorias_directory",
+        "0016_digisac_contact_identity",
         CURRENT_SCHEMA_REVISION,
     }
 )
@@ -462,6 +463,8 @@ _CONTACT_PROVIDER_FIELDS = (
     "internal_name",
     "raw_number",
     "normalized_number",
+    "raw_email",
+    "normalized_email",
     "is_group",
     "account_id",
     "service_id",
@@ -499,11 +502,12 @@ def _upsert_digisac_contact_cursor(
             """
             INSERT INTO digisac_contacts (
                 external_id, name, alternative_name, internal_name,
-                raw_number, normalized_number, is_group, account_id,
+                raw_number, normalized_number, raw_email, normalized_email,
+                is_group, account_id,
                 service_id, provider_created_at, provider_updated_at,
                 provider_deleted_at, last_seen_at, last_source
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s
             )
             RETURNING *
@@ -552,6 +556,8 @@ def _upsert_digisac_contact_cursor(
                 internal_name = %s,
                 raw_number = %s,
                 normalized_number = %s,
+                raw_email = %s,
+                normalized_email = %s,
                 is_group = %s,
                 account_id = %s,
                 service_id = %s,
