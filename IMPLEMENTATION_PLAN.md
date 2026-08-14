@@ -62,12 +62,11 @@ currently in progress._
   `tests/test_webhook_local.py` and attempts `localhost:8000` during collection;
   without a deliberately started local API it fails before executing the suite.
   This is a test-entrypoint ergonomics gap, not a failed canonical run.
-- Issues 0001–0008 and 0012 are `closed`. Earlier Phase 0/1 delivery work is
-  complete and must not be reopened. Issues 0009–0011 remain open as concrete
-  follow-ups:
-  reconcile stale active-document traceability/evidence, then correct the
-  `financial` taxonomy omission in the model prompt. Broader classification
-  policy changes remain blocked on product decisions.
+- Issues 0001–0009 and 0012 are `closed`. Earlier baseline delivery work is
+  complete and must not be reopened. Issues 0010–0011 remain open as concrete
+  follow-ups: restore the `financial` taxonomy omission in the model prompt and
+  make the live webhook test opt-in for default collection. Broader
+  classification policy changes remain blocked on product decisions.
 
 ## Priority plan
 
@@ -176,15 +175,6 @@ authorizes application changes until its own issues/build pass.
 
 ### Separate pending work
 
-- **[P1 | pending | ready for issues | documentation] Reconcile active-document
-  traceability and verification evidence** (SPEC-0005; PRD §9; ARCHITECTURE
-  §13; README). Outcome: active
-  records use stable SPEC/issue references and label
-  the issue-0008 **127/33** offline and **33/127** PostgreSQL evidence as the
-  latest recorded result, retaining **122/33** and **33/122** only as dated
-  historical evidence. Completion criteria: eliminate obsolete plan-item
-  references and SPEC-0006 future-tense gap language without rewriting closed
-  issue evidence; recheck index and cross-references.
 - **[P1 | pending | ready for issues | implementation] Restore `financial` taxonomy
   parity in the IA prompt** (PRD §6; SPEC-0001; `src/core/intents.py`;
   `src/workers/ia_worker.py`; `tests/test_ia_worker_intent.py`). Outcome: every
@@ -213,7 +203,8 @@ authorizes application changes until its own issues/build pass.
   runner (0002), documentation baseline (0003), durable recovery coverage
   (0004), legacy finalization removal (0005), raw-payload diagnostic-surface
   removal (0006), and persistent implementation documentation reconciliation
-  (0007), and generated OpenAPI HTTP contract publication (0008).
+  (0007), generated OpenAPI HTTP contract publication (0008), and active
+  document traceability/evidence reconciliation (0009).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -226,24 +217,18 @@ authorizes application changes until its own issues/build pass.
 
 ## Dependencies, risks, and recorded discrepancies
 
-- **Documentation inconsistency (Phase 1, resolved by issue 0007):** README,
+- **Documentation inconsistency (resolved by issue 0007):** README,
   PRD, architecture, SPEC-0002, SPEC-0004, the index, and this plan now state
   persistent-only finalization, unversioned mounted queries, and future-only
   `/v1/`/`/v2/` policy.
-- **Documentation drift:** PRD §9, ARCHITECTURE §13 and README still contain
-  obsolete plan-item references or issue-0007 **122/33** and **33/122** counts.
-  SPEC-0001–0006 and the index now use stable references, the issue-0008
-  baseline and SPEC-0006's completed-publication state. Repair the remaining
-  active records without changing historical issue files. All such evidence
-  remains local and does not prove Redis, provider, replica, deployment, or
-  production readiness.
-- **SPEC-0005 consistency gap:** its status declares the reconciliation
-  implemented, while its acceptance text still says PRD and architecture need
-  the issue-0008 traceability/evidence delta. This is the same bounded
-  documentation item above, not a reason to reopen the completed
-  persistent-only or OpenAPI deliveries. Resolve it by updating the active
-  records and SPEC-0005's acceptance narrative together, while preserving the
-  dated issue-0007 evidence.
+- **Documentation drift (resolved by issue 0009):** active PRD, architecture,
+  README, SPEC-0001–0006, the index, and this plan now use stable
+  SPEC/issue references, distinguish the implemented OpenAPI and Acessórias
+  foundation, and record the issue-0012 baseline (**143/36** offline and
+  **36/143** disposable PostgreSQL). The issue-0007 (**122/33**, **33/122**)
+  and issue-0008 (**127/33**, **33/127**) results remain dated historical
+  evidence. All results remain local and do not prove Redis, providers,
+  replicas, deployment, or production readiness.
 - **Taxonomy parity defect:** `financial` appears in PRD §6,
   `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, but is omitted
   from the model prompt's allowed list and guidance. This is a bounded
@@ -252,14 +237,13 @@ authorizes application changes until its own issues/build pass.
   confidence semantics, summary invariants, and structured-description choices
   are not approved product requirements. This work is blocked until they are
   decided; preserve the four-field output contract in the meantime.
-- **Traceability drift:** active PRD/architecture/README text still cites
-  obsolete Phase/item numbers from the prior plan structure. This is stale
-  documentation, not an implementation gap; historical issue references must
-  remain as evidence.
+- **Traceability drift (resolved by issue 0009):** active PRD/architecture/
+  README text no longer relies on obsolete Phase/item numbers from the prior
+  plan structure; historical issue references remain as evidence.
 - **External-runtime boundary:** local disposable verification is
   intentionally insufficient to claim provider, Redis, replica, or production
   readiness. The limitation affects only a future deployment acceptance task.
-- **HTTP documentation boundary (Phase 1, resolved by issue 0008):** the
+- **HTTP documentation boundary (resolved by issue 0008):** the
   generated document describes current response projections without adding
   response enforcement. The `processing` source enum discrepancy and unmapped
   Redis failures remain documented limitations rather than new HTTP behavior.
@@ -276,6 +260,6 @@ authorizes application changes until its own issues/build pass.
 
 ## Recommended next pass
 
-The next pass may be **issues** for the ready P1 documentation/taxonomy and P2
-test-hygiene items. Milestones B and C remain blocked by their listed
+The next pass may be **issues** for the ready taxonomy and P2 test-hygiene
+items. Milestones B and C remain blocked by their listed
 dependencies and decisions.

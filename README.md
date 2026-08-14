@@ -5,8 +5,9 @@ O CAI recebe webhooks da DigiSac, reconstrói a conversa de cada ticket, enrique
 cliente. O resultado e todo o estado operacional relevante ficam auditáveis no
 PostgreSQL.
 
-O sistema **não abre chamados, não responde ao cliente e não transfere tickets**.
-Ele termina na classificação e na disponibilização do resultado por API.
+No runtime atual, o sistema **não abre chamados, não responde ao cliente e não
+transfere tickets**. Ele termina na classificação e na disponibilização do
+resultado por API.
 
 ## O que o projeto faz
 
@@ -80,6 +81,19 @@ ia_worker
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação.
+
+## Integração Acessórias aprovada
+
+O issue 0012 implementou localmente a fundação do diretório durável da Acessórias
+(empresas, contatos, departamentos e relações empresa-departamento), com
+migration Alembic, adaptador dedicado e reconciliação PostgreSQL. A sequência
+dependente continua sendo identidade de contato DigiSac, resolução conservadora,
+mapping de departamento e somente então criação durável de Request.
+
+Essa fundação não adiciona endpoints públicos, não altera o contrato da IA e não
+cria Requests automaticamente. Identidade DigiSac, matching e Request continuam
+fora do runtime entregue; telefone/e-mail só poderão gerar candidatos quando o
+contrato de identidade for implementado, e confirmação exigirá vínculo explícito.
 
 ## Finalização persistente por histórico DigiSac
 
@@ -362,9 +376,9 @@ npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
-depende de uma flag no `.env`. Em 2026-08-09, a execução produziu **122 passed,
-33 skipped**; os skips exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema
-ou o runtime PostgreSQL.
+depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
+etapa offline produziu **143 passed, 36 skipped**; os skips exigem
+`CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
 `tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
 real e só deve ser incluído se ela estiver em execução.
 
@@ -380,7 +394,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0014_retry_scheduling` e só então
+ao destino, aplica e verifica Alembic `0015_acessorias_directory` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -392,11 +406,12 @@ temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
 fora da execução canônica.
 
-Na execução observada do runner após a verificação operacional, a etapa
-PostgreSQL produziu **33 passed, 122 deselected**. Esses testes cobrem, no
+Na execução observada do runner em 2026-08-14, a etapa PostgreSQL produziu
+**36 passed, 143 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
-fila e o despertar somente dos ciclos dependentes de uma imagem recuperada.
+fila, o despertar somente dos ciclos dependentes de uma imagem recuperada e a
+fundação do diretório Acessórias.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

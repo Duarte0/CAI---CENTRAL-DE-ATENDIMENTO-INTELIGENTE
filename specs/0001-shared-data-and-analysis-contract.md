@@ -3,7 +3,7 @@
 - **Status:** baseline ativo, derivado da implementação; decisões de produto registradas abaixo
 - **Versão:** 1.1
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` itens 2, 4, 6 e 7; Alembic `0001_initial`–`0014_durable_retry_scheduling`
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0015_acessorias_directory`; SPEC-0007
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
@@ -14,11 +14,11 @@ Esta especificação registra retenção indefinida, sem exclusão ou arquivamen
 
 ## Estado de referência
 
-`PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0014_retry_scheduling`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
+`PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0015_acessorias_directory`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
 
 ## Contrato de dados e integridade
 
-1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretório DigiSac e ciclos persistentes. Redis **deve** limitar-se a filas, locks, idempotência temporária e status/resultados com TTL.
+1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. Redis **deve** limitar-se a filas, locks, idempotência temporária e status/resultados com TTL.
 2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos.
 3. `classification_messages` e `conversation_cycle_messages` **devem** preservar a ordem que fundamenta o resultado. Um vínculo de mensagem e sua posição **devem** ser únicos dentro da classificação ou ciclo correspondente. Uma mensagem **não pode** pertencer a dois ciclos persistentes.
 4. Timestamps duráveis **devem** usar `TIMESTAMPTZ`; listas e snapshots estruturados **devem** usar JSONB onde o schema o define. Identificadores externos não resolvidos **devem** permanecer preservados, sem nomes ou transferências inventados.
@@ -47,4 +47,4 @@ Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, un
 
 ## Decisões registradas
 
-Retenção, privacidade e interpretação do histórico de atribuição estão decididas: os dados permanecem indefinidamente, e todas as transferências observadas são preservadas cronologicamente. O histórico será usado em futura integração com a plataforma Acessórias para registrar o caminho de roteamento departamental de cada ticket. Não há filtragem por relevância de negócio.
+Retenção, privacidade e interpretação do histórico de atribuição estão decididas: os dados permanecem indefinidamente, e todas as transferências observadas são preservadas cronologicamente. A integração Acessórias aprovada poderá usar esse histórico para contexto de mapeamento departamental; este contrato não implementa roteamento nem criação de Request. Não há filtragem por relevância de negócio.

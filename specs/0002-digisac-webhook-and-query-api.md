@@ -3,12 +3,12 @@
 - **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas sem versão
 - **Versão:** 1.5
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` itens 5 e 7; SPEC-0001
+- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001
 - **Dependências:** SPEC-0001
 
 ## Objetivo e não objetivos
 
-Especificar a entrada autenticada de eventos DigiSac, a normalização segura e a superfície operacional de consulta. O sistema tem um único operador interno: consultas não exigem login, API key, JWT ou camada de autorização, e não há rate limiting. Quando a integração Acessórias for construída, os requisitos de controle de acesso serão revisitados. As consultas estão sem prefixo de versão no código atualmente montado; uma política futura pode introduzir `/v1/` e, depois, `/v2/`, mas esses prefixos não são comportamento implementado neste checkout.
+Especificar a entrada autenticada de eventos DigiSac, a normalização segura e a superfície operacional de consulta. O sistema tem um único operador interno: consultas não exigem login, API key, JWT ou camada de autorização, e não há rate limiting. A integração Acessórias é aprovada, mas este contrato não adiciona sua superfície; seus requisitos de controle de acesso serão definidos antes da implementação. As consultas estão sem prefixo de versão no código atualmente montado; uma política futura pode introduzir `/v1/` e, depois, `/v2/`, mas esses prefixos não são comportamento implementado neste checkout.
 
 ## Estado de referência
 
@@ -31,7 +31,7 @@ As rotas montadas são `POST /webhook/digisac`, `GET /health`, `GET /queues`, e 
 
 ## Segurança, observabilidade, testes e aceitação
 
-Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, segredo, token ou URL assinada. Não há autorização de leitura ou rate limit adicional para o operador interno; a futura integração Acessórias exigirá nova revisão de acesso.
+Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, segredo, token ou URL assinada. Não há autorização de leitura ou rate limit adicional para o operador interno; a integração Acessórias aprovada exigirá revisão de acesso em seu próprio contrato.
 
 Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes de idempotência, falha de publicação, fechamento/reabertura e `404` nas consultas. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto e que uma assinatura inválida não atinge o parse.
 
@@ -41,4 +41,4 @@ Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignor
 
 ## Decisões registradas
 
-O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. O controle de acesso será revisitado quando a integração Acessórias for construída. A remoção das superfícies de diagnóstico foi aprovada; o operador monitora o sistema via logs e nenhuma superfície de debug é necessária.
+O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. A integração Acessórias aprovada terá revisão de acesso em contrato próprio e não altera esta superfície. A remoção das superfícies de diagnóstico foi aprovada; o operador monitora o sistema via logs e nenhuma superfície de debug é necessária.

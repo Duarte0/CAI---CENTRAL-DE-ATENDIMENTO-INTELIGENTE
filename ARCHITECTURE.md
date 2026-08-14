@@ -1,13 +1,13 @@
 # CAI System Architecture
 
 **Status:** implementation-derived architecture baseline  
-**Reference date:** 2026-08-09  
+**Reference date:** 2026-08-14
 **Audience:** engineering and operations
 
 This document describes the architecture implemented in this repository. Source
 code, Alembic migrations, and tests are authoritative. \`README.md\`,
 \`IMPLEMENTATION_PLAN.md\`, and the specifications provide supporting context;
-planned or not-yet-verified behavior is marked as such.
+approved but not-yet-implemented behavior is marked as such.
 
 ## 1. System purpose and boundaries
 
@@ -15,9 +15,10 @@ CAI receives DigiSac webhook events, reconstructs ticket conversations,
 enriches audio and image messages with Groq, classifies the customer's intent,
 and exposes the result through an HTTP API.
 
-CAI does not open tickets, reply to customers, transfer tickets, or make
-department/agent decisions through the language model. It ends at analysis and
-result availability.
+The implemented CAI does not open tickets, reply to customers, transfer tickets,
+or make department/agent decisions through the language model. Its current
+runtime includes the internal Acessórias directory foundation, but identity
+resolution, department mapping, and Request creation remain future increments.
 
 \`\`\`mermaid
 flowchart LR
@@ -53,7 +54,8 @@ flowchart LR
 | \`audio_worker\` | Downloads audio from DigiSac, calls Groq transcription, and persists status/result. | PostgreSQL reservation/status; Redis queue and dead letter. |
 | \`image_worker\` | Downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation/status; Redis queue and dead letter. |
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
-| \`postgres\` | Source of truth for analysis, media state, assignment history, directory data, and persistent cycles. | PostgreSQL 16, managed by Alembic. |
+| \`acessorias_directory\` | Acquires and reconciles the Acessórias company, contact, department, and relationship directory. | PostgreSQL snapshot and synchronization executions; provider access is configuration-backed. |
+| \`postgres\` | Source of truth for analysis, media state, assignment history, DigiSac/Acessórias directory data, and persistent cycles. | PostgreSQL 16, managed by Alembic. |
 | \`redis\` | Lightweight work transport and transient coordination. | Redis 7 with AOF in Compose. |
 | \`migrate\` | Applies the configured Alembic revision before application services start. | No application schema creation at runtime. |
 
@@ -61,6 +63,49 @@ The application uses one PostgreSQL connection pool per process. Database
 initialization verifies the Alembic schema and does not create or mutate
 tables. Redis is not the authoritative store for durable classifications or
 media results.
+
+## 2.1 Acessórias architecture and delivery boundary
+
+The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012) adds a
+provider boundary and durable directories. It does not change the current
+webhook, IA, OpenAPI, or Request runtime. Identity resolution, department
+mapping, and Request delivery remain separate gated work.
+
+\`\`\`mermaid
+flowchart LR
+    D[DigiSac ticket webhooks] --> DC[Local DigiSac contact identity]
+    DCA[DigiSac Contacts API] -->|backfill, hydration, refresh| DC
+    AA[Acessórias API] --> AD[Acessórias directory sync]
+    AD --> P[(PostgreSQL)]
+    DC --> P
+    P --> IR[Identity resolver]
+    IR --> DM[Department mapping]
+    DM --> FR[Future durable Request integration]
+    FC[Persisted CAI classification/cycle] --> IR
+    FC --> FR
+\`\`\`
+
+\`contact.id\` will be the canonical DigiSac-contact external identity.
+Webhook ticket events incrementally upsert complete contact objects; messages
+that only carry \`contactId\` do not trigger a Contacts API call unless hydration
+is needed. The local Acessórias directory contains companies, company contacts,
+departments, and current company-department relationships, including inactive
+companies. PostgreSQL is its durable local authority; Redis is not a directory
+or identity source of truth.
+
+The identity resolver will retain separate match evidence, contact-company
+links, and conversation/cycle resolution. It must model candidate, confirmed,
+ambiguous, unresolved, and rejected outcomes and permit a contact to link to
+multiple companies. Exact phone/email evidence can create candidates but not
+automatic confirmation; DigiSac groups remain unresolved absent an explicit
+confirmed link. Raw and normalized identifiers are both retained.
+
+Department mapping will use the current DigiSac department through persistent
+configuration, then validate availability against the resolved company's
+current Acessórias departments. It does not use IA \`intent_type\` as its primary
+input. A later Request integration runs only after a persisted valid
+classification and has its own durable idempotency, reconciliation, and
+failure state; it cannot roll back a completed classification.
 
 ## 3. Inbound webhook flow
 
@@ -255,7 +300,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0014_retry_scheduling\`. The main data groups
+Alembic owns the schema through \`0015_acessorias_directory\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -263,7 +308,8 @@ are:
 | Analysis | \`ia_classifications\`, \`classification_messages\` | Classification identity, result, full context, and ordered supporting messages. |
 | Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, and extracted text. |
 | Assignment | \`ticket_assignment_history\`, \`ticket_assignment_event_keys\` | Chronological, idempotent ticket assignment history. |
-| Directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
+| DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
+| Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, and ordered membership. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
@@ -341,14 +387,14 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its observed 2026-08-09 evidence
-  was **122 passed, 33 skipped** offline and **33 passed, 122 deselected** in
+  PostgreSQL baseline on a disposable target. Its observed 2026-08-14 evidence
+  was **143 passed, 36 skipped** offline and **36 passed, 143 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
   the test database prerequisite before execution; only the PostgreSQL stage
   receives the runner-owned disposable database URL.
-- Phase 1 item 4 now has focused disposable-runner coverage for durable cycle
+- Issue `0004` has focused disposable-runner coverage for durable cycle
   publication recovery, due-only media recovery, queue deduplication, and
   dependent image wake-up; no hosted CI runner currently enforces the matrix.
 - Data retention is indefinite; no automatic deletion or archival is planned.
@@ -356,7 +402,7 @@ records these delivery limitations:
   routing from ticket open to close and support future Acessórias integration.
 - Persistent DigiSac-history finalization is the only supported mode; the former
   Redis buffer, debounce, feature flag, and legacy worker branch were removed.
-- The raw-payload diagnostic surfaces were removed under Phase 1 item 5; no
+- The raw-payload diagnostic surfaces were removed under issue `0006`; no
   replacement debug route or raw-payload contract exists.
 
 These items are not architectural failures of the current implementation, but
@@ -371,7 +417,7 @@ they limit release verification and future evolution decisions.
   \`src/core/finalization.py\`.
 - PostgreSQL access and cycle coordination: \`src/core/db.py\` and
   \`alembic/versions/0001_initial.py\` through
-  \`0014_durable_retry_scheduling.py\`.
+  \`0015_acessorias_directory.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

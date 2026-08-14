@@ -3,7 +3,7 @@
 - **Status:** implementado em 2026-08-13; contrato OpenAPI e introdução HTTP publicados, sem mudança de comportamento HTTP
 - **Versão:** 1.1
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
-- **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13; `IMPLEMENTATION_PLAN.md` Fase 1, item 1; SPEC-0001–0005
+- **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13; `IMPLEMENTATION_PLAN.md` baseline concluído e limitações HTTP registradas; SPEC-0001–0005
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004 e SPEC-0005
 
 ## Objetivo e não objetivos
@@ -27,7 +27,7 @@ Esta SPEC não implementa documentação, não altera handlers, regras de negóc
 | Ciclos | `GET /cycles/{cycle_id}/status` | linha de ciclo completa | Registro persistente de um ciclo. |
 | Ciclos | `GET /cycles/{cycle_id}/result` | linha de resultado projetada pelo banco | Classificação de um ciclo. |
 
-A criação atual de `FastAPI` não sobrescreve as URLs-padrão: `GET /openapi.json`, `GET /docs` (Swagger UI) e `GET /redoc` (ReDoc) já são rotas auxiliares do framework. Não são endpoints de negócio adicionais. A implementação futura **must** preservar essas URLs, salvo uma mudança de API aprovada em SPEC distinta, e **must** tornar Swagger UI e ReDoc utilizáveis com o documento completo. Não há `servers`, `securitySchemes` nem schemas explícitos suficientes no OpenAPI hoje gerado; isto é uma lacuna de documentação, não evidência de endpoints ausentes.
+A criação atual de `FastAPI` não sobrescreve as URLs-padrão: `GET /openapi.json`, `GET /docs` (Swagger UI) e `GET /redoc` (ReDoc) já são rotas auxiliares do framework. Não são endpoints de negócio adicionais. A composição publicada em `src/api/openapi.py` preserva essas URLs, fornece servidor de desenvolvimento, esquema HMAC condicional e projeções de resposta. Mudança futura deve preservar essas garantias, salvo uma mudança de API aprovada em SPEC distinta. A ausência de `response_model` explícito na maioria dos handlers continua sendo uma limitação de enforcement, não uma lacuna do documento publicado.
 
 O código é a fonte de verdade para este contrato. Em particular, `ConversationProcessing` é o único `response_model` atual; `GET /queues`, webhook, resultados e registros de ciclo devolvem dicionários. A implementação de documentação **must** compor modelos/esquemas de documentação que representem fielmente esses JSONs, sem mudar os corpos, códigos ou semântica dos handlers. Onde uma linha persistida é devolvida com `SELECT *`, somente os campos realmente serializados por esse endpoint podem entrar no schema público; tabelas, campos e chaves que não são devolvidos **must not** ser promovidos a contrato público.
 
@@ -41,7 +41,7 @@ O código é a fonte de verdade para este contrato. Em particular, `Conversation
 6. Como o contrato de erro atual não é uniforme, a documentação **must not** inventar um `Error` universal. Ela **must** documentar separadamente o objeto `{"detail": "..."}` dos `HTTPException` conhecidos e o formato padrão FastAPI de erro de validação (`422`) quando ele ocorrer; falhas não mapeadas pelo código permanecem resposta de servidor, sem formato de negócio prometido.
 7. O OpenAPI **must** usar exemplos fictícios, sanitizados e consistentes com seus schemas. Nenhum exemplo, descrição ou metadado **must not** conter segredo, token, URL assinada/de download, cabeçalho/corpo bruto de webhook ou mídia binária.
 
-Como o repositório concentra documentação de consumidor no `README.md` e não possui uma árvore `docs/`, a implementação futura **must** acrescentar ali uma seção concisa “API HTTP” em vez de criar uma localização paralela sem necessidade. Ela **must** explicar propósito, `http://localhost:8000` em desenvolvimento, superfície suportada, HMAC do webhook, ausência atual de autenticação nas consultas internas, formato geral de resultados, erros, estados de processamento, links para `/openapi.json`, `/docs` e `/redoc`, e o aviso de versionamento sem prefixo. A referência detalhada permanece no OpenAPI/UI.
+Como o repositório concentra documentação de consumidor no `README.md` e não possui uma árvore `docs/`, a seção “API HTTP” publicada deve permanecer a introdução concisa para propósito, `http://localhost:8000` em desenvolvimento, superfície suportada, HMAC do webhook, ausência atual de autenticação nas consultas internas, formato geral de resultados, erros, estados de processamento, links para `/openapi.json`, `/docs` e `/redoc`, e o aviso de versionamento sem prefixo. A referência detalhada permanece no OpenAPI/UI.
 
 ## Contratos por endpoint
 
@@ -78,12 +78,12 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
 2. Documentação, UI e exemplos **must not** exibir corpos brutos de webhook, segredos, tokens, headers recebidos, URLs assinadas/de download ou mídia binária. Não existe endpoint de diagnóstico de webhook e `/webhook/debug` **must not** aparecer.
 3. As rotas implementadas permanecem sem prefixo. A documentação **must** usar os paths exatamente como montados e explicar que `/v1/`/`/v2/` são apenas política futura possível, não superfície disponível. Mudança de versão, autenticação, rate limiting, schemas de resposta ou URLs de documentação requer SPEC/issue separada quando alterar comportamento.
 
-## Testes, validação e aceitação da futura implementação
+## Testes, validação e aceitação de regressão
 
-1. A implementação futura **must** adicionar testes de documento gerado que comprovem OpenAPI 3.x válido, título/versão corretos, presença única das oito operações e ausência de `/v1`, `/v2` e diagnósticos removidos. O teste **must** conferir métodos, tags, paths, parâmetros path e `limit`, responses relevantes, `$ref` reutilizáveis e exemplos válidos contra seus schemas.
+1. Os testes do documento gerado **must** comprovar OpenAPI 3.x válido, título/versão corretos, presença única das oito operações e ausência de `/v1`, `/v2` e diagnósticos removidos. O teste **must** conferir métodos, tags, paths, parâmetros path e `limit`, responses relevantes, `$ref` reutilizáveis e exemplos válidos contra seus schemas.
 2. Os testes **must** verificar segurança do webhook: header e explicação HMAC condicional, `401` antes de parse, ausência de segredo nos exemplos/documento e nenhuma security scheme fictícia em consultas. Também **must** verificar `400`, `200` ignorado, `202` aceito/duplicado, `404` de entidade/resultado, `422` de `limit`, `503` de banco em health e a distinção entre falha de Redis não mapeada e contrato `503` do banco.
 3. Os schemas de resposta **must** ser comparados contra `ConversationProcessing`, a projeção de `get_cycle_result`, a linha exposta por `get_cycle`/`list_cycles` e o dicionário real de `queue_metrics`; mudanças em handler, modelo ou migration que alterem resposta **must** atualizar a documentação e seus testes no mesmo change.
-4. Testes de UI/endpoints de documentação **must** confirmar que `/openapi.json`, `/docs` e `/redoc` respondem corretamente após a implementação. A página de `README.md` **must** apontar apenas para esses paths e base URL de desenvolvimento confirmados.
+4. Testes de UI/endpoints de documentação **must** confirmar que `/openapi.json`, `/docs` e `/redoc` respondem corretamente. A página de `README.md` **must** apontar apenas para esses paths e base URL de desenvolvimento confirmados.
 5. A validação de repositório **must** usar os comandos existentes: `PYTHONPATH=/app python -m pytest -q --ignore=tests/test_webhook_local.py`, `npx --yes pyright` quando novos modelos/tipagem entrarem no escopo, e o runner completo `PYTHONPATH=/app python scripts/verify.py` quando a mudança alcançar a suíte/matriz canônica. `tests/test_webhook_local.py` permanece opt-in e não entra na automação canônica sem API local iniciada.
 
 Critérios verificáveis de aceitação:
@@ -95,7 +95,7 @@ Critérios verificáveis de aceitação:
 
 ## Gaps e decisões abertas
 
-Não há decisão de produto pendente para gerar a issue de documentação. Há três gaps de implementação que a issue **must** registrar sem resolvê-los silenciosamente: (1) respostas de ciclo, resultado, webhook e filas não têm `response_model` explícito e parte do ciclo é devolvida como `SELECT *`; a documentação deve espelhar esse contrato observado, e qualquer redução/estabilização de campos exige mudança de API separada; (2) `ProcessingStatus` declara `processing`, mas esse valor não é permitido pelo schema persistido que alimenta a rota de status; a documentação deve registrar a divergência, não inventar emissão desse estado; (3) só indisponibilidade de banco em `/health` é mapeada para `503`, enquanto falhas de Redis não têm resposta de dependência estável. Esses gaps não bloqueiam documentação fiel, mas bloqueiam prometer schemas de erro/operacionais mais fortes que o código atual.
+Não há decisão de produto pendente para a publicação concluída. Permanecem três limitações de implementação que qualquer issue posterior **must** registrar sem resolvê-las silenciosamente: (1) respostas de ciclo, resultado, webhook e filas não têm `response_model` explícito e parte do ciclo é devolvida como `SELECT *`; qualquer redução/estabilização de campos exige mudança de API separada; (2) `ProcessingStatus` declara `processing`, mas esse valor não é permitido pelo schema persistido que alimenta a rota de status; o documento registra a divergência sem apresentar `processing` como emitido; (3) só indisponibilidade de banco em `/health` é mapeada para `503`, enquanto falhas de Redis não têm resposta de dependência estável. Essas limitações não invalidam a documentação publicada, mas bloqueiam prometer enforcement ou erro operacional mais forte que o código atual.
 
 ## Notas de implementação
 
@@ -108,8 +108,9 @@ URLs padrão `/openapi.json`, `/docs` e `/redoc`. O README foi atualizado com a
 introdução para consumidores internos.
 
 Os testes focados do contrato e dos endpoints de documentação passaram (**5
-passed**); a suíte offline passou com **127 passed, 33 skipped** e a matriz
-canônica descartável passou com **33 passed, 127 deselected** no PostgreSQL 16.
+passed**, evidência de 2026-08-13); a matriz canônica mais recente, executada
+em 2026-08-14 após issue 0012, passou com **143 passed, 36 skipped** na etapa
+offline e **36 passed, 143 deselected** no PostgreSQL 16 descartável.
 Compileall, Pyright estrito, buscas direcionadas, `git diff --check` e
 `graphify update .` também passaram. Os skips e a matriz descartável não
 comprovam Redis, DigiSac, Groq, réplicas, deployment ou produção.

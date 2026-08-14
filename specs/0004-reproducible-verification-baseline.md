@@ -1,6 +1,6 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** implementado; baseline canônico e verificação operacional concluídos
+- **Status:** implementado; baseline canônico e verificação operacional concluídos (issue 0012 atualizou a matriz)
 - **Versão:** 1.5
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003
@@ -60,4 +60,4 @@ hostname interno `postgres-test:5432` sem tocar em outros projetos Compose.
 
 ## Decisão registrada
 
-O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional. A execução mais recente registrada em 2026-08-13 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.
+O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional. A execução mais recente registrada em 2026-08-14 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.
