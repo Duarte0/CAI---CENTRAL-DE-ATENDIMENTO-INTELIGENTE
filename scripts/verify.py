@@ -279,7 +279,6 @@ def run() -> int:
                 "-m",
                 "pytest",
                 "-q",
-                "--ignore=tests/test_webhook_local.py",
             ],
             environment=offline_environment,
         )
@@ -324,7 +323,6 @@ def run() -> int:
                 "-q",
                 "-m",
                 "postgres",
-                "--ignore=tests/test_webhook_local.py",
             ],
             environment=test_environment,
         )

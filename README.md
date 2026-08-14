@@ -370,17 +370,29 @@ docker compose -p cai exec ia_worker python -m src.utils.backfill_redis_history
 Testes offline:
 
 ```bash
-PYTHONPATH=/app pytest -q --ignore=tests/test_webhook_local.py
-python -m compileall -q src tests alembic
+PYTHONPATH=/app python -m pytest -q
+PYTHONPATH=/app python -m pytest --collect-only -q
+python -m compileall -q src tests alembic scripts
 npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
-etapa offline produziu **143 passed, 36 skipped**; os skips exigem
+etapa offline produziu **151 passed, 36 skipped**; os skips exigem
 `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
-`tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
-real e só deve ser incluído se ela estiver em execução.
+
+O smoke test live do webhook é opt-in e requer uma API local deliberadamente
+iniciada. Ele preserva o payload sintético e o endpoint local existentes:
+
+```bash
+PYTHONPATH=/app python tests/test_webhook_local.py
+```
+
+Sem uma API em `localhost:8000`, o comando falha de forma visível com erro de
+conexão; ele não é executado durante importação, coleta pytest ou pelo runner
+canônico. Respostas HTTP não bem-sucedidas também resultam em código de saída
+não zero. O smoke test live não é evidência da suíte offline, PostgreSQL
+descartável, DigiSac, provedores ou produção.
 
 Verificação canônica completa, incluindo PostgreSQL descartável:
 
@@ -403,11 +415,11 @@ sem acesso ao loopback do host, ele conecta somente o container do próprio
 runner à rede Compose temporária e usa `postgres-test:5432`; essa conexão
 também é verificada pelo processo de teste. O projeto, rede e armazenamento
 temporários são removidos mesmo quando uma etapa falha. Os resultados offline
-e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
-fora da execução canônica.
+e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
+execução canônica.
 
 Na execução observada do runner em 2026-08-14, a etapa PostgreSQL produziu
-**36 passed, 143 deselected**. Esses testes cobrem, no
+**36 passed, 151 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
 fila, o despertar somente dos ciclos dependentes de uma imagem recuperada e a

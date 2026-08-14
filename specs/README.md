@@ -18,10 +18,11 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Ativo v1.0; bloqueado por SPEC-0007–0009 e governança | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Configuração auditável do departamento atual sem usar IA; não cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Ativo v1.0; bloqueado por SPEC-0007–0010 e contrato Request | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Efeito externo idempotente e reconciliável, sem alterar classificações ou cobrir ciclo de vida. |
 
-A evidência mais recente registrada para SPEC-0004 é **146 passed, 36 skipped**
-na etapa offline e **36 passed, 146 deselected** na etapa PostgreSQL
-descartável (issue 0010). Os resultados **143/36** e **36/143** são evidência
-histórica de issue 0012; **122/33** e **33/122** são evidência histórica de
+A evidência mais recente registrada para SPEC-0004 é **151 passed, 36 skipped**
+na etapa offline e **36 passed, 151 deselected** na etapa PostgreSQL
+descartável (issue 0011). Os resultados **146/36** e **36/146** são evidência
+histórica de issue 0010; **143/36** e **36/143** são evidência histórica de
+issue 0012; **122/33** e **33/122** são evidência histórica de
 issue 0007. Esses
 resultados locais não comprovam Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

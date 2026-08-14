@@ -29,12 +29,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The last recorded full execution (issue 0012,
-  2026-08-14) passed compileall, strict Pyright, offline pytest (**143 passed,
+  PostgreSQL-marked family. The last recorded full execution (issue 0011,
+  2026-08-14) passed compileall, strict Pyright, offline pytest (**151 passed,
   36 skipped**), Alembic `0015_acessorias_directory`, and PostgreSQL pytest
-  (**36 passed, 143 deselected**). The 36 offline skips are expected missing
+  (**36 passed, 151 deselected**). The 36 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -46,25 +46,23 @@ currently in progress._
   verification against a running Redis deployment, DigiSac/Groq provider,
   replicas, or production target. This is a release-evidence limitation, not a
   code defect or an authorized rollout task.
-- **[completed | opt-in] Live webhook test.** `tests/test_webhook_local.py`
-  intentionally remains outside canonical automation and requires a separately
-  started local API.
+- **[completed | opt-in] Live webhook test.** `tests/test_webhook_local.py` is
+  import-safe, remains outside canonical automation, and requires a separately
+  started local API when invoked directly.
 
 ### Planning signals
 
-- The current canonical collection contains **182 tests** when the live webhook
-  test is excluded; the latest issue-0010 run passed **146 tests** and skipped
-  the 36 PostgreSQL-dependent tests without a configured database.
+- The current canonical collection contains **187 tests**; the latest issue-0011
+  run passed **151 tests** and skipped the 36 PostgreSQL-dependent tests without
+  a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
-- The canonical runner explicitly excludes the opt-in live webhook script. A
-  bare `PYTHONPATH=/app python -m pytest -q` instead imports
-  `tests/test_webhook_local.py` and attempts `localhost:8000` during collection;
-  without a deliberately started local API it fails before executing the suite.
-  This is a test-entrypoint ergonomics gap, not a failed canonical run.
-- Issues 0001–0010 and 0012 are `closed`. Earlier baseline delivery work is
-  complete and must not be reopened. Issue 0011 remains open as the concrete
-  follow-up to make the live webhook test opt-in for default collection.
+- The canonical runner does not invoke the opt-in live webhook action. A bare
+  `PYTHONPATH=/app python -m pytest -q` imports `tests/test_webhook_local.py`
+  without opening a socket; direct execution remains the only way to send the
+  smoke request.
+- Issues 0001–0012 are `closed`. Earlier baseline delivery work is complete and
+  must not be reopened.
   Broader classification policy changes remain blocked on product decisions.
 
 ## Priority plan
@@ -183,14 +181,16 @@ authorizes application changes until its own issues/build pass.
   skipped**), compileall, strict Pyright, disposable PostgreSQL/Alembic head,
   and PostgreSQL pytest (**36 passed, 146 deselected**). No migration or
   provider-backed quality claim was made.
-- **[P2 | pending | ready for issues | test hygiene] Make the live webhook check safe for
-  default test collection** (SPEC-0004; `tests/test_webhook_local.py`;
-  `scripts/verify.py`). Outcome: a bare pytest invocation does not make an HTTP
-  request during collection, while an explicitly selected local smoke check
-  remains available. Completion criteria: relocate or opt-in gate the live
-  check, document its invocation, and prove both default collection and the
-  canonical runner remain network-independent. This must not add a production
-  endpoint or silently run a live check in CI.
+- **[P2 | completed locally | implementation] Make the live webhook check safe
+  for default test collection** (SPEC-0004; `tests/test_webhook_local.py`;
+  `tests/test_webhook_local_boundary.py`; `scripts/verify.py`). Issue 0011
+  added a main-guarded direct smoke command, regression coverage, and removed
+  stale runner exclusions. Collection is side-effect-free, the live request
+  remains opt-in, and the canonical runner stays network-independent. Evidence:
+  **187 collected**, **151 passed, 36 skipped** offline, and **36 passed, 151
+  deselected** against disposable PostgreSQL 16; the no-API smoke invocation
+  exited `1` with a visible connection error. No production endpoint or live
+  check was added to CI.
 - **[P2 | blocked]** Broader IA classification-policy changes require their own
   product decisions.
 - **[P2 | blocked]** Production acceptance requires separately authorized
@@ -252,14 +252,13 @@ authorizes application changes until its own issues/build pass.
   dedicated provider boundary, and disposable PostgreSQL evidence. No real
   provider credential or production synchronization was authorized; Redis
   cannot become the directory authority.
-- **Test-entrypoint discrepancy:** SPEC-0004 defines `scripts/verify.py` as
-  canonical and deliberately excludes the live webhook script, which is
-  correct. The tracked live script is nevertheless discovered by bare pytest
-  and performs network I/O at import time; resolve that test-only gap without
-  changing the canonical matrix or claiming live-provider verification.
+- **Test-entrypoint discrepancy (resolved by issue 0011):** SPEC-0004 defines
+  `scripts/verify.py` as canonical and keeps the live webhook action opt-in.
+  `tests/test_webhook_local.py` is now safe to import and the runner no longer
+  needs a path exclusion; direct smoke output remains separate from canonical
+  offline/PostgreSQL evidence.
 
 ## Recommended next pass
 
-The next pass may be **issues** for the remaining P2 test-hygiene item.
-Milestones B and C remain blocked by their listed
-dependencies and decisions.
+No open issue remains in the current issue set. Future work is gated by the
+listed Milestone B–E dependencies and decisions.
