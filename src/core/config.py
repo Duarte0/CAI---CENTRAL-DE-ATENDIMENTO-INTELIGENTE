@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     digisac_history_request_timeout_seconds: float = 15.0
     digisac_history_max_attempts: int = 3
     digisac_history_retry_base_seconds: float = 2.0
+    digisac_contact_hydration_interval_seconds: float = 5.0
     finalization_reconcile_interval_seconds: float = 5.0
     finalization_lease_seconds: int = 300
     media_status_recheck_seconds: float = 30.0
@@ -113,6 +114,7 @@ class Settings(BaseSettings):
         "digisac_history_initial_delay_seconds",
         "digisac_history_request_timeout_seconds",
         "digisac_history_retry_base_seconds",
+        "digisac_contact_hydration_interval_seconds",
         "finalization_reconcile_interval_seconds",
         "media_status_recheck_seconds",
         "image_retry_base_seconds",

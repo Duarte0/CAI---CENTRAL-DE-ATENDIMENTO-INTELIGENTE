@@ -33,7 +33,13 @@ from src.core.db import (
     reserve_transcription,
     reserve_image_extraction,
     transition_cycle,
+    upsert_digisac_contact,
 )
+from src.core.digisac_contact_hydration import (
+    contact_hydration_loop,
+    request_contact_hydration,
+)
+from src.core.digisac_client import DigisacResponseError, normalize_contact
 from src.core.digisac_directory import directory_sync_loop
 from src.core.message_filter import is_bot_message
 from src.core.media import is_image_message
@@ -228,6 +234,32 @@ async def capture_ticket_assignment(
     return inserted
 
 
+async def capture_contact_snapshot(
+    payload: Mapping[str, Any], data: Mapping[str, Any]
+) -> bool:
+    raw_contact = data.get("contact")
+    if not isinstance(raw_contact, Mapping):
+        return False
+    raw_contact = cast(Mapping[str, Any], raw_contact)
+    try:
+        contact = normalize_contact(raw_contact)
+        observed_at, _has_timestamp = _ticket_event_timestamp(payload, data)
+        await upsert_digisac_contact(
+            contact,
+            source="ticket_webhook",
+            observed_at=observed_at,
+        )
+        return True
+    except DigisacResponseError:
+        logger.warning("DigiSac contact snapshot ignored: invalid contact shape")
+    except Exception:
+        logger.exception(
+            "DigiSac contact snapshot persistence failed: contact_id=%s",
+            _non_empty_string(raw_contact.get("id")) or "unknown",
+        )
+    return False
+
+
 async def enqueue_audio_transcription(
     redis: AsyncRedis, message: DigisacMessage
 ) -> bool:
@@ -297,12 +329,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await initialize_database()
     app.state.redis = create_redis_client()
     directory_task = asyncio.create_task(directory_sync_loop())
+    contact_hydration_task = asyncio.create_task(contact_hydration_loop())
     try:
         yield
     finally:
         directory_task.cancel()
+        contact_hydration_task.cancel()
         with suppress(asyncio.CancelledError):
             await directory_task
+        with suppress(asyncio.CancelledError):
+            await contact_hydration_task
         await app.state.redis.aclose()
         await close_database()
 
@@ -421,6 +457,7 @@ async def digisac_webhook(
                 "Ticket webhook ignored: missing data.id event=%r", event)
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "missing_ticket_id"}
+        await capture_contact_snapshot(payload_data, data)
         if event == "ticket.created":
             timestamp, _has_timestamp = _ticket_event_timestamp(payload_data, data)
             cycle, created = await create_open_cycle(
@@ -560,6 +597,20 @@ async def digisac_webhook(
 
     message = adaptation.message
     assert message is not None
+    if message.sender_id:
+        try:
+            requested_at = (
+                message.timestamp.isoformat() if message.timestamp else None
+            )
+            await request_contact_hydration(
+                message.sender_id,
+                requested_at=requested_at,
+            )
+        except Exception:
+            logger.exception(
+                "DigiSac contact hydration request failed: contact_id=%s",
+                message.sender_id,
+            )
     logger.info(
         "Message bot detection normalized",
         extra={

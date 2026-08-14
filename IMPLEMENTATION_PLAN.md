@@ -21,7 +21,7 @@ currently in progress._
   API fallbacks, models, and legacy tests were removed. Targeted search finds
   no active legacy code or setting.
 - **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
-  owns schema through `0015_acessorias_directory`; migrations, backfills,
+  owns schema through `0016_digisac_contact_identity`; migrations, backfills,
   import, and audit utilities are versioned. Application code verifies rather
   than creates schema.
 - **[completed] Webhook hardening and supported HTTP surface** (SPEC-0002;
@@ -29,12 +29,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The last recorded full execution (issue 0011,
-  2026-08-14) passed compileall, strict Pyright, offline pytest (**151 passed,
-  36 skipped**), Alembic `0015_acessorias_directory`, and PostgreSQL pytest
-  (**36 passed, 151 deselected**). The 36 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0013,
+  2026-08-14) passed compileall, strict Pyright, offline pytest (**160 passed,
+  40 skipped**), Alembic `0016_digisac_contact_identity`, and PostgreSQL pytest
+  (**40 passed, 160 deselected**). The 40 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -52,8 +52,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **187 tests**; the latest issue-0011
-  run passed **151 tests** and skipped the 36 PostgreSQL-dependent tests without
+- The current canonical collection contains **200 tests**; the latest issue-0013
+  run passed **160 tests** and skipped the 40 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -61,7 +61,7 @@ currently in progress._
   `PYTHONPATH=/app python -m pytest -q` imports `tests/test_webhook_local.py`
   without opening a socket; direct execution remains the only way to send the
   smoke request.
-- Issues 0001–0012 are `closed`. Earlier baseline delivery work is complete and
+- Issues 0001–0013 are `closed`. Earlier baseline delivery work is complete and
   must not be reopened.
   Broader classification policy changes remain blocked on product decisions.
 
@@ -104,18 +104,31 @@ currently in progress._
    local synthetic/disposable evidence only; no provider credential, Redis,
    deployment, or production synchronization was used.
 
-2. **[P0 | blocked | specified] Milestone B —
+2. **[P0 | completed locally | implemented] Milestone B —
    DigiSac Contact Identity Foundation** (SPEC-0008). Outcome: persist the minimal contact representation keyed by
-   `contact.id`, with paginated backfill, ticket-webhook upsert, and need-based
-   Contacts API hydration. Preserve raw/normalized number, group status,
+   `contact.id`, with ticket-webhook upsert, need-based Contacts API hydration
+   and full paginated backfill only after page-advance evidence. Preserve
+   raw/normalized number, group status,
    relevant provider metadata, and sync state; do not query Contacts for every
    message or use `idFromService` as a matching key.
 
-   Specification outcome: SPEC-0008 defines the provider-evidence gate,
-   hydration triggers, replay/idempotency, privacy-safe storage, stale-record
-   handling, and disposable-PostgreSQL validation. Its implementation issue is
-   blocked until the Contacts evidence and SPEC-0007 dependency are satisfied.
-   No automatic company resolution is introduced here.
+   Specification outcome: SPEC-0008 records the observed `/api/v1` Contacts
+   surface, configured Bearer authority, contact identity/payloads, ticket
+   snapshot source, hydration strategy, source precedence, groups and safe
+   observability. Issue 0013 implements the migration/model, ticket-webhook
+   upsert and deduplicated individual hydration. Full paginated backfill remains
+   excluded until the provider's page-advance semantics are validated; no
+   automatic company resolution is introduced here.
+
+   Build evidence (2026-08-14): migration `0016_digisac_contact_identity`,
+   timestamp-aware contact upsert, individual Contacts retry boundary,
+   durable hydration claims/recovery, ticket/message webhook integration, and
+   deterministic unit/PostgreSQL coverage are implemented. The canonical runner
+   passed compileall, strict Pyright, offline pytest (**160 passed, 40
+   skipped**), Alembic head verification, and PostgreSQL pytest (**40 passed,
+   160 deselected**). This is local synthetic/disposable evidence only; no
+   DigiSac credential, provider synchronization, Redis runtime, deployment, or
+   production claim was used.
 
 3. **[P1 | blocked | specified] Milestone C —
    DigiSac ↔ Acessórias Identity Resolution** (SPEC-0009). Outcome: persist technical evidence, contact-company
@@ -127,9 +140,9 @@ currently in progress._
 
    Specification outcome: SPEC-0009 defines evidence provenance,
    transitions/auditability, manual confirmation, ambiguity/rejection and
-   regression validation. Its implementation issue remains blocked until
-   SPEC-0007–0008 are delivered and the Brazilian mobile-variant transformation
-   is recorded as a testable product decision.
+   regression validation. Its implementation issue remains blocked only by the
+   Brazilian mobile-variant transformation being recorded as a testable product
+   decision; SPEC-0007–0008 are now implemented locally.
 
 4. **[P1 | blocked | specified] Milestone D — DigiSac Department →
    Acessórias Department Mapping** (SPEC-0010). Outcome: add persistent/configurable
@@ -162,9 +175,9 @@ currently in progress._
 ### Specification boundary and next gate
 
 SPEC-0007–SPEC-0011 supply the independently verifiable contracts for
-Milestones A–E. Milestone A is implemented locally under issue 0012; the next
-evidence gate applies to
-Milestone B: it must settle the DigiSac Contacts details listed in SPEC-0008.
+Milestones A–E. Milestones A and B are implemented locally under issues 0012
+and 0013. Milestone B's remaining evidence gate is limited to page advancement
+for the separate full Contacts backfill.
 Milestone C also needs the testable Brazilian
 mobile-variant decision in SPEC-0009; Milestones D and E retain their own
 governance and Request-contract blocks. No specification in this sequence

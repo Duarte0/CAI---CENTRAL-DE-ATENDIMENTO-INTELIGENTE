@@ -84,16 +84,19 @@ camada transitória de transporte e coordenação.
 
 ## Integração Acessórias aprovada
 
-O issue 0012 implementou localmente a fundação do diretório durável da Acessórias
-(empresas, contatos, departamentos e relações empresa-departamento), com
-migration Alembic, adaptador dedicado e reconciliação PostgreSQL. A sequência
-dependente continua sendo identidade de contato DigiSac, resolução conservadora,
-mapping de departamento e somente então criação durável de Request.
+Os issues 0012 e 0013 implementaram localmente a fundação do diretório durável
+da Acessórias e a identidade mínima de contato DigiSac. O contato é persistido
+por `contact.id`, snapshots de ticket são reconciliados no PostgreSQL e
+referências `contactId` de mensagens apenas registram hydration individual
+deduplicada para execução posterior. A sequência dependente continua sendo
+resolução conservadora, mapping de departamento e somente então criação durável
+de Request.
 
 Essa fundação não adiciona endpoints públicos, não altera o contrato da IA e não
-cria Requests automaticamente. Identidade DigiSac, matching e Request continuam
-fora do runtime entregue; telefone/e-mail só poderão gerar candidatos quando o
-contrato de identidade for implementado, e confirmação exigirá vínculo explícito.
+cria Requests automaticamente. Telefone, nome, `idFromService`, `jidId`,
+`lidId` e grupos permanecem apenas metadata/evidência; não há matching ou
+confirmação automática. O full backfill paginado de Contacts continua fora do
+slice até a semântica de avanço do provider ser validada.
 
 ## Finalização persistente por histórico DigiSac
 
@@ -143,6 +146,8 @@ de execução. As principais estruturas são:
   idempotência das atribuições;
 - `digisac_departments`, `digisac_users` e
   `digisac_directory_sync_state`: diretório local para resolução de nomes;
+- `digisac_contacts` e `digisac_contact_hydrations`: identidade DigiSac por
+  `contact.id`, metadata observada e claims/retries duráveis de hydration;
 - `conversation_processing_cycles` e `conversation_cycle_messages`: estado,
   snapshot, leases, agendamento e auditoria da finalização persistente.
 
@@ -158,6 +163,8 @@ retenção ou arquivamento devem ser definidos como política operacional explí
   uma entrega DigiSac repetida recupere uma publicação que falhou.
 - Filas de mídia e ciclos usam reservas/claims persistentes para evitar
   publicações concorrentes e recuperar trabalho abandonado.
+- A identidade de contato usa somente `contact.id`; hydration individual é
+  deduplicada no PostgreSQL e nunca é chamada em linha pelo webhook.
 - Retries transitórios respeitam `Retry-After`, backoff e limites configurados.
 - O histórico de atribuições nunca inventa transferências. IDs desconhecidos são
   preservados e os nomes só vêm dos endpoints de departamentos e usuários.
@@ -378,7 +385,7 @@ npx --yes pyright
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
-etapa offline produziu **151 passed, 36 skipped**; os skips exigem
+etapa offline produziu **160 passed, 40 skipped**; os skips exigem
 `CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
 
 O smoke test live do webhook é opt-in e requer uma API local deliberadamente
@@ -406,7 +413,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0015_acessorias_directory` e só então
+ao destino, aplica e verifica Alembic `0016_digisac_contact_identity` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -419,11 +426,11 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-14, a etapa PostgreSQL produziu
-**36 passed, 151 deselected**. Esses testes cobrem, no
+**40 passed, 160 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
 fila, o despertar somente dos ciclos dependentes de uma imagem recuperada e a
-fundação do diretório Acessórias.
+fundação do diretório Acessórias e a identidade/hydration de contatos DigiSac.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

@@ -17,8 +17,9 @@ and exposes the result through an HTTP API.
 
 The implemented CAI does not open tickets, reply to customers, transfer tickets,
 or make department/agent decisions through the language model. Its current
-runtime includes the internal Acessórias directory foundation, but identity
-resolution, department mapping, and Request creation remain future increments.
+runtime includes the internal Acessórias directory and DigiSac contact identity
+foundations, but cross-system identity resolution, department mapping, and
+Request creation remain future increments.
 
 \`\`\`mermaid
 flowchart LR
@@ -66,15 +67,19 @@ media results.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
-The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012) adds a
-provider boundary and durable directories. It does not change the current
-webhook, IA, OpenAPI, or Request runtime. Identity resolution, department
-mapping, and Request delivery remain separate gated work.
+The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012) and
+DigiSac Contact Identity Foundation (SPEC-0008; issue 0013) add provider
+boundaries and durable local records. Contact snapshots from ticket webhooks
+are upserted by opaque `contact.id`; message-only references create a durable,
+deduplicated need for individual hydration outside the request path. No full
+Contacts backfill is enabled because page advancement remains unverified. The
+additions do not change the OpenAPI or Request runtime. Cross-system identity
+resolution, department mapping, and Request delivery remain separate gated work.
 
 \`\`\`mermaid
 flowchart LR
     D[DigiSac ticket webhooks] --> DC[Local DigiSac contact identity]
-    DCA[DigiSac Contacts API] -->|backfill, hydration, refresh| DC
+    DCA[DigiSac Contacts API] -->|individual hydration; future backfill| DC
     AA[Acessórias API] --> AD[Acessórias directory sync]
     AD --> P[(PostgreSQL)]
     DC --> P
@@ -85,7 +90,7 @@ flowchart LR
     FC --> FR
 \`\`\`
 
-\`contact.id\` will be the canonical DigiSac-contact external identity.
+\`contact.id\` is the canonical DigiSac-contact external identity.
 Webhook ticket events incrementally upsert complete contact objects; messages
 that only carry \`contactId\` do not trigger a Contacts API call unless hydration
 is needed. The local Acessórias directory contains companies, company contacts,
@@ -300,7 +305,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0015_acessorias_directory\`. The main data groups
+Alembic owns the schema through \`0016_digisac_contact_identity\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -309,6 +314,7 @@ are:
 | Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, and extracted text. |
 | Assignment | \`ticket_assignment_history\`, \`ticket_assignment_event_keys\` | Chronological, idempotent ticket assignment history. |
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
+| DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, and ordered membership. |
 
@@ -373,6 +379,9 @@ application verifies that schema at startup and does not create or mutate it.
   marker so reconciliation can retry it.
 - Persistent claims and leases recover work abandoned by process failure.
 - Media reservations are idempotent by message ID.
+- DigiSac contact identity is keyed only by provider \`contact.id\`; hydration
+  claims and retry state are durable in PostgreSQL and deduplicated under row
+  locks.
 - Cycle and classification identity prevent duplicate terminal analysis.
 - Retry scheduling respects provider timing and does not broadly republish
   future work.
@@ -388,7 +397,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-14 evidence
-  was **143 passed, 36 skipped** offline and **36 passed, 143 deselected** in
+  was **160 passed, 40 skipped** offline and **40 passed, 160 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -404,6 +413,9 @@ records these delivery limitations:
   Redis buffer, debounce, feature flag, and legacy worker branch were removed.
 - The raw-payload diagnostic surfaces were removed under issue `0006`; no
   replacement debug route or raw-payload contract exists.
+- Full paginated DigiSac Contacts backfill remains outside issue `0013` until
+  the provider's page-advance semantics are validated; individual hydration and
+  ticket-snapshot ingestion are the implemented bounded slice.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.
@@ -417,7 +429,7 @@ they limit release verification and future evolution decisions.
   \`src/core/finalization.py\`.
 - PostgreSQL access and cycle coordination: \`src/core/db.py\` and
   \`alembic/versions/0001_initial.py\` through
-  \`0015_acessorias_directory.py\`.
+  \`0016_digisac_contact_identity.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,
