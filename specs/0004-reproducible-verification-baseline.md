@@ -1,7 +1,7 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** implementado; baseline canônico e verificação operacional concluídos (issue 0013 confirmou a fronteira do smoke opt-in)
-- **Versão:** 1.5
+- **Status:** implementado; baseline canônico e verificação operacional concluídos
+- **Versão:** 1.6
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
@@ -14,8 +14,8 @@ são rastreáveis, o `conftest.py` não seleciona um modo alternativo e
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
 fornece a URL exata ao subprocesso PostgreSQL. A execução mais recente
-registrada (issue 0015, 2026-08-14) produziu **175 passed, 48 skipped** na
-etapa offline, **48 passed, 175 deselected** na etapa PostgreSQL e zero
+registrada (issue 0016, 2026-08-14) produziu **177 passed, 56 skipped** na
+etapa offline, **56 passed, 177 deselected** na etapa PostgreSQL e zero
 diagnósticos no Pyright. Os 48 skips pertencem apenas à etapa offline, onde o
 banco deliberadamente não é fornecido.
 Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
@@ -26,10 +26,10 @@ de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
 de fila determinístico e identificadores sintéticos para verificar claim/lease
 de ciclo, liberação após falha de publicação, agenda futura, recuperação de
 áudio/imagem sem duplicação e despertar seletivo de ciclos bloqueados por
-imagem. O issue 0015 também confirmou a migration head
-`0017_digisac_acessorias_identity` e a cobertura de identidade, hydration,
-backfill de contatos e resolução conservadora; isso não comprova Redis, fornecedores, réplicas ou
-produção.
+imagem. O issue 0016 também confirmou a migration head
+`0018_department_mapping` e a cobertura de identidade, hydration, backfill de
+contatos, resolução conservadora e mapeamento departamental; isso não comprova
+Redis, fornecedores, réplicas ou produção.
 
 ## Objetivo e não objetivos
 

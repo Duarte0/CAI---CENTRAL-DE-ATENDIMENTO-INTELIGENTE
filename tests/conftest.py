@@ -24,6 +24,7 @@ POSTGRES_MODULES = {
     "test_postgres_evolution.py",
     "test_conversation_cycles_db.py",
     "test_identity_resolution.py",
+    "test_department_mapping.py",
 }
 _schema_ready = False
 
@@ -68,6 +69,9 @@ async def postgres_state(request):
             """
             TRUNCATE TABLE
                 conversation_cycle_identity_resolutions,
+                conversation_cycle_department_mappings,
+                department_mapping_transitions,
+                department_mapping_rules,
                 identity_company_link_transitions,
                 identity_match_evidence,
                 identity_company_links,

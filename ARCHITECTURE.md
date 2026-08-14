@@ -17,9 +17,9 @@ and exposes the result through an HTTP API.
 
 The implemented CAI does not open tickets, reply to customers, transfer tickets,
 or make department/agent decisions through the language model. Its current
-runtime includes the internal Acessórias directory and DigiSac contact identity
-foundations, but cross-system identity resolution, department mapping, and
-Request creation remain future increments.
+runtime includes the internal Acessórias directory, DigiSac contact identity,
+cross-system identity resolution, and department mapping capabilities. Request
+creation remains a future increment.
 
 \`\`\`mermaid
 flowchart LR
@@ -62,19 +62,20 @@ flowchart LR
 
 The application uses one PostgreSQL connection pool per process. Database
 initialization verifies the Alembic schema and does not create or mutate
-tables. Redis is not the authoritative store for durable classifications or
-media results.
+tables. Redis is not the authoritative store for durable classifications,
+media results, or department mapping state.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
 The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012),
-DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014), and
-DigiSac–Acessórias identity resolution (SPEC-0009; issue 0015) add provider
-boundaries and durable local records. Contact snapshots from ticket webhooks
-are upserted by opaque `contact.id`; message-only references create a durable,
-deduplicated need for individual hydration outside the request path. The full
-Contacts backfill uses validated one-page or `page=N` responses. Cross-system
-department mapping and Request delivery remain separate gated work.
+DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014),
+DigiSac–Acessórias identity resolution (SPEC-0009; issue 0015), and department
+mapping (SPEC-0010; issue 0016) add provider boundaries and durable local
+records. Contact snapshots from ticket webhooks are upserted by opaque
+`contact.id`; message-only references create a durable, deduplicated need for
+individual hydration outside the request path. The full Contacts backfill uses
+validated one-page or `page=N` responses. Request delivery remains separate
+gated work.
 
 \`\`\`mermaid
 flowchart LR
@@ -107,12 +108,14 @@ DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
 uses sanitized fingerprints, while raw and normalized directory identifiers
 remain in their canonical foundation records.
 
-Department mapping will use the current DigiSac department through persistent
-configuration, then validate availability against the resolved company's
-current Acessórias departments. It does not use IA \`intent_type\` as its primary
-input. A later Request integration runs only after a persisted valid
-classification and has its own durable idempotency, reconciliation, and
-failure state; it cannot roll back a completed classification.
+Department mapping uses the current DigiSac department from assignment history,
+an explicitly administered PostgreSQL rule keyed by stable provider IDs, and
+the confirmed company's current Acessórias relationship. It persists an
+append-only cycle evaluation and does not use IA \`intent_type\`, names, or
+fallback selection. A later Request integration runs only after a persisted
+valid classification and mapping; it has its own durable idempotency,
+reconciliation, and failure state and cannot roll back a completed
+classification.
 
 ## 3. Inbound webhook flow
 
@@ -307,7 +310,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0017_digisac_acessorias_identity\`. The main data groups
+Alembic owns the schema through \`0018_department_mapping\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -319,6 +322,7 @@ are:
 | DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, and immutable per-cycle outcomes. |
+| Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, and identity-resolution linkage. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
@@ -403,7 +407,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-14 evidence
-  was **175 passed, 48 skipped** offline and **48 passed, 175 deselected** in
+  was **177 passed, 56 skipped** offline and **56 passed, 177 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -429,6 +433,11 @@ records these delivery limitations:
   many-to-many links, immutable cycle outcomes, and controlled `manual_db`
   confirmation; it does not add an HTTP route, fuzzy matching, or provider
   writes.
+- DigiSac–Acessórias department mapping is implemented under issue `0016` as
+  an internal PostgreSQL capability. It preserves stable-ID rule versions and
+  transitions, validates the current company-department relation only after a
+  confirmed cycle identity, and appends sanitized cycle snapshots; it does not
+  add an HTTP route, IA routing, fallback selection, or Request write.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.
@@ -440,14 +449,17 @@ they limit release verification and future evolution decisions.
 - Shared message and context rules: \`src/core/models.py\`,
   \`src/core/message_filter.py\`, \`src/core/media.py\`,
   \`src/core/finalization.py\`.
-- PostgreSQL access and cycle coordination: \`src/core/db.py\` and
+- PostgreSQL access and cycle coordination: \`src/core/db.py\`,
+  \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0016_digisac_contact_identity.py\`.
+  \`0018_department_mapping.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
+- DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
+  and Alembic \`0018_department_mapping.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

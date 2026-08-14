@@ -194,11 +194,13 @@ exact normalized email may discover candidates; only an explicit/manual
 confirmation initially produces `confirmed`. Group names and numbers are
 diagnostic only, not automatic matching evidence.
 
-Department routing will map the current DigiSac department through persistent
-configuration and validate the selected Acessórias department against the
-resolved company's current directory relationship. `intent_type` is not the
-primary mapping input. Current company departments are directory state, not a
-constraint that invalidates historical external Requests.
+Department routing is implemented under issue 0016: it maps the current
+DigiSac department through a PostgreSQL rule keyed by stable external IDs and
+validates the selected Acessórias department against the resolved company's
+current directory relationship. `intent_type`, names, and fallback selection
+are not mapping inputs. Current company departments are directory state, not a
+constraint that invalidates historical external Requests; a later evaluation
+may record a new outcome without rewriting a terminal snapshot.
 
 
 ## 6. Context and AI contract
@@ -320,20 +322,21 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`, `0013`, `0014`, and `0015` added the Acessórias directory, DigiSac
-contact identity foundation, complete Contacts backfill, and conservative
-cross-system identity resolution. The observed local
+issues `0012`–`0016` added the Acessórias directory, DigiSac contact identity
+foundation, complete Contacts backfill, conservative cross-system identity
+resolution, and stable-ID department mapping. The observed local
 runner evidence on 2026-08-14 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 175 passed, 48 skipped (the skips are deliberately absent
+- offline pytest: 177 passed, 56 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0017_digisac_acessorias_identity` applied and verified on the runner target;
+- Alembic: `0018_department_mapping` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 48 passed, 175 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 56 passed, 177 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
-  due-only media recovery, queue deduplication, and dependent image wake-up.
+  due-only media recovery, queue deduplication, dependent image wake-up, and
+  stable-ID department mapping with audited cycle snapshots.
 
 The runner's offline stage does not select a finalization setting; it isolates
 the disposable database credentials and injects the runner-owned URL only for
@@ -357,8 +360,8 @@ The product owner has decided the following policies:
 | Historical assignment interpretation | Determines which assignment events are business-significant and how they are presented. | Decided — preserve all observed transfers chronologically to track departments from open to close; approved Acessórias mapping may later use the current department. |
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
-| Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory and contact identity foundations implemented locally under SPEC-0007/0008 and issues 0012/0013; cross-system resolution remains pending and requires explicit/manual confirmation with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Approved, dependent work — map DigiSac department through persistent configuration and create a Request only after persisted final classification, company resolution, and department validation; creation has separate durable idempotency/reconciliation. |
+| Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
+| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issue 0016 through persistent stable-ID configuration and current relationship validation; Request creation remains separately approved work with durable idempotency/reconciliation. |
 
 ## 11. Source traceability
 
