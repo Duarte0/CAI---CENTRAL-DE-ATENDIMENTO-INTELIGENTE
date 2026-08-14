@@ -66,6 +66,11 @@ async def postgres_state(request):
         connection.execute(
             """
             TRUNCATE TABLE
+                acessorias_company_departments,
+                acessorias_company_contacts,
+                acessorias_directory_sync_executions,
+                acessorias_departments,
+                acessorias_companies,
                 conversation_cycle_messages,
                 conversation_processing_cycles,
                 classification_messages,

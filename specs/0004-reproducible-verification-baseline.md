@@ -1,31 +1,31 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** itens 1 e 2 implementados; verificação operacional do item 4 concluída
-- **Versão:** 1.4
+- **Status:** implementado; baseline canônico e verificação operacional concluídos
+- **Versão:** 1.5
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
-- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` itens 1–4; SPEC-0001–0003
+- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
 
-Os itens 1 e 2 da fase 0 foram implementados em 2026-08-09. Os módulos de teste
+O baseline foi implementado em 2026-08-09. Os módulos de teste
 são rastreáveis, o `conftest.py` não seleciona um modo alternativo e
 `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
 fornece a URL exata ao subprocesso PostgreSQL. A execução observada produziu
-**122 passed, 33 skipped** na etapa offline, **33 passed, 122 deselected** na
-etapa PostgreSQL e zero diagnósticos no Pyright. Os 33 skips pertencem apenas à
+**143 passed, 36 skipped** na etapa offline, **36 passed, 143 deselected** na
+etapa PostgreSQL e zero diagnósticos no Pyright. Os 36 skips pertencem apenas à
 etapa offline, onde o banco deliberadamente não é fornecido.
 Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
 do banco descartável somente na etapa PostgreSQL.
 
-A verificação operacional do item 4 do plano foi adicionada ao mesmo contrato
+A verificação operacional foi adicionada ao mesmo contrato
 de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
 de fila determinístico e identificadores sintéticos para verificar claim/lease
 de ciclo, liberação após falha de publicação, agenda futura, recuperação de
 áudio/imagem sem duplicação e despertar seletivo de ciclos bloqueados por
-imagem. A execução observada produziu **33 passed, 122 deselected** no destino
+imagem. A execução mais recente observada produziu **36 passed, 143 deselected** no destino
 PostgreSQL 16 descartável; isso não comprova Redis, fornecedores, réplicas ou
 produção.
 
@@ -60,4 +60,4 @@ hostname interno `postgres-test:5432` sem tocar em outros projetos Compose.
 
 ## Decisão registrada
 
-O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional do item 4. A execução observada em 2026-08-09 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.
+O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional. A execução mais recente registrada em 2026-08-13 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.

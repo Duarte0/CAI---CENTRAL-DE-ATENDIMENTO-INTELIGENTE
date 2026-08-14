@@ -19,7 +19,7 @@ COMPOSE_FILE = ROOT / "docker-compose.test.yml"
 TEST_DATABASE = "cai_test"
 TEST_USER = "cai_test"
 TEST_PASSWORD = "cai_test"
-EXPECTED_SCHEMA = "0014_retry_scheduling"
+EXPECTED_SCHEMA = "0015_acessorias_directory"
 
 
 class RunnerFailure(RuntimeError):

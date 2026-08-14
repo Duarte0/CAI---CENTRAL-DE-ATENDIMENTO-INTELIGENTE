@@ -25,7 +25,7 @@ from src.core.identifiers import uuid7
 from src.core.intents import normalize_intent_type
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0014_retry_scheduling"
+CURRENT_SCHEMA_REVISION = "0015_acessorias_directory"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -42,6 +42,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "0011_public_id_final",
         "0012_validate_event_fk",
         "0013_conversation_cycles",
+        "0014_retry_scheduling",
         CURRENT_SCHEMA_REVISION,
     }
 )
@@ -100,6 +101,11 @@ def _get_pool() -> ConnectionPool[psycopg.Connection[Any]]:
     if _pool is None:
         raise RuntimeError("Database pool is not initialized")
     return _pool
+
+
+def get_database_pool() -> ConnectionPool[psycopg.Connection[Any]]:
+    """Return the initialized process-local pool for durable integrations."""
+    return _get_pool()
 
 
 def _configure_connection_sync(connection: psycopg.Connection[Any]) -> None:
