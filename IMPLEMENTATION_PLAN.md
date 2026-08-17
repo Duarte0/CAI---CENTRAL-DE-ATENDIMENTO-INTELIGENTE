@@ -39,12 +39,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0019,
+  PostgreSQL-marked family. The latest recorded full execution (issue 0020,
   2026-08-17) passed compileall, strict Pyright, offline pytest (**197 passed,
-  61 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
-  (**61 passed, 197 deselected**). The 61 offline skips are expected missing
+  64 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
+  (**64 passed, 197 deselected**). The 64 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -62,8 +62,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **233 tests**; the latest issue-0016
-  run passed **177 tests** and skipped the 56 PostgreSQL-dependent tests without
+- The current canonical collection contains **261 tests**; the latest issue-0020
+  run passed **197 tests** and skipped the 64 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -178,7 +178,7 @@ currently in progress._
    mapping from the current DigiSac department, validated against the resolved
    company's current departments; `intent_type` is not a mapping input.
 
-   Specification outcome: SPEC-0010 v1.1 records approved global mapping by
+   Specification outcome: SPEC-0010 v1.2 records approved global mapping by
    stable provider IDs, a single active mapping per DigiSac department, explicit
    many-to-one mappings to Acessórias departments, active/inactive lifecycle,
    and initial `manual_db` administration with no required actor, UI, or HTTP
@@ -187,11 +187,14 @@ currently in progress._
    historical Request, or default-department fallback is allowed. Issue 0016
    implements the Alembic `0018_department_mapping` state, transactional
    `manual_db` rule administration, stable-ID evaluation, and append-only cycle
-   snapshots.
+   snapshots. Issue 0020 corrects assignment selection to the target cycle's
+   persisted `cycle_started_at`/`ticket_closed_at` interval, fails closed when
+   those boundaries are insufficient, and retains the selected assignment ID
+   and boundary facts in the validation snapshot.
 
-   Build evidence (2026-08-14): the disposable runner passed compileall, strict
-   Pyright, offline pytest (**177 passed, 56 skipped**), Alembic head
-   verification, and PostgreSQL pytest (**56 passed, 177 deselected**). Tests
+   Build evidence (2026-08-17, issues 0016 and 0020): the disposable runner
+   passed compileall, strict Pyright, offline pytest (**197 passed, 64 skipped**), Alembic head
+   verification, and PostgreSQL pytest (**64 passed, 197 deselected**). Tests
    cover stable-ID lifecycle/audit, many-to-one mappings, replay/concurrency,
    confirmed identity and current relationship validation, rollback, privacy,
    rename stability, and immutable/later cycle evaluations. This is local
@@ -259,7 +262,7 @@ tests cover the typed boundary, validation, deduplication, and failure-safe
 publication.
 Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
-issue 0015. Milestone D is implemented under issue 0016; Milestone E is
+issue 0015. Milestone D is implemented under issues 0016 and 0020; Milestone E is
 implemented under issues 0017–0019 with its Request contract and A–D facts
 available. No specification in this sequence authorizes application changes
 until its own issues/build pass.
@@ -270,7 +273,8 @@ build sync records department mapping, the corrected Request transport and
 shared Request rate admission boundary: README, PRD, architecture, SPEC-0008,
 SPEC-0009, SPEC-0010, the specs index, and this plan record the implemented
 backfill, identity resolution, mapping, Request creation, Alembic `0019`, and the latest local
-runner evidence. These results remain disposable/local and do not imply provider,
+runner evidence, including the cycle-scoped department-mapping correction in
+issue 0020. These results remain disposable/local and do not imply provider,
 Redis, deployment, or production readiness.
 
 ### Separate pending work
@@ -375,7 +379,7 @@ Redis, deployment, or production readiness.
 
 ## Recommended next pass
 
-Milestones C and D are complete under issues 0015 and 0016, and Milestone E is
-implemented under issues 0017–0019. Open corrective issues 0020–0023 remain
+Milestones C and D are complete under issues 0015, 0016, and 0020, and Milestone E is
+implemented under issues 0017–0019. Open corrective issues 0021–0023 remain
 before Milestone F can be considered the next optional increment; that
 milestone still requires a new product decision and specification.

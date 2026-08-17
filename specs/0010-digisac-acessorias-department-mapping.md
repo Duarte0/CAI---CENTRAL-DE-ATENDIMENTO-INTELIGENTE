@@ -1,7 +1,7 @@
 # SPEC-0010 — Mapeamento de departamento DigiSac para Acessórias
 
-- **Status:** implementado localmente pelo issue 0016; evidência descartável, sem provider/produção
-- **Versão:** 1.1
+- **Status:** implementado localmente pelos issues 0016 e 0020; evidência descartável, sem provider/produção
+- **Versão:** 1.2
 - **Prioridade/Fase:** P1 / Milestone D — DigiSac Department → Acessórias Department Mapping
 - **Rastreabilidade:** PRD §§4, 5.2, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone D; SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0009
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007, SPEC-0008 e SPEC-0009; conclusão do Milestone C e disponibilidade da relação atual `company_departments`
@@ -12,6 +12,15 @@ Alembic `0018_department_mapping`, regras globais por IDs estáveis, transiçõe
 passou compileall, Pyright estrito, **177 passed, 56 skipped** offline e
 **56 passed, 177 deselected** na etapa PostgreSQL; isso é evidência local
 sintética/descartável e não comprova provider, Redis ou produção.
+
+**Correção de limite de ciclo (2026-08-17):** issue 0020 corrige a seleção do
+departamento DigiSac para usar somente eventos de atribuição dentro dos limites
+persistidos `cycle_started_at`/`ticket_closed_at`, com desempate por ID. Uma
+fronteira ausente ou inválida permanece `unresolved` com motivo sanitizado e os
+limites/ID da atribuição selecionada ficam no snapshot de validação. O runner
+descartável passou compileall, Pyright estrito, **197 passed, 64 skipped** offline
+e **64 passed, 197 deselected** na etapa PostgreSQL; isso continua sendo
+evidência local sintética/descartável.
 
 ## Objetivo e não objetivos
 
@@ -29,9 +38,9 @@ retroativa de um resultado terminal.
 
 ## Estado de referência e fronteira canônica
 
-O checkout atual preserva o histórico cronológico de atribuições DigiSac, mas
-não tem tabela, migration, configuração, worker, API ou teste de mapeamento
-departamental. SPEC-0007 é canônica para o diretório Acessórias; SPEC-0008 para
+O checkout atual preserva o histórico cronológico de atribuições DigiSac e
+avalia o departamento aplicável ao intervalo persistido de cada ciclo. SPEC-0007
+é canônica para o diretório Acessórias; SPEC-0008 para
 identidade de contato DigiSac; SPEC-0009 para a resolução confirmada de empresa.
 Esta SPEC é canônica somente para o mapeamento e para o resultado usado por um
 ciclo. A criação externa de Request pertence exclusivamente à SPEC-0011.
@@ -77,7 +86,11 @@ ciclo. A criação externa de Request pertence exclusivamente à SPEC-0011.
    empresa resolvida. Sem regra — inclusive regra desativada — o resultado é
    `unresolved`; com regra cujo departamento não esteja atualmente disponível
    para a empresa, é `invalid`/`unresolved`. Em ambos os casos, a falha deve ser
-   explícita, persistida e auditável.
+   explícita, persistida e auditável. No checkout implementado, o contrato do
+   ciclo exige `cycle_started_at` e `ticket_closed_at` não nulos e seleciona o
+   último evento de atribuição dentro desse intervalo inclusivo, ordenado por
+   `event_timestamp DESC, id DESC`. Sem esses limites, a avaliação fica
+   `unresolved` e não seleciona atribuição.
 2. A avaliação não pode escolher outro departamento por `intent_type`, IA, nome
    semelhante, primeiro departamento da empresa, departamento global de mesmo
    nome, responsável ou departamento histórico de Request. A classificação IA

@@ -71,7 +71,7 @@ media results, or department mapping state.
 The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012),
 DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014),
 DigiSac–Acessórias identity resolution (SPEC-0009; issue 0015), and department
-mapping (SPEC-0010; issue 0016) add provider boundaries and durable local
+mapping (SPEC-0010; issues 0016 and 0020) add provider boundaries and durable local
 records. Contact snapshots from ticket webhooks are upserted by opaque
 `contact.id`; message-only references create a durable, deduplicated need for
 individual hydration outside the request path. The full Contacts backfill uses
@@ -109,11 +109,14 @@ DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
 uses sanitized fingerprints, while raw and normalized directory identifiers
 remain in their canonical foundation records.
 
-Department mapping uses the current DigiSac department from assignment history,
-an explicitly administered PostgreSQL rule keyed by stable provider IDs, and
-the confirmed company's current Acessórias relationship. It persists an
-append-only cycle evaluation and does not use IA \`intent_type\`, names, or
-fallback selection. The Request operation runs only after a persisted valid
+Department mapping uses the cycle-applicable DigiSac department from assignment
+history, selected only within the persisted `cycle_started_at` through
+`ticket_closed_at` interval and ordered by timestamp/ID, with an explicit
+unresolved result when the boundary is insufficient. It then uses an explicitly
+administered PostgreSQL rule keyed by stable provider IDs and the confirmed
+company's current Acessórias relationship. It persists an append-only cycle
+evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
+Request operation runs only after a persisted valid
 classification and mapping; issues 0017–0019 give it durable one-cycle
 uniqueness, claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
@@ -426,7 +429,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **197 passed, 61 skipped** offline and **61 passed, 197 deselected** in
+  was **197 passed, 64 skipped** offline and **64 passed, 197 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -454,11 +457,12 @@ records these delivery limitations:
   many-to-many links, immutable cycle outcomes, and controlled `manual_db`
   confirmation; it does not add an HTTP route, fuzzy matching, or provider
   writes.
-- DigiSac–Acessórias department mapping is implemented under issue `0016` as
-  an internal PostgreSQL capability. It preserves stable-ID rule versions and
-  transitions, validates the current company-department relation only after a
-  confirmed cycle identity, and appends sanitized cycle snapshots; it does not
-  add an HTTP route, IA routing, or fallback selection. Request creation is
+- DigiSac–Acessórias department mapping is implemented under issues `0016` and
+  `0020` as an internal PostgreSQL capability. It preserves stable-ID rule
+  versions and transitions, validates the current company-department relation
+  only after a confirmed cycle identity, selects assignment history within the
+  cycle's persisted boundaries, and appends sanitized cycle snapshots; it does
+  not add an HTTP route, IA routing, or fallback selection. Request creation is
   implemented separately under issue `0017`.
 
 - Durable Acessórias Request creation is implemented under issues `0017`–`0019`. It

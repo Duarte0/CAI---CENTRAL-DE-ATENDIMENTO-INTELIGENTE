@@ -1,7 +1,7 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única
-- **Versão:** 1.3
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020
+- **Versão:** 1.4
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
 - **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002
 - **Dependências:** SPEC-0001, SPEC-0002
@@ -15,6 +15,11 @@ com **36 testes aprovados, 143 desselecionados**, incluindo concorrência de cic
 falha de publicação, recuperação due-only de áudio/imagem e despertar seletivo
 de ciclos bloqueados por imagem. Esta nota registra evidência local; não altera
 o contrato nem afirma verificação de Redis, fornecedores ou produção.
+
+**Integração de limite (2026-08-17):** o mapeamento departamental usa os
+`cycle_started_at` e `ticket_closed_at` persistidos pelo ciclo. Quando esses
+limites não estão disponíveis, a avaliação dependente permanece bloqueada; não
+se infere uma fronteira a partir de atribuições posteriores.
 
 ## Objetivo e não objetivos
 
@@ -34,6 +39,10 @@ Definir a finalização por histórico DigiSac e os contratos de mídia, context
 1. O trabalhador **deve** recuperar todas as páginas do histórico, deduplicar e ordenar por timestamp/ID, limitar mensagens à fronteira do ciclo e salvar o snapshot/membership antes da classificação.
 2. Bots, eventos técnicos, conteúdo invisível/excluído e tipos desconhecidos **devem** ser removidos com contagens auditáveis. Cliente e atendente **devem** permanecer cronológicos; atendente é contexto, não alvo. Citações usam excerto limitado.
 3. Transcrição de áudio e extração de imagem disponíveis **devem** ser renderizadas. Documento somente preserva metadados seguros. Contexto acima do limite configurado **deve** ser segmentado sem cortar mensagens quando possível, resumido por blocos e só então classificado.
+
+4. Consumidores que derivam roteamento a partir do histórico de atribuições
+   **devem** respeitar os limites persistidos do ciclo e permanecer bloqueados
+   quando a fronteira necessária não estiver disponível.
 
 ## Mídia, falhas e recuperação
 

@@ -568,7 +568,7 @@ def _evaluate_department_mapping_sync(
             with connection.cursor(row_factory=dict_row) as cursor:
                 cycle = cursor.execute(
                     """
-                    SELECT id, conversation_id
+                    SELECT id, conversation_id, cycle_started_at, ticket_closed_at
                     FROM conversation_processing_cycles
                     WHERE public_id = %s
                     FOR UPDATE
@@ -603,19 +603,19 @@ def _evaluate_department_mapping_sync(
                     if existing is not None:
                         return _serialize_row(existing) or {}
 
-                assignment = cursor.execute(
-                    """
-                    SELECT id, department_id
-                    FROM ticket_assignment_history
-                    WHERE conversation_id = %s AND department_id IS NOT NULL
-                    ORDER BY event_timestamp DESC, id DESC
-                    LIMIT 1
-                    """,
-                    (cycle["conversation_id"],),
-                ).fetchone()
+                cycle_started_at = cycle["cycle_started_at"]
+                ticket_closed_at = cycle["ticket_closed_at"]
                 validation: dict[str, Any] = {
-                    "assignment_history_id": (
-                        None if assignment is None else int(assignment["id"])
+                    "assignment_history_id": None,
+                    "cycle_started_at": (
+                        cycle_started_at.isoformat()
+                        if isinstance(cycle_started_at, datetime)
+                        else None
+                    ),
+                    "ticket_closed_at": (
+                        ticket_closed_at.isoformat()
+                        if isinstance(ticket_closed_at, datetime)
+                        else None
                     ),
                     "identity_resolution_id": None,
                     "identity_link_id": None,
@@ -625,6 +625,46 @@ def _evaluate_department_mapping_sync(
                     "company_available": False,
                     "relationship_available": False,
                 }
+                if (
+                    not isinstance(cycle_started_at, datetime)
+                    or not isinstance(ticket_closed_at, datetime)
+                    or cycle_started_at > ticket_closed_at
+                ):
+                    return _persist_evaluation(
+                        cursor,
+                        cycle_id=int(cycle["id"]),
+                        evaluation_key=key,
+                        rule_id=None,
+                        rule_version=None,
+                        digisac_department_external_id=None,
+                        acessorias_department_external_id=None,
+                        company_id=None,
+                        state="unresolved",
+                        reason="cycle_boundary_insufficient",
+                        validation=validation,
+                        evaluated_at=timestamp,
+                    )
+
+                assignment = cursor.execute(
+                    """
+                    SELECT id, department_id
+                    FROM ticket_assignment_history
+                    WHERE conversation_id = %s
+                      AND department_id IS NOT NULL
+                      AND event_timestamp >= %s
+                      AND event_timestamp <= %s
+                    ORDER BY event_timestamp DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        cycle["conversation_id"],
+                        cycle_started_at,
+                        ticket_closed_at,
+                    ),
+                ).fetchone()
+                validation["assignment_history_id"] = (
+                    None if assignment is None else int(assignment["id"])
+                )
                 department_id = (
                     None if assignment is None else str(assignment["department_id"])
                 )
