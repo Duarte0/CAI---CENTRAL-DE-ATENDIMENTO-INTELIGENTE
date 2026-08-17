@@ -117,10 +117,12 @@ administered PostgreSQL rule keyed by stable provider IDs and the confirmed
 company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
 Request operation runs only after a persisted valid
-classification and mapping; issues 0017–0019 give it durable one-cycle
+classification and mapping; issues 0017–0019 and 0021 give it durable one-cycle
 uniqueness, claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
-when a transport boundary explicitly proves that the POST did not start;
+when a transport boundary explicitly proves that the POST did not start; the
+persisted payload is loaded and validated before `post_started_at`, and a
+pre-provider payload failure remains retryable without a false marker;
 ordinary connection, timeout, and protocol failures remain uncertain and cannot
 roll back a completed classification or trigger a second POST.
 
@@ -465,11 +467,13 @@ records these delivery limitations:
   not add an HTTP route, IA routing, or fallback selection. Request creation is
   implemented separately under issue `0017`.
 
-- Durable Acessórias Request creation is implemented under issues `0017`–`0019`. It
+- Durable Acessórias Request creation is implemented under issues `0017`–`0019` and
+  `0021`. It
   validates terminal-cycle, confirmed-identity, and current mapping facts,
   admits provider calls through the shared in-process rate limiter, sends only
   the approved multipart fields, persists `SolID` after a successful local
-  commit, and leaves uncertain provider outcomes for manual reconciliation.
+  commit, leaves uncertain provider outcomes for manual reconciliation, and keeps
+  payload-load failures before `post_started_at` retryable without provider calls.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.

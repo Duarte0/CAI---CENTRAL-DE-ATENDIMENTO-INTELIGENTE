@@ -10,6 +10,7 @@ import psycopg
 import pytest
 import requests
 
+import src.core.acessorias_requests as acessorias_requests_module
 from src.core.acessorias_requests import (
     AcessoriasRequestAdapter,
     AcessoriasRequestError,
@@ -447,6 +448,77 @@ def test_ambiguous_transport_after_transmission_is_not_retried(
 
 
 @pytest.mark.asyncio
+async def test_payload_load_failure_is_retryable_before_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        acessorias_requests_module,
+        "_ensure_operation_sync",
+        lambda cycle_public_id: {"id": 17, "state": "not_started"},
+    )
+
+    def claim_operation(operation_id: int, owner: str, lease_seconds: int) -> dict[str, Any]:
+        events.append("claim")
+        return {"id": operation_id, "state": "attempting"}
+
+    monkeypatch.setattr(
+        acessorias_requests_module, "_claim_operation_sync", claim_operation
+    )
+
+    def load_payload(operation_id: int) -> Any:
+        events.append("payload_load")
+        raise RuntimeError("database password and classification title leaked")
+
+    monkeypatch.setattr(
+        acessorias_requests_module, "_load_payload_sync", load_payload
+    )
+
+    def mark_post_started(operation_id: int, owner: str) -> bool:
+        pytest.fail("post start must not be marked before payload loading")
+
+    monkeypatch.setattr(
+        acessorias_requests_module, "_mark_post_started_sync", mark_post_started
+    )
+
+    def finish_operation(
+        operation_id: int, owner: str, outcome: AcessoriasRequestOutcome
+    ) -> dict[str, Any]:
+        events.append("finish")
+        assert outcome.state == "retryable_failure"
+        assert outcome.category == "payload_load_failed"
+        return {
+            "id": operation_id,
+            "state": outcome.state,
+            "failure_category": outcome.category,
+            "failure_message": outcome.category,
+            "post_started_at": None,
+        }
+
+    monkeypatch.setattr(
+        acessorias_requests_module, "_finish_operation_sync", finish_operation
+    )
+
+    class Provider:
+        calls = 0
+
+        def create_request(self, payload: Any) -> AcessoriasRequestOutcome:
+            self.calls += 1
+            return AcessoriasRequestOutcome.success("SOL-never")
+
+    provider = Provider()
+    result = await create_request_for_cycle(
+        "cycle-payload-load-failure", provider=provider, owner="test-owner"
+    )
+
+    assert result["state"] == "retryable_failure"
+    assert result["failure_category"] == "payload_load_failed"
+    assert result["failure_message"] == "payload_load_failed"
+    assert result["post_started_at"] is None
+    assert provider.calls == 0
+    assert events == ["claim", "payload_load", "finish"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_completed_cycle_creates_once_and_completed_replay_is_noop() -> None:
     cycle, _ = await close_cycle(
@@ -704,3 +776,112 @@ async def test_uncertain_request_replay_and_concurrency_do_not_post_again() -> N
     assert provider.calls == 1
     assert {result["id"] for result in replays} == {first["id"]}
     assert {result["state"] for result in replays} == {"reconciliation_required"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_payload_load_failure_is_durable_retryable_and_post_start_recovery_stays_conservative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cycle_id = await seed_eligible_cycle("payload-load-failure")
+    original_load_payload = acessorias_requests_module._load_payload_sync
+    failed_once = True
+
+    def load_payload_once(operation_id: int) -> Any:
+        nonlocal failed_once
+        if failed_once:
+            failed_once = False
+            raise RuntimeError("database password and raw payload leaked")
+        return original_load_payload(operation_id)
+
+    monkeypatch.setattr(
+        acessorias_requests_module, "_load_payload_sync", load_payload_once
+    )
+
+    class Provider:
+        calls = 0
+
+        def create_request(self, payload: Any) -> AcessoriasRequestOutcome:
+            self.calls += 1
+            return AcessoriasRequestOutcome.success("SOL-retried")
+
+    provider = Provider()
+    first = await create_request_for_cycle(cycle_id, provider=provider)
+    assert first["state"] == "retryable_failure"
+    assert first["failure_category"] == "payload_load_failed"
+    assert first["failure_message"] == "payload_load_failed"
+    assert first["post_started_at"] is None
+    assert first["attempt_count"] == 0
+    assert provider.calls == 0
+
+    with psycopg.connect(settings.database_url) as connection:
+        persisted = connection.execute(
+            """
+            SELECT state, post_started_at, claim_owner, claim_expires_at,
+                   failure_category, failure_message, attempt_count
+            FROM acessorias_request_operations
+            WHERE source_cycle_id = (
+                SELECT id FROM conversation_processing_cycles WHERE public_id = %s
+            )
+            """,
+            (cycle_id,),
+        ).fetchone()
+    assert persisted == (
+        "retryable_failure",
+        None,
+        None,
+        None,
+        "payload_load_failed",
+        "payload_load_failed",
+        0,
+    )
+
+    replayed = await create_request_for_cycle(cycle_id, provider=provider)
+    assert replayed["state"] == "completed"
+    assert replayed["sol_id"] == "SOL-retried"
+    assert provider.calls == 1
+
+    with psycopg.connect(settings.database_url) as connection:
+        operation = connection.execute(
+            """
+            SELECT id FROM acessorias_request_operations
+            WHERE source_cycle_id = (
+                SELECT id FROM conversation_processing_cycles WHERE public_id = %s
+            )
+            """,
+            (cycle_id,),
+        ).fetchone()[0]
+        connection.execute(
+            """
+            UPDATE acessorias_request_operations
+            SET state = 'attempting', claim_owner = 'expired-worker',
+                claim_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second',
+                post_started_at = CURRENT_TIMESTAMP - INTERVAL '2 seconds',
+                sol_id = NULL, completed_at = NULL,
+                failure_category = NULL, failure_message = NULL
+            WHERE id = %s
+            """,
+            (operation,),
+        )
+
+    recovered = acessorias_requests_module._claim_operation_sync(
+        operation, "recovery-worker", 60
+    )
+    assert recovered is None
+    with psycopg.connect(settings.database_url) as connection:
+        recovered_row = connection.execute(
+            """
+            SELECT state, post_started_at, claim_owner, claim_expires_at,
+                   failure_category, failure_message
+            FROM acessorias_request_operations WHERE id = %s
+            """,
+            (operation,),
+        ).fetchone()
+    assert recovered_row[0] == "reconciliation_required"
+    assert recovered_row[1] is not None
+    assert recovered_row[2] is None
+    assert recovered_row[3] is None
+    assert recovered_row[4:] == (
+        "claim_expired_after_post_start",
+        "claim_expired_after_post_start",
+    )

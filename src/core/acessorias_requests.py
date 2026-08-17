@@ -733,11 +733,27 @@ async def create_request_for_cycle(
                     (operation_id,),
                 ).fetchone()
         return _serialize_operation(cast(Mapping[str, Any] | None, row))
-    if not await asyncio.to_thread(_mark_post_started_sync, operation_id, claim_owner):
-        return claimed
-    payload = await asyncio.to_thread(_load_payload_sync, operation_id)
+    try:
+        payload = await asyncio.to_thread(_load_payload_sync, operation_id)
+    except Exception:
+        return await asyncio.to_thread(
+            _finish_operation_sync,
+            operation_id,
+            claim_owner,
+            AcessoriasRequestOutcome.retryable("payload_load_failed"),
+        )
     try:
         request_provider = provider or AcessoriasRequestAdapter()
+    except Exception:
+        return await asyncio.to_thread(
+            _finish_operation_sync,
+            operation_id,
+            claim_owner,
+            AcessoriasRequestOutcome.retryable("provider_setup_failed"),
+        )
+    if not await asyncio.to_thread(_mark_post_started_sync, operation_id, claim_owner):
+        return claimed
+    try:
         outcome = await asyncio.to_thread(request_provider.create_request, payload)
     except Exception:
         outcome = AcessoriasRequestOutcome.reconciliation("provider_exception")

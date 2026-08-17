@@ -1,7 +1,7 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0019; evidência descartável, sem provider/produção
-- **Versão:** 1.1 (issue 0018 corrige a classificação de transporte sem alterar a política)
+- **Status:** implementada localmente pelos issues 0017–0019 e 0021; evidência descartável, sem provider/produção
+- **Versão:** 1.2 (issue 0021 corrige a fronteira durável anterior ao POST sem alterar a política)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0008 implementadas; Milestones C (SPEC-0009) e D (SPEC-0010) concluídos para o ciclo elegível; credencial operacional segura disponível
@@ -40,6 +40,13 @@ skipped** offline, Alembic `0019_acessorias_request_creation` e **61 passed,
 distintas, expiração, isolamento por endpoint e admissão concorrente. Isso é
 evidência local sintética/descartável, sem credencial real, provider, Redis,
 deployment ou produção.
+
+**Correção da fronteira pré-POST (2026-08-17):** issue 0021 carrega e valida o
+payload persistido antes de registrar `post_started_at`. Falha de leitura ou
+validação permanece em `retryable_failure` com a categoria sanitizada
+`payload_load_failed`, sem marcador de POST, sem chamada ao provider e com
+replay posterior permitido; a recuperação de lease que já possui marcador
+genuíno continua em `reconciliation_required`.
 
 ## Objetivo e não objetivos
 
@@ -100,7 +107,7 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 Endpoint, autenticação, formato multipart, campos, `tipo=E`, prioridade padrão,
 limite, confirmação por `id`, ausência de idempotency key, retry conservador,
 reconciliação manual e operação administrativa inicial estão aprovados e foram
-implementados pelos issues 0017–0019. A credencial operacional continua
+implementados pelos issues 0017–0019 e 0021. A credencial operacional continua
 necessária para uma chamada real; doubles e o runner não comprovam provider ou
 produção. A correção do issue 0018 é conservadora e não amplia a autorização de
 retry: erros de transporte sem prova explícita de pré-envio permanecem sujeitos

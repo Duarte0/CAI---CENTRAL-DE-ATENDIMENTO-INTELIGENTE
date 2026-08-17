@@ -206,7 +206,7 @@ Current company departments are directory state, not a constraint that
 invalidates historical external Requests; a later evaluation may record a new
 outcome without rewriting a terminal snapshot.
 
-Issues 0017–0019 implement the durable Request boundary. A terminal eligible cycle
+Issues 0017–0019 and 0021 implement the durable Request boundary. A terminal eligible cycle
 with one confirmed company and a current valid mapped department creates at
 most one PostgreSQL operation and one multipart `POST /requests`. Only a
 non-empty provider `id` becomes the persisted `SolID`; only an explicitly proven
@@ -218,6 +218,9 @@ no token, header, payload, classification content, or PII. The operation stores 
 raw title, description, payload, token, header, provider body, or PII and never
 changes the originating classification. There is no public or admin HTTP
 trigger, and Request lifecycle operations remain outside this increment.
+The persisted payload is loaded and validated before `post_started_at`; a
+pre-provider load or validation failure is sanitized as retryable and retains no
+false post-start evidence.
 
 
 ## 6. Context and AI contract
@@ -388,7 +391,7 @@ The product owner has decided the following policies:
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016 and 0020 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019 with durable one-cycle uniqueness, shared in-process rate admission, explicit-proof-only retry, and manual reconciliation. |
+| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016 and 0020 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019 and 0021 with durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, and manual reconciliation. |
 
 ## 11. Source traceability
 
