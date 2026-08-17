@@ -340,12 +340,20 @@ class AcessoriasRequestAdapter:
                     )
 
             status = response.status_code
-            if status in {408, 425, 429}:
+            if status == 429:
+                # Acessórias does not provide a documented non-creation proof
+                # for this POST. Retry-After only describes admission timing;
+                # it cannot establish that the provider did not process the
+                # request, so the operation must be reconciled before replay.
+                return AcessoriasRequestOutcome.reconciliation(
+                    "uncertain_rate_limit", provider_status=status
+                )
+            if status in {408, 425}:
                 if attempt < self.max_attempts:
                     self.sleep(self._retry_delay(attempt, self._retry_after(response)))
                     continue
                 return AcessoriasRequestOutcome.retryable(
-                    "provider_rate_limit" if status == 429 else "safe_transient_rejection",
+                    "safe_transient_rejection",
                     provider_status=status,
                 )
             if status in {401, 403}:

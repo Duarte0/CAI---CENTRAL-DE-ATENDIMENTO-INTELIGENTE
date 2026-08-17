@@ -1,7 +1,7 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0019 e 0021; evidência descartável, sem provider/produção
-- **Versão:** 1.2 (issue 0021 corrige a fronteira durável anterior ao POST sem alterar a política)
+- **Status:** implementada localmente pelos issues 0017–0019 e 0021–0022; evidência descartável, sem provider/produção
+- **Versão:** 1.3 (issue 0022 corrige a fronteira conservadora de `429` sem alterar o contrato de reconciliação)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0008 implementadas; Milestones C (SPEC-0009) e D (SPEC-0010) concluídos para o ciclo elegível; credencial operacional segura disponível
@@ -47,6 +47,24 @@ validação permanece em `retryable_failure` com a categoria sanitizada
 `payload_load_failed`, sem marcador de POST, sem chamada ao provider e com
 replay posterior permitido; a recuperação de lease que já possui marcador
 genuíno continua em `reconciliation_required`.
+
+**Correção de `429` (2026-08-17):** issue 0022 classifica uma resposta `429`
+sem `id` e sem sinal documentado de não criação como
+`reconciliation_required`, preservando o status e a categoria sanitizada. O
+status e `Retry-After` não provam ausência remota; portanto não há segundo POST,
+retry automático ou liberação implícita. O reprocessamento só pode ocorrer após
+`manual_db` registrar `SolID` ou liberar explicitamente com prova de ausência.
+O contrato atual do provider não documenta um caminho de `429` seguro para
+retry.
+
+**Evidência da correção de `429` (2026-08-17):** o teste focado passou com **14
+passed, 7 skipped**; o runner descartável passou compileall, Pyright, offline
+pytest (**199 passed, 66 skipped**), Alembic `0019_acessorias_request_creation`
+e PostgreSQL pytest (**66 passed, 199 deselected**). A cobertura prova um único
+POST para `429` incerto, persistência de reconciliação, replays concorrentes
+sem novo POST e reconciliação manual de `SolID`. A evidência é local
+sintética/descartável, sem credencial real, provider, Redis, deployment ou
+produção.
 
 ## Objetivo e não objetivos
 
@@ -107,11 +125,13 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 Endpoint, autenticação, formato multipart, campos, `tipo=E`, prioridade padrão,
 limite, confirmação por `id`, ausência de idempotency key, retry conservador,
 reconciliação manual e operação administrativa inicial estão aprovados e foram
-implementados pelos issues 0017–0019 e 0021. A credencial operacional continua
+implementados pelos issues 0017–0019 e 0021–0022. A credencial operacional continua
 necessária para uma chamada real; doubles e o runner não comprovam provider ou
 produção. A correção do issue 0018 é conservadora e não amplia a autorização de
 retry: erros de transporte sem prova explícita de pré-envio permanecem sujeitos
 à reconciliação manual. Issue 0019 apenas corrige a coordenação transitória de
 admissão entre adapters do mesmo processo, sem alterar payload, retry ou
-reconciliação.
+reconciliação. Issue 0022 aplica essa mesma fronteira conservadora a `429`:
+sem prova documentada de não criação, o adapter não usa status ou
+`Retry-After` como autorização para novo POST.
 Isso não amplia o escopo ao lifecycle do Milestone F.

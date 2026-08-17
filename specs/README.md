@@ -16,11 +16,12 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.3; issues 0013 e 0014 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, hydration individual e full backfill idempotentes; sem resolução de empresa. |
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.1; issue 0015 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência e candidatos conservadores, vínculos muitos-para-muitos e resolução por ciclo; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.2; issues 0016 e 0020 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle e snapshots contra `company_departments`; não usa IA nem cria Request. |
-| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.2; issues 0017–0019 e 0021 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, com limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider, retry conservador e reconciliação manual. |
+| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.3; issues 0017–0019 e 0021–0022 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, com limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider, retry somente com prova explícita e reconciliação manual de `429` incerto. |
 
-A evidência mais recente registrada para SPEC-0004 é **198 passed, 65 skipped**
-na etapa offline e **65 passed, 198 deselected** na etapa PostgreSQL
-descartável (issue 0021). A evidência anterior de issue 0020 foi **197 passed,
+A evidência mais recente registrada para SPEC-0004 é **199 passed, 66 skipped**
+na etapa offline e **66 passed, 199 deselected** na etapa PostgreSQL
+descartável (issue 0022). A evidência anterior de issue 0021 foi **198 passed,
+65 skipped** e **65 passed, 198 deselected**. A evidência anterior de issue 0020 foi **197 passed,
 64 skipped** e **64 passed, 197 deselected**; a evidência de issue 0024 foi **193 passed,
 61 skipped** e **61 passed, 193 deselected**; a evidência de issue 0018 foi **192 passed,
 61 skipped** e **61 passed, 192 deselected**. Os resultados **183/60** e
@@ -58,14 +59,15 @@ avanço. SPEC-0010 v1.2 tem sua governança inicial aprovada e foi implementada
 pelos issues 0016 e 0020: o mapping global por IDs externos estáveis é administrado por
 procedimento `manual_db`, sem UI/endpoint e com ator opcional; regras e
 avaliações de ciclo são persistidas somente no PostgreSQL; a atribuição usada em
-cada avaliação fica limitada aos limites persistidos do ciclo. SPEC-0011 v1.2 tem
+cada avaliação fica limitada aos limites persistidos do ciclo. SPEC-0011 v1.3 tem
 contrato Request e políticas de duplicidade, retry e reconciliação implementados
-pelos issues 0017–0019 e 0021; a migration `0019` e a operação durável preservam a
+pelos issues 0017–0019 e 0021–0022; a migration `0019` e a operação durável preservam a
 classificação e não inventam idempotency key do provider. Erros de conexão,
 timeout ou protocolo sem marcador explícito de pré-envio ficam em
 `reconciliation_required` e não podem iniciar outro POST; adapters do mesmo
 provider no processo compartilham a janela configurada sem persistir segredo ou
-payload. SPEC-0009 v1.1 foi
+payload. `429` sem prova documentada de não criação segue a mesma fronteira:
+status e `Retry-After` não autorizam segundo POST. SPEC-0009 v1.1 foi
 implementada pelo issue 0015: a variante
 móvel brasileira permanece evidência conservadora, a confirmação inicial é o
 procedimento controlado `manual_db`, e os resultados locais são persistidos

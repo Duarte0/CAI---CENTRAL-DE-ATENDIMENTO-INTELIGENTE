@@ -39,12 +39,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0021,
-  2026-08-17) passed compileall, strict Pyright, offline pytest (**198 passed,
-  65 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
-  (**65 passed, 198 deselected**). The 65 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0022,
+  2026-08-17) passed compileall, strict Pyright, offline pytest (**199 passed,
+  66 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
+  (**66 passed, 199 deselected**). The 66 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -220,7 +220,10 @@ currently in progress._
    gap, and issue 0019 makes Request adapter instances share the configured
    in-process Sliding Window by provider endpoint/configuration, and issue 0021
    keeps persisted payload-load failures before `post_started_at` retryable
-   without a provider call. Milestones A–D supply the declared classification,
+   without a provider call. Issue 0022 classifies an unproven `429` as
+   `reconciliation_required`; status and `Retry-After` do not authorize a
+   second POST because the provider contract has no non-creation proof signal.
+   Milestones A–D supply the declared classification,
    company and department facts; lifecycle work remains Milestone F.
 
    Build evidence (2026-08-17): the disposable runner passed compileall, strict
@@ -264,18 +267,20 @@ publication.
 Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015. Milestone D is implemented under issues 0016 and 0020; Milestone E is
-implemented under issues 0017–0019 with its Request contract and A–D facts
+implemented under issues 0017–0019 and 0021–0022 with its Request contract and A–D facts
 available. No specification in this sequence authorizes application changes
 until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
-was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019/0021
+was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019/0021/0022
 build sync records department mapping, the corrected Request transport and
-shared Request rate admission boundary: README, PRD, architecture, SPEC-0008,
+shared Request rate admission boundary and the conservative `429` boundary:
+README, PRD, architecture, SPEC-0008,
 SPEC-0009, SPEC-0010, the specs index, and this plan record the implemented
 backfill, identity resolution, mapping, Request creation, Alembic `0019`, and the latest local
 runner evidence, including the cycle-scoped department-mapping correction in
-issue 0020 and the issue-0021 pre-POST boundary. These results remain disposable/local and do not imply provider,
+issue 0020, the issue-0021 pre-POST boundary, and issue 0022's `429`
+reconciliation. These results remain disposable/local and do not imply provider,
 Redis, deployment, or production readiness.
 
 ### Separate pending work
@@ -381,6 +386,6 @@ Redis, deployment, or production readiness.
 ## Recommended next pass
 
 Milestones C and D are complete under issues 0015, 0016, and 0020, and Milestone E is
-implemented under issues 0017–0019 and 0021. Open corrective issues 0022–0023 remain
+implemented under issues 0017–0019 and 0021–0022. Open corrective issue 0023 remains
 before Milestone F can be considered the next optional increment; that
 milestone still requires a new product decision and specification.

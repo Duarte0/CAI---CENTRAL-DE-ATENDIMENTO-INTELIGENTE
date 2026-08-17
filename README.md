@@ -95,8 +95,7 @@ fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resulta
 imutável por ciclo; confirmação continua exclusivamente manual.
 
 Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
-etapa implementada pelos issues 0017–0019, com a correção de fronteira do issue
-0021, cria Requests somente após fatos
+etapa implementada pelos issues 0017–0019 e 0021–0022 cria Requests somente após fatos
 duráveis de ciclo, classificação, identidade confirmada e mapping válido; o
 efeito externo é separado por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
@@ -105,7 +104,9 @@ marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
 provider. Os adapters de Request no mesmo processo compartilham
 o limite Sliding Window por endpoint/configuração antes do POST, sem persistir
 token, header ou payload. Uma `ConnectionError`, timeout ou falha de
-protocolo comum permanece ambígua e não inicia um segundo POST. Telefone, nome,
+protocolo comum permanece ambígua e não inicia um segundo POST. Uma resposta
+`429` sem prova documentada de não criação também exige reconciliação e ignora
+`Retry-After` como autorização para novo POST. Telefone, nome,
 `idFromService`, `jidId`,
 `lidId` e grupos permanecem apenas metadata/evidência; não há matching ou
 confirmação automática. O full backfill interno de Contacts valida a resposta
@@ -462,7 +463,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-17, a etapa offline produziu
-**198 passed, 65 skipped** e a etapa PostgreSQL produziu **65 passed, 198
+**199 passed, 66 skipped** e a etapa PostgreSQL produziu **66 passed, 199
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
@@ -471,7 +472,7 @@ fundação do diretório Acessórias, a identidade/hydration de contatos DigiSac
 a resolução conservadora de identidade, o mapeamento departamental com
 auditoria e snapshots por ciclo, e a criação durável de Request com retry
 seguro, payload pré-POST, claims concorrentes, reconciliação de resultado
-incerto, `SolID` e admissão compartilhada entre adapters.
+incerto e de `429`, `SolID` e admissão compartilhada entre adapters.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

@@ -273,11 +273,11 @@ def test_provider_never_treats_message_or_uncertain_status_as_success(
     assert outcome.solid_id is None
 
 
-def test_provider_retries_only_safe_rate_limit_and_bounds_pre_send_failure() -> None:
+def test_provider_retries_only_safe_transient_and_bounds_pre_send_failure() -> None:
     sleeps: list[float] = []
     session = FakeSession(
         [
-            FakeResponse({"Erro": "busy"}, status_code=429, headers={"Retry-After": "2"}),
+            FakeResponse({"Erro": "busy"}, status_code=408, headers={"Retry-After": "2"}),
             FakeResponse({"id": "SOL-42"}),
         ]
     )
@@ -329,6 +329,40 @@ def test_provider_retries_only_safe_rate_limit_and_bounds_pre_send_failure() -> 
     outcome = failed.create_request(payload)
     assert outcome.state == "retryable_failure"
     assert outcome.category == "pre_send_connection"
+
+
+def test_provider_429_without_non_creation_proof_requires_reconciliation() -> None:
+    session = FakeSession(
+        [
+            FakeResponse({"Erro": "busy"}, status_code=429, headers={"Retry-After": "2"}),
+            FakeResponse({"id": "SOL-must-not-be-created"}),
+        ]
+    )
+    sleeps: list[float] = []
+    adapter = AcessoriasRequestAdapter(
+        token="secret-token",
+        session=session,
+        max_attempts=2,
+        sleep=sleeps.append,
+        retry_base_seconds=0.0,
+        retry_max_delay_seconds=5.0,
+        retry_provider_margin_seconds=0.0,
+    )
+    payload = build_request_payload(
+        title="Title",
+        description="Description",
+        company_external_id="company-1",
+        department_external_id="10",
+    )
+
+    outcome = adapter.create_request(payload)
+
+    assert outcome.state == "reconciliation_required"
+    assert outcome.category == "uncertain_rate_limit"
+    assert outcome.provider_status == 429
+    assert outcome.solid_id is None
+    assert len(session.calls) == 1
+    assert sleeps == []
 
 
 def test_request_rate_limit_is_shared_across_instances_and_expires() -> None:
@@ -776,6 +810,47 @@ async def test_uncertain_request_replay_and_concurrency_do_not_post_again() -> N
     assert provider.calls == 1
     assert {result["id"] for result in replays} == {first["id"]}
     assert {result["state"] for result in replays} == {"reconciliation_required"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_uncertain_429_is_durable_and_reconciles_without_replay_post() -> None:
+    cycle_id = await seed_eligible_cycle("429-reconciliation")
+    session = FakeSession(
+        [
+            FakeResponse({"Erro": "busy"}, status_code=429, headers={"Retry-After": "2"}),
+            FakeResponse({"id": "SOL-duplicate-if-retried"}),
+        ]
+    )
+    provider = AcessoriasRequestAdapter(
+        token="secret-token",
+        session=session,
+        max_attempts=2,
+        retry_base_seconds=0.0,
+        retry_max_delay_seconds=5.0,
+        retry_provider_margin_seconds=0.0,
+    )
+
+    first = await create_request_for_cycle(cycle_id, provider=provider)
+    replays = await asyncio.gather(
+        *[create_request_for_cycle(cycle_id, provider=provider) for _ in range(3)]
+    )
+
+    assert first["state"] == "reconciliation_required"
+    assert first["failure_category"] == "uncertain_rate_limit"
+    assert first["sol_id"] is None
+    assert {result["id"] for result in replays} == {first["id"]}
+    assert {result["state"] for result in replays} == {"reconciliation_required"}
+    assert len(session.calls) == 1
+
+    reconciled = await reconcile_request_operation(
+        cycle_id,
+        solid_id="SOL-verified-429",
+        reason="verified_remote_request",
+        operation_key="reconcile-429",
+    )
+    assert reconciled["state"] == "completed"
+    assert reconciled["sol_id"] == "SOL-verified-429"
 
 
 @pytest.mark.asyncio

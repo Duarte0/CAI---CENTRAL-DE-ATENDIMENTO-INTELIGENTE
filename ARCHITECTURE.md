@@ -117,7 +117,7 @@ administered PostgreSQL rule keyed by stable provider IDs and the confirmed
 company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
 Request operation runs only after a persisted valid
-classification and mapping; issues 0017–0019 and 0021 give it durable one-cycle
+classification and mapping; issues 0017–0019 and 0021–0022 give it durable one-cycle
 uniqueness, claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start; the
@@ -420,7 +420,8 @@ application verifies that schema at startup and does not create or mutate it.
 - A Request operation is persisted before every provider POST; only a non-empty
   provider `id` confirms completion, and uncertain transport outcomes cannot
   auto-post a second Request. Only an explicit pre-send boundary marker may
-  enter the bounded retry path.
+  enter the bounded retry path; an unproven `429` is reconciliation-required
+  even when `Retry-After` is present.
 - Unrelated dead-letter entries are not removed during targeted recovery.
 - No retention, archival, or deletion policy is currently implemented.
 
@@ -431,7 +432,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **197 passed, 64 skipped** offline and **64 passed, 197 deselected** in
+  was **199 passed, 66 skipped** offline and **66 passed, 199 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -468,11 +469,12 @@ records these delivery limitations:
   implemented separately under issue `0017`.
 
 - Durable Acessórias Request creation is implemented under issues `0017`–`0019` and
-  `0021`. It
+  `0021`–`0022`. It
   validates terminal-cycle, confirmed-identity, and current mapping facts,
   admits provider calls through the shared in-process rate limiter, sends only
   the approved multipart fields, persists `SolID` after a successful local
-  commit, leaves uncertain provider outcomes for manual reconciliation, and keeps
+  commit, leaves uncertain provider outcomes (including unproven `429` responses)
+  for manual reconciliation, and keeps
   payload-load failures before `post_started_at` retryable without provider calls.
 
 These items are not architectural failures of the current implementation, but
