@@ -114,9 +114,11 @@ an explicitly administered PostgreSQL rule keyed by stable provider IDs, and
 the confirmed company's current Acessórias relationship. It persists an
 append-only cycle evaluation and does not use IA \`intent_type\`, names, or
 fallback selection. The Request operation runs only after a persisted valid
-classification and mapping; it has its own durable one-cycle uniqueness,
-claim/reconciliation, and failure state and cannot roll back a completed
-classification.
+classification and mapping; issues 0017–0018 give it durable one-cycle
+uniqueness, claim/reconciliation, and failure state. The adapter retries only
+when a transport boundary explicitly proves that the POST did not start;
+ordinary connection, timeout, and protocol failures remain uncertain and cannot
+roll back a completed classification or trigger a second POST.
 
 ## 3. Inbound webhook flow
 
@@ -400,8 +402,9 @@ application verifies that schema at startup and does not create or mutate it.
 - Terminal image failures block classification; terminal audio failures preserve
   a warning marker.
 - A Request operation is persisted before every provider POST; only a non-empty
-  provider `id` confirms completion, and uncertain outcomes cannot auto-post a
-  second Request.
+  provider `id` confirms completion, and uncertain transport outcomes cannot
+  auto-post a second Request. Only an explicit pre-send boundary marker may
+  enter the bounded retry path.
 - Unrelated dead-letter entries are not removed during targeted recovery.
 - No retention, archival, or deletion policy is currently implemented.
 
@@ -411,8 +414,8 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its observed 2026-08-14 evidence
-  was **183 passed, 60 skipped** offline and **60 passed, 183 deselected** in
+  PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
+  was **192 passed, 61 skipped** offline and **61 passed, 192 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes

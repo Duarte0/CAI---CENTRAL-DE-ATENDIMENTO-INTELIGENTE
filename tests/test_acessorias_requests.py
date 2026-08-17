@@ -12,6 +12,7 @@ from src.core.acessorias_requests import (
     AcessoriasRequestAdapter,
     AcessoriasRequestError,
     AcessoriasRequestOutcome,
+    AcessoriasRequestPreSendError,
     build_request_payload,
     create_request_for_cycle,
     reconcile_request_operation,
@@ -264,9 +265,29 @@ def test_provider_retries_only_safe_rate_limit_and_bounds_pre_send_failure() -> 
     assert len(session.calls) == 2
     assert sleeps == [2.0]
 
+    pre_send_sleeps: list[float] = []
+    safe_session = FakeSession(
+        [AcessoriasRequestPreSendError(), FakeResponse({"id": "SOL-safe"})]
+    )
+    safe = AcessoriasRequestAdapter(
+        token="secret-token",
+        session=safe_session,
+        sleep=pre_send_sleeps.append,
+        max_attempts=2,
+        retry_base_seconds=0.0,
+        retry_max_delay_seconds=1.0,
+    )
+    safe_outcome = safe.create_request(payload)
+    assert safe_outcome.state == "completed"
+    assert safe_outcome.solid_id == "SOL-safe"
+    assert len(safe_session.calls) == 2
+    assert pre_send_sleeps == [0.0]
+
     failed = AcessoriasRequestAdapter(
         token="secret-token",
-        session=FakeSession([requests.ConnectionError(), requests.ConnectionError()]),
+        session=FakeSession(
+            [AcessoriasRequestPreSendError(), AcessoriasRequestPreSendError()]
+        ),
         max_attempts=2,
         retry_base_seconds=0.0,
         retry_max_delay_seconds=1.0,
@@ -274,6 +295,48 @@ def test_provider_retries_only_safe_rate_limit_and_bounds_pre_send_failure() -> 
     outcome = failed.create_request(payload)
     assert outcome.state == "retryable_failure"
     assert outcome.category == "pre_send_connection"
+
+
+@pytest.mark.parametrize(
+    ("transport_error", "expected_category"),
+    [
+        (
+            requests.ConnectionError("peer disconnected after transmission"),
+            "uncertain_transport",
+        ),
+        (requests.ConnectTimeout("connection timing is ambiguous"), "timeout_after_send"),
+        (
+            requests.exceptions.ChunkedEncodingError("response protocol is ambiguous"),
+            "uncertain_transport",
+        ),
+    ],
+)
+def test_ambiguous_transport_after_transmission_is_not_retried(
+    transport_error: Exception, expected_category: str,
+) -> None:
+    session = FakeSession(
+        [transport_error, FakeResponse({"id": "SOL-2"})]
+    )
+    adapter = AcessoriasRequestAdapter(
+        token="secret-token",
+        session=session,
+        max_attempts=2,
+        retry_base_seconds=0.0,
+        retry_max_delay_seconds=1.0,
+    )
+    payload = build_request_payload(
+        title="Title",
+        description="Description",
+        company_external_id="company-1",
+        department_external_id="10",
+    )
+
+    outcome = adapter.create_request(payload)
+
+    assert outcome.state == "reconciliation_required"
+    assert outcome.category == expected_category
+    assert outcome.solid_id is None
+    assert len(session.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -507,3 +570,30 @@ async def test_concurrent_request_claims_issue_one_provider_post() -> None:
     completed = await create_request_for_cycle(cycle_id, provider=provider)
     assert completed["state"] == "completed"
     assert completed["sol_id"] == "SOL-concurrent"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_uncertain_request_replay_and_concurrency_do_not_post_again() -> None:
+    cycle_id = await seed_eligible_cycle("uncertain-replay")
+
+    class UncertainProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create_request(self, payload: Any) -> AcessoriasRequestOutcome:
+            self.calls += 1
+            return AcessoriasRequestOutcome.reconciliation("uncertain_transport")
+
+    provider = UncertainProvider()
+    first = await create_request_for_cycle(cycle_id, provider=provider)
+    replays = await asyncio.gather(
+        *[create_request_for_cycle(cycle_id, provider=provider) for _ in range(4)]
+    )
+
+    assert first["state"] == "reconciliation_required"
+    assert first["failure_category"] == "uncertain_transport"
+    assert first["sol_id"] is None
+    assert provider.calls == 1
+    assert {result["id"] for result in replays} == {first["id"]}
+    assert {result["state"] for result in replays} == {"reconciliation_required"}

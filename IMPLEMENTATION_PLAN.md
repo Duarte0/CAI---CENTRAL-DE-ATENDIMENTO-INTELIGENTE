@@ -29,12 +29,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0017,
-  2026-08-14) passed compileall, strict Pyright, offline pytest (**177 passed,
-  60 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
-  (**60 passed, 183 deselected**). The 60 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0018,
+  2026-08-17) passed compileall, strict Pyright, offline pytest (**192 passed,
+  61 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
+  (**61 passed, 192 deselected**). The 61 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -200,19 +200,25 @@ currently in progress._
    `tipo=E`, provider fields and success `id`/`SolID` contract. It centralizes
    priority `2`, preserves a single durable operation per cycle, and requires
    conservative retry: no invented idempotency key and no automatic retry when
-   the POST outcome is uncertain. Manual `manual_db` reconciliation is the
-   initial operator workflow. Issue 0017 implements this operation after
+   the POST outcome is uncertain. Only an explicit provider-boundary proof of
+   pre-send failure can enter the bounded retry path; ordinary connection,
+   timeout, and protocol failures require `manual_db` reconciliation. Issue
+   0017 implements the operation and issue 0018 closes this transport gap after
    Milestones A–D supply the declared classification, company and department
    facts; lifecycle work remains Milestone F.
 
-   Build evidence (2026-08-14): the disposable runner passed compileall, strict
-   Pyright, offline pytest (**183 passed, 60 skipped**), Alembic head
-   `0019_acessorias_request_creation`, and PostgreSQL pytest (**60 passed,
-   183 deselected**). Tests cover exact multipart fields, durable operation
+   Build evidence (2026-08-17): the disposable runner passed compileall, strict
+   Pyright, offline pytest (**192 passed, 61 skipped**), Alembic head
+   `0019_acessorias_request_creation`, and PostgreSQL pytest (**61 passed,
+   192 deselected**). Tests cover exact multipart fields, durable operation
    uniqueness, terminal eligibility, safe retry, uncertain outcomes, claims,
    manual reconciliation/release, concurrency, rollback guards, and privacy.
    This is local synthetic/disposable evidence only; no provider credential,
    Redis, deployment, or production claim was made.
+   Issue 0018 additionally verifies the explicit pre-send retry marker,
+   ambiguous connection/timeout/protocol outcomes with one provider call, and
+   durable replay/concurrency without a second POST; its focused offline result
+   is recorded in the issue and SPEC-0011.
 
 6. **[P2 | pending | optional] Milestone F — Request lifecycle
    integration.** Outcome: future status, interactions, comments, attachments,
@@ -232,13 +238,14 @@ publication.
 Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015. Milestone D is implemented under issue 0016; Milestone E is
-implemented under issue 0017 with its Request contract and A–D facts
+implemented under issues 0017–0018 with its Request contract and A–D facts
 available. No specification in this sequence authorizes application changes
 until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
-was reconciled during the issue-0015 build sync, and the issue-0016 build sync
-now records department mapping: README, PRD, architecture, SPEC-0008,
+was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018
+build sync records department mapping and the corrected Request transport
+boundary: README, PRD, architecture, SPEC-0008,
 SPEC-0009, SPEC-0010, the specs index, and this plan record the implemented
 backfill, identity resolution, mapping, Request creation, Alembic `0019`, and the latest local
 runner evidence. These results remain disposable/local and do not imply provider,
@@ -335,5 +342,5 @@ Redis, deployment, or production readiness.
 ## Recommended next pass
 
 Milestones C and D are complete under issues 0015 and 0016, and Milestone E is
-implemented under issue 0017. Milestone F remains the next optional increment
+implemented under issues 0017–0018. Milestone F remains the next optional increment
 and requires a new product decision and specification.

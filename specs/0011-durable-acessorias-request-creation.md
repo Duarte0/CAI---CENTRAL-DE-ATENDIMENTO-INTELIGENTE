@@ -1,7 +1,7 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelo issue 0017; evidência descartável, sem provider/produção
-- **Versão:** 1.1
+- **Status:** implementada localmente pelos issues 0017–0018; evidência descartável, sem provider/produção
+- **Versão:** 1.1 (issue 0018 corrige a classificação de transporte sem alterar a política)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0008 implementadas; Milestones C (SPEC-0009) e D (SPEC-0010) concluídos para o ciclo elegível; credencial operacional segura disponível
@@ -13,6 +13,18 @@ operação durável por ciclo, claims/leases conservadores e reconciliação
 **183 passed, 60 skipped** offline e **60 passed, 183 deselected** em
 PostgreSQL 16; isso é evidência local sintética/descartável e não comprova
 credencial, provider, Redis, deployment ou produção.
+
+**Correção de transporte (2026-08-17):** issue 0018 mantém `reconciliation_required`
+para `requests.ConnectionError`, timeout ou falha de protocolo sem prova forte de
+pré-envio. Somente a fronteira que puder provar que o POST não começou pode usar o
+marcador explícito `AcessoriasRequestPreSendError` e seguir o retry limitado; não
+se interpreta a exceção padrão do `requests` como prova de ausência remota.
+
+**Evidência adicional (2026-08-17):** o teste focado passou com **10 passed, 5
+skipped**; o runner descartável passou compileall, Pyright, **192 passed, 61
+skipped** offline, Alembic `0019_acessorias_request_creation` e **61 passed,
+192 deselected** em PostgreSQL 16. Isso é evidência local sintética/descartável,
+sem credencial real, provider, Redis, deployment ou produção.
 
 ## Objetivo e não objetivos
 
@@ -54,7 +66,7 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 
 1. Os nomes finais podem seguir convenções existentes, mas a semântica deve distinguir: `not_started`/`pending` (persistida, sem POST), `attempting`, `completed` (sucesso com `SolID` duravelmente salvo), `definitive_failure`, `retryable_failure` e `reconciliation_required`. Pode existir estado operacional separado para credencial/permissão aguardando correção.
 2. Erro JSON do provider com chave `Erro` deve participar da classificação; status HTTP isolado não é autoridade suficiente. Erro business/validação que rejeita a criação é `definitive_failure`. Bearer ausente/inválido ou falta de permissão é falha operacional sanitizada, sem retry agressivo e sem mudança da classificação. `429` é transitório, mas só é retryable quando o adapter puder determinar que não houve criação remota.
-3. Uma nova tentativa automática é permitida somente com evidência forte de que o POST não foi processado: falha local antes de iniciar HTTP, falha de conexão antes de envio, rejeição explícita sem criação, ou erro transitório/`429` documentado para o qual o adapter pode provar ausência de sucesso remoto. Ela deve ser limitada, respeitar o rate limit e usar backoff.
+3. Uma nova tentativa automática é permitida somente com evidência forte de que o POST não foi processado: falha local antes de iniciar HTTP, falha de conexão explicitamente marcada pela fronteira como anterior ao envio, rejeição explícita sem criação, ou erro transitório/`429` documentado para o qual o adapter pode provar ausência de sucesso remoto. A exceção padrão de conexão do transporte não fornece essa prova. A nova tentativa deve ser limitada, respeitar o rate limit e usar backoff.
 4. Timeout após envio, conexão encerrada após envio, resposta ilegível após possível processamento, `5xx` sem prova de não processamento, sucesso sem `id`, queda durante tentativa ou qualquer situação em que o provider possa ter aceitado o POST sem `SolID` duravelmente persistido é `reconciliation_required`. Não pode haver retry automático nem segundo Request; a operação deve permanecer visível operacionalmente.
 5. Como não há idempotency key nem consulta documentada por chave fornecida pelo cliente, o primeiro milestone não pode confirmar automaticamente por correlação frágil de assunto/data. A reconciliação inicial é administrativa, diretamente no PostgreSQL e por consulta à API Acessórias, sem UI.
 6. Em operação controlada, o operador pode consultar a Acessórias e: (a) se o Request existir, registrar explicitamente seu `SolID` e marcar `completed`/`reconciled`; ou (b) somente com prova de que não foi criado, liberar explicitamente uma nova tentativa. Deve registrar timestamp, origem `manual_db` e ator apenas quando existir identidade administrativa confiável. Não se inventa ator.
@@ -65,7 +77,7 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 1. A criação não altera as oito rotas HTTP, webhook, finalização, contrato IA nem classificações existentes; não há endpoint público para dispará-la. A operação nasce do pipeline interno depois dos pré-requisitos.
 2. Logs, métricas e estado operacional podem expor IDs seguros, estado, tentativas, duração, categoria sanitizada, fingerprint e referência externa segura. Não podem conter token, header, payload bruto, telefone, email, conversa, `title`/`description` completos ou outros dados sensíveis.
 3. Doubles determinísticos e testes PostgreSQL descartáveis devem cobrir: ciclo `completed` elegível cria operação; replay usa a mesma operação sem segundo POST; empresa unresolved/ambiguous, mapping ausente e departamento não permitido não chamam provider; assunto acima de 100 tem corte determinístico; payload contém `prioridade=2` e `tipo=E`; e anexos/`data_prazo` não são enviados.
-4. Devem cobrir sucesso com `id` (`completed` + `SolID`), sucesso sem `id` (não completed), `Erro` business definitivo, auth/permissão operacional, `429`, `5xx` e conexão pré-envio retryable somente com prova de não processamento, e timeout/perda de conexão pós-envio como `reconciliation_required`.
+4. Devem cobrir sucesso com `id` (`completed` + `SolID`), sucesso sem `id` (não completed), `Erro` business definitivo, auth/permissão operacional, `429`, `5xx`, o marcador explícito de conexão pré-envio retryable e a conexão/protocolo ambíguos sem segundo POST, além de timeout/perda de conexão pós-envio como `reconciliation_required`.
 5. Devem provar claim concorrente, crash antes/durante/depois do POST, replay de `completed` como no-op, reconciliação manual com `SolID`, liberação manual explícita após prova de ausência remota e ausência de token/PII sensível em logs e estado. A implementação deve passar a suíte offline aplicável, Pyright estrito e o runner canônico de SPEC-0004; doubles não comprovam credenciais, provider real ou produção.
 
 ## Decisões registradas e evidência de implementação
@@ -73,6 +85,9 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 Endpoint, autenticação, formato multipart, campos, `tipo=E`, prioridade padrão,
 limite, confirmação por `id`, ausência de idempotency key, retry conservador,
 reconciliação manual e operação administrativa inicial estão aprovados e foram
-implementados pelo issue 0017. A credencial operacional continua necessária
-para uma chamada real; doubles e o runner não comprovam provider ou produção.
+implementados pelos issues 0017–0018. A credencial operacional continua
+necessária para uma chamada real; doubles e o runner não comprovam provider ou
+produção. A correção do issue 0018 é conservadora e não amplia a autorização de
+retry: erros de transporte sem prova explícita de pré-envio permanecem sujeitos
+à reconciliação manual.
 Isso não amplia o escopo ao lifecycle do Milestone F.

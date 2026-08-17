@@ -203,15 +203,15 @@ are not mapping inputs. Current company departments are directory state, not a
 constraint that invalidates historical external Requests; a later evaluation
 may record a new outcome without rewriting a terminal snapshot.
 
-Issue 0017 implements the durable Request boundary. A terminal eligible cycle
+Issues 0017–0018 implement the durable Request boundary. A terminal eligible cycle
 with one confirmed company and a current valid mapped department creates at
 most one PostgreSQL operation and one multipart `POST /requests`. Only a
-non-empty provider `id` becomes the persisted `SolID`; safe pre-send failures
-may retry, while uncertain outcomes require `manual_db` reconciliation. The
-operation stores no raw title, description, payload, token, header, provider
-body, or PII and never changes the originating classification. There is no
-public or admin HTTP trigger, and Request lifecycle operations remain outside
-this increment.
+non-empty provider `id` becomes the persisted `SolID`; only an explicitly proven
+pre-send transport failure may retry, while ordinary connection, timeout, and
+protocol failures require `manual_db` reconciliation. The operation stores no
+raw title, description, payload, token, header, provider body, or PII and never
+changes the originating classification. There is no public or admin HTTP
+trigger, and Request lifecycle operations remain outside this increment.
 
 
 ## 6. Context and AI contract
@@ -332,18 +332,18 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`–`0017` added the Acessórias directory, DigiSac contact identity
+issues `0012`–`0018` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
-resolution, and stable-ID department mapping. The observed local
-runner evidence on 2026-08-14 is:
+resolution, stable-ID department mapping, and conservative Request transport
+classification. The observed local runner evidence on 2026-08-17 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 183 passed, 60 skipped (the skips are deliberately absent
+- offline pytest: 192 passed, 61 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
 - Alembic: `0019_acessorias_request_creation` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 60 passed, 183 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 61 passed, 192 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, dependent image wake-up, and
   stable-ID department mapping with audited cycle snapshots, plus durable
@@ -372,7 +372,7 @@ The product owner has decided the following policies:
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issue 0016; Request creation is implemented under SPEC-0011/issue 0017 with durable one-cycle uniqueness, conservative retry, and manual reconciliation. |
+| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issue 0016; Request creation is implemented under SPEC-0011/issues 0017–0018 with durable one-cycle uniqueness, explicit-proof-only retry, and manual reconciliation. |
 
 ## 11. Source traceability
 

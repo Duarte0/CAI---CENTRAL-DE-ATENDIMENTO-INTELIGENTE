@@ -16,11 +16,12 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.3; issues 0013 e 0014 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, hydration individual e full backfill idempotentes; sem resolução de empresa. |
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.1; issue 0015 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência e candidatos conservadores, vínculos muitos-para-muitos e resolução por ciclo; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.1; issue 0016 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, auditoria de lifecycle e snapshots de avaliação contra `company_departments`; não usa IA nem cria Request. |
-| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.1; issue 0017 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, sem idempotency key do provider, com retry conservador e reconciliação manual. |
+| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.1; issues 0017–0018 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, sem idempotency key do provider, com retry conservador somente sob prova de pré-envio e reconciliação manual. |
 
-A evidência mais recente registrada para SPEC-0004 é **183 passed, 60 skipped**
-na etapa offline e **60 passed, 183 deselected** na etapa PostgreSQL
-descartável (issue 0017). Os resultados **177/56** e **56/177** (issue 0016),
+A evidência mais recente registrada para SPEC-0004 é **192 passed, 61 skipped**
+na etapa offline e **61 passed, 192 deselected** na etapa PostgreSQL
+descartável (issue 0018). Os resultados **183/60** e **60/183** (issue 0017),
+**177/56** e **56/177** (issue 0016),
 **175/48** e **48/175** (issue 0015),
 **169/42** e **42/169** (issue 0014),
 **160/40** e **40/160** (issue 0013),
@@ -54,8 +55,10 @@ pelo issue 0016: o mapping global por IDs externos estáveis é administrado por
 procedimento `manual_db`, sem UI/endpoint e com ator opcional; regras e
 avaliações de ciclo são persistidas somente no PostgreSQL. SPEC-0011 v1.1 tem
 contrato Request e políticas de duplicidade, retry e reconciliação implementados
-pelo issue 0017; a migration `0019` e a operação durável preservam a
-classificação e não inventam idempotency key do provider. SPEC-0009 v1.1 foi
+pelos issues 0017–0018; a migration `0019` e a operação durável preservam a
+classificação e não inventam idempotency key do provider. Erros de conexão,
+timeout ou protocolo sem marcador explícito de pré-envio ficam em
+`reconciliation_required` e não podem iniciar outro POST. SPEC-0009 v1.1 foi
 implementada pelo issue 0015: a variante
 móvel brasileira permanece evidência conservadora, a confirmação inicial é o
 procedimento controlado `manual_db`, e os resultados locais são persistidos

@@ -54,6 +54,16 @@ class AcessoriasRequestError(RuntimeError):
         self.safe_message = message
 
 
+class AcessoriasRequestPreSendError(requests.ConnectionError):
+    """Transport failure explicitly proven before the POST could be sent.
+
+    The stock ``requests`` exceptions do not identify whether a connection
+    failed before or after request transmission.  Only a transport boundary
+    that can establish the pre-send fact may raise this marker; ordinary
+    connection errors remain ambiguous and require reconciliation.
+    """
+
+
 class AcessoriasRequestConflictError(AcessoriasRequestError):
     def __init__(self, message: str = "request reconciliation conflicts") -> None:
         super().__init__("reconciliation_conflict", message)
@@ -293,13 +303,15 @@ class AcessoriasRequestAdapter:
                     headers=headers,
                     timeout=self.timeout_seconds,
                 )
-            except requests.ConnectionError:
+            except AcessoriasRequestPreSendError:
                 if attempt < self.max_attempts:
                     self.sleep(self._retry_delay(attempt, None))
                     continue
                 return AcessoriasRequestOutcome.retryable("pre_send_connection")
             except requests.Timeout:
                 return AcessoriasRequestOutcome.reconciliation("timeout_after_send")
+            except requests.ConnectionError:
+                return AcessoriasRequestOutcome.reconciliation("uncertain_transport")
             except requests.RequestException:
                 return AcessoriasRequestOutcome.reconciliation("uncertain_transport")
 
