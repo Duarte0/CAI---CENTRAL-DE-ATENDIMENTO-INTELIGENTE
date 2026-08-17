@@ -1,6 +1,6 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0018; evidência descartável, sem provider/produção
+- **Status:** implementada localmente pelos issues 0017–0019; evidência descartável, sem provider/produção
 - **Versão:** 1.1 (issue 0018 corrige a classificação de transporte sem alterar a política)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
@@ -25,6 +25,21 @@ skipped**; o runner descartável passou compileall, Pyright, **192 passed, 61
 skipped** offline, Alembic `0019_acessorias_request_creation` e **61 passed,
 192 deselected** em PostgreSQL 16. Isso é evidência local sintética/descartável,
 sem credencial real, provider, Redis, deployment ou produção.
+
+**Correção de coordenação (2026-08-17):** issue 0019 compartilha o Sliding
+Window entre instâncias do adapter de Request no mesmo processo, separado por
+endpoint/configuração do provider. A admissão é serializada antes do POST; a
+expiração da janela e o isolamento entre configurações permanecem
+determinísticos. O estado é apenas memória transitória e não contém token,
+header ou payload.
+
+**Evidência da correção (2026-08-17):** o teste focado passou com **12 passed,
+5 skipped**; o runner descartável passou compileall, Pyright, **197 passed, 61
+skipped** offline, Alembic `0019_acessorias_request_creation` e **61 passed,
+197 deselected** em PostgreSQL 16. Os testes adicionados cobrem instâncias
+distintas, expiração, isolamento por endpoint e admissão concorrente. Isso é
+evidência local sintética/descartável, sem credencial real, provider, Redis,
+deployment ou produção.
 
 ## Objetivo e não objetivos
 
@@ -51,7 +66,7 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 5. A prioridade inicial é política de domínio centralizada `2` (Média). Ela não pode ser inferida de `confidence` ou `intent_type`, espalhada como magic number, nem configurada por empresa/departamento neste milestone.
 6. Sucesso só é confirmado por resposta que contenha `id` não vazio. Esse valor é o `SolID` externo a persistir; `msg` não é identidade e não pode ser usado para inferir sucesso. A resposta documentada é compatível com `{ "id": "1", "msg": "Solicitação 1 criada com sucesso!" }`.
 7. O provider não documenta idempotency key para este endpoint. A implementação não deve inventar header ou parâmetro de idempotência; a prevenção de duplicidade é responsabilidade durável do CAI.
-8. O limite documentado é 100 requests/minute com Sliding Window. O adapter deve aplicar limite conservador compartilhado, respeitar `Retry-After` quando presente e usar backoff limitado quando ausente. Não precisa consumir toda a capacidade.
+8. O limite documentado é 100 requests/minute com Sliding Window. Os adapters de Request no mesmo processo devem aplicar limite conservador compartilhado por endpoint/configuração do provider, respeitar `Retry-After` quando presente e usar backoff limitado quando ausente. Não precisa consumir toda a capacidade; processos distintos continuam sujeitos à topologia operacional e à verificação externa do provider.
 
 ## Elegibilidade e operação durável
 
@@ -85,9 +100,11 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 Endpoint, autenticação, formato multipart, campos, `tipo=E`, prioridade padrão,
 limite, confirmação por `id`, ausência de idempotency key, retry conservador,
 reconciliação manual e operação administrativa inicial estão aprovados e foram
-implementados pelos issues 0017–0018. A credencial operacional continua
+implementados pelos issues 0017–0019. A credencial operacional continua
 necessária para uma chamada real; doubles e o runner não comprovam provider ou
 produção. A correção do issue 0018 é conservadora e não amplia a autorização de
 retry: erros de transporte sem prova explícita de pré-envio permanecem sujeitos
-à reconciliação manual.
+à reconciliação manual. Issue 0019 apenas corrige a coordenação transitória de
+admissão entre adapters do mesmo processo, sem alterar payload, retry ou
+reconciliação.
 Isso não amplia o escopo ao lifecycle do Milestone F.

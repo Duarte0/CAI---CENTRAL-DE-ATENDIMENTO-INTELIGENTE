@@ -95,11 +95,13 @@ fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resulta
 imutável por ciclo; confirmação continua exclusivamente manual.
 
 Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
-etapa implementada pelos issues 0017–0018 cria Requests somente após fatos
+etapa implementada pelos issues 0017–0019 cria Requests somente após fatos
 duráveis de ciclo, classificação, identidade confirmada e mapping válido; o
 efeito externo é separado por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
-e reconciliação `manual_db`. Uma `ConnectionError`, timeout ou falha de
+e reconciliação `manual_db`. Os adapters de Request no mesmo processo compartilham
+o limite Sliding Window por endpoint/configuração antes do POST, sem persistir
+token, header ou payload. Uma `ConnectionError`, timeout ou falha de
 protocolo comum permanece ambígua e não inicia um segundo POST. Telefone, nome,
 `idFromService`, `jidId`,
 `lidId` e grupos permanecem apenas metadata/evidência; não há matching ou
@@ -457,7 +459,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-17, a etapa offline produziu
-**193 passed, 61 skipped** e a etapa PostgreSQL produziu **61 passed, 193
+**197 passed, 61 skipped** e a etapa PostgreSQL produziu **61 passed, 197
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
@@ -465,7 +467,8 @@ fila, o despertar somente dos ciclos dependentes de uma imagem recuperada, a
 fundação do diretório Acessórias, a identidade/hydration de contatos DigiSac,
 a resolução conservadora de identidade, o mapeamento departamental com
 auditoria e snapshots por ciclo, e a criação durável de Request com retry
-seguro, claims concorrentes, reconciliação de resultado incerto e `SolID`.
+seguro, claims concorrentes, reconciliação de resultado incerto, `SolID` e
+admissão compartilhada entre adapters.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

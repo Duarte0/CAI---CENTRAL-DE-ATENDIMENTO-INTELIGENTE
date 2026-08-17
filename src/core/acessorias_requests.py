@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Mapping, Protocol, cast
+from urllib.parse import urlsplit
 
 import psycopg
 import requests
@@ -43,6 +44,13 @@ SAFE_REASON = re.compile(r"^[a-z0-9_:-]{1,120}$")
 SAFE_OPERATION_KEY = re.compile(r"^[a-zA-Z0-9_.:@-]{1,240}$")
 SAFE_SOL_ID = re.compile(r"^[^\s\x00-\x1f\x7f]{1,160}$")
 SAFE_DEPARTMENT_ID = re.compile(r"^[0-9]+$")
+
+
+def _request_rate_limit_key(base_url: str, limit_per_minute: int) -> str:
+    parsed = urlsplit(base_url)
+    safe_netloc = parsed.netloc.rsplit("@", 1)[-1]
+    endpoint = f"{parsed.scheme}://{safe_netloc}{parsed.path.rstrip('/')}"
+    return f"request:{endpoint}:{limit_per_minute}"
 
 
 class AcessoriasRequestError(RuntimeError):
@@ -249,12 +257,16 @@ class AcessoriasRequestAdapter:
         self.session = session or requests.Session()
         self.sleep = sleep
         self.clock = clock
-        self.rate_limiter = _RateLimiter(
+        selected_rate_limit = (
             rate_limit_per_minute
             if rate_limit_per_minute is not None
-            else settings.acessorias_rate_limit_per_minute,
+            else settings.acessorias_rate_limit_per_minute
+        )
+        self.rate_limiter = _RateLimiter(
+            selected_rate_limit,
             sleep=sleep,
             clock=clock,
+            shared_key=_request_rate_limit_key(self.base_url, selected_rate_limit),
         )
 
     def _retry_after(self, response: requests.Response) -> float | None:

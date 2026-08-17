@@ -39,12 +39,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0018,
-  2026-08-17) passed compileall, strict Pyright, offline pytest (**193 passed,
+  PostgreSQL-marked family. The latest recorded full execution (issue 0019,
+  2026-08-17) passed compileall, strict Pyright, offline pytest (**197 passed,
   61 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
-  (**61 passed, 193 deselected**). The 61 offline skips are expected missing
+  (**61 passed, 197 deselected**). The 61 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -213,7 +213,9 @@ currently in progress._
    the POST outcome is uncertain. Only an explicit provider-boundary proof of
    pre-send failure can enter the bounded retry path; ordinary connection,
    timeout, and protocol failures require `manual_db` reconciliation. Issue
-   0017 implements the operation and issue 0018 closes this transport gap after
+   0017 implements the operation, issue 0018 closes the ambiguous transport
+   gap, and issue 0019 makes Request adapter instances share the configured
+   in-process Sliding Window by provider endpoint/configuration after
    Milestones A–D supply the declared classification, company and department
    facts; lifecycle work remains Milestone F.
 
@@ -229,6 +231,16 @@ currently in progress._
    ambiguous connection/timeout/protocol outcomes with one provider call, and
    durable replay/concurrency without a second POST; its focused offline result
    is recorded in the issue and SPEC-0011.
+   Issue 0019 adds deterministic cross-instance, window-expiry, endpoint
+   isolation, and concurrent-admission coverage for the shared limiter; no
+   migration or provider idempotency field was added. Its evidence is local
+   synthetic/disposable and does not prove a multi-process deployment quota.
+   Build evidence (2026-08-17): focused Request tests passed **12 passed, 5
+   skipped**; the canonical runner passed compileall, strict Pyright, offline
+   pytest (**197 passed, 61 skipped**), Alembic head
+   `0019_acessorias_request_creation`, and PostgreSQL pytest (**61 passed,
+   197 deselected**). No provider credential, Redis runtime, deployment, or
+   production quota was used or claimed.
 
 6. **[P2 | pending | optional] Milestone F — Request lifecycle
    integration.** Outcome: future status, interactions, comments, attachments,
@@ -248,14 +260,14 @@ publication.
 Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015. Milestone D is implemented under issue 0016; Milestone E is
-implemented under issues 0017–0018 with its Request contract and A–D facts
+implemented under issues 0017–0019 with its Request contract and A–D facts
 available. No specification in this sequence authorizes application changes
 until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
-was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018
-build sync records department mapping and the corrected Request transport
-boundary: README, PRD, architecture, SPEC-0008,
+was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019
+build sync records department mapping, the corrected Request transport and
+shared Request rate admission boundary: README, PRD, architecture, SPEC-0008,
 SPEC-0009, SPEC-0010, the specs index, and this plan record the implemented
 backfill, identity resolution, mapping, Request creation, Alembic `0019`, and the latest local
 runner evidence. These results remain disposable/local and do not imply provider,
@@ -364,5 +376,6 @@ Redis, deployment, or production readiness.
 ## Recommended next pass
 
 Milestones C and D are complete under issues 0015 and 0016, and Milestone E is
-implemented under issues 0017–0018. Milestone F remains the next optional increment
-and requires a new product decision and specification.
+implemented under issues 0017–0019. Open corrective issues 0020–0023 remain
+before Milestone F can be considered the next optional increment; that
+milestone still requires a new product decision and specification.

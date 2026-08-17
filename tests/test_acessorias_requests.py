@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import time
 from typing import Any
 
@@ -43,6 +45,37 @@ class FakeSession:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+class ControlledClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+        self.sleeps: list[float] = []
+        self._lock = threading.Lock()
+
+    def __call__(self) -> float:
+        with self._lock:
+            return self.value
+
+    def sleep(self, delay: float) -> None:
+        with self._lock:
+            self.sleeps.append(delay)
+            self.value += delay
+
+    def advance(self, delay: float) -> None:
+        with self._lock:
+            self.value += delay
+
+
+class TimedSession:
+    def __init__(self, clock: ControlledClock, solid_id: str) -> None:
+        self.clock = clock
+        self.solid_id = solid_id
+        self.post_times: list[float] = []
+
+    def post(self, url: str, **kwargs: Any) -> FakeResponse:
+        self.post_times.append(self.clock())
+        return FakeResponse({"id": self.solid_id})
 
 
 async def seed_eligible_cycle(slug: str) -> str:
@@ -295,6 +328,80 @@ def test_provider_retries_only_safe_rate_limit_and_bounds_pre_send_failure() -> 
     outcome = failed.create_request(payload)
     assert outcome.state == "retryable_failure"
     assert outcome.category == "pre_send_connection"
+
+
+def test_request_rate_limit_is_shared_across_instances_and_expires() -> None:
+    clock = ControlledClock()
+    payload = build_request_payload(
+        title="Title",
+        description="Description",
+        company_external_id="company-1",
+        department_external_id="10",
+    )
+    common = {
+        "base_url": "https://shared-rate-limit.example.test",
+        "token": "secret-token",
+        "rate_limit_per_minute": 1,
+        "sleep": clock.sleep,
+        "clock": clock,
+        "max_attempts": 1,
+    }
+    first = AcessoriasRequestAdapter(
+        **common, session=FakeSession([FakeResponse({"id": "SOL-1"})])
+    )
+    second = AcessoriasRequestAdapter(
+        **common, session=FakeSession([FakeResponse({"id": "SOL-2"})])
+    )
+    third = AcessoriasRequestAdapter(
+        **common, session=FakeSession([FakeResponse({"id": "SOL-3"})])
+    )
+    independent = AcessoriasRequestAdapter(
+        **{
+            **common,
+            "base_url": "https://independent-rate-limit.example.test",
+        },
+        session=FakeSession([FakeResponse({"id": "SOL-independent"})]),
+    )
+
+    assert first.create_request(payload).solid_id == "SOL-1"
+    assert second.create_request(payload).solid_id == "SOL-2"
+    assert clock.sleeps == [60.0]
+    clock.advance(60.0)
+    assert third.create_request(payload).solid_id == "SOL-3"
+    assert clock.sleeps == [60.0]
+    assert independent.create_request(payload).solid_id == "SOL-independent"
+    assert clock.sleeps == [60.0]
+
+
+def test_request_rate_limit_serializes_concurrent_instances() -> None:
+    clock = ControlledClock()
+    payload = build_request_payload(
+        title="Title",
+        description="Description",
+        company_external_id="company-1",
+        department_external_id="10",
+    )
+    adapters = [
+        AcessoriasRequestAdapter(
+            base_url="https://concurrent-rate-limit.example.test",
+            token="secret-token",
+            rate_limit_per_minute=1,
+            max_attempts=1,
+            session=TimedSession(clock, f"SOL-{index}"),
+            sleep=clock.sleep,
+            clock=clock,
+        )
+        for index in range(2)
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda adapter: adapter.create_request(payload), adapters))
+
+    assert [outcome.solid_id for outcome in outcomes] == ["SOL-0", "SOL-1"]
+    assert clock.sleeps == [60.0]
+    assert sorted(
+        session.post_times for session in (adapter.session for adapter in adapters)
+    ) == [[0.0], [60.0]]
 
 
 @pytest.mark.parametrize(

@@ -114,8 +114,9 @@ an explicitly administered PostgreSQL rule keyed by stable provider IDs, and
 the confirmed company's current Acessórias relationship. It persists an
 append-only cycle evaluation and does not use IA \`intent_type\`, names, or
 fallback selection. The Request operation runs only after a persisted valid
-classification and mapping; issues 0017–0018 give it durable one-cycle
-uniqueness, claim/reconciliation, and failure state. The adapter retries only
+classification and mapping; issues 0017–0019 give it durable one-cycle
+uniqueness, claim/reconciliation, failure state, and shared in-process
+Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start;
 ordinary connection, timeout, and protocol failures remain uncertain and cannot
 roll back a completed classification or trigger a second POST.
@@ -407,6 +408,10 @@ application verifies that schema at startup and does not create or mutate it.
   future work.
 - Terminal image failures block classification; terminal audio failures preserve
   a warning marker.
+- Request adapters for the same provider endpoint/configuration share a
+  concurrency-safe in-process Sliding Window before each POST; its transient
+  state contains no credentials, headers, payload, classification content, or
+  PII.
 - A Request operation is persisted before every provider POST; only a non-empty
   provider `id` confirms completion, and uncertain transport outcomes cannot
   auto-post a second Request. Only an explicit pre-send boundary marker may
@@ -421,7 +426,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **193 passed, 61 skipped** offline and **61 passed, 193 deselected** in
+  was **197 passed, 61 skipped** offline and **61 passed, 197 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -456,10 +461,11 @@ records these delivery limitations:
   add an HTTP route, IA routing, or fallback selection. Request creation is
   implemented separately under issue `0017`.
 
-- Durable Acessórias Request creation is implemented under issue `0017`. It
+- Durable Acessórias Request creation is implemented under issues `0017`–`0019`. It
   validates terminal-cycle, confirmed-identity, and current mapping facts,
-  sends only the approved multipart fields, persists `SolID` after a successful
-  local commit, and leaves uncertain provider outcomes for manual reconciliation.
+  admits provider calls through the shared in-process rate limiter, sends only
+  the approved multipart fields, persists `SolID` after a successful local
+  commit, and leaves uncertain provider outcomes for manual reconciliation.
 
 These items are not architectural failures of the current implementation, but
 they limit release verification and future evolution decisions.

@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from threading import Lock
 import time
 import unicodedata
 from collections import deque
@@ -216,31 +217,50 @@ def _contact_key(company_id: str, name: str, email: str | None, mobile: str | No
 
 
 class _RateLimiter:
+    _shared_states: dict[str, "_RateLimiterState"] = {}
+    _shared_states_lock = Lock()
+
     def __init__(
         self,
         limit_per_minute: int,
         *,
         sleep: Callable[[float], None],
         clock: Callable[[], float],
+        shared_key: str | None = None,
     ) -> None:
         if not 1 <= limit_per_minute <= 100:
             raise ValueError("Acessórias request rate must be between 1 and 100")
         self.limit = limit_per_minute
         self.sleep = sleep
         self.clock = clock
-        self.requests: deque[float] = deque()
+        if shared_key is None:
+            self._state = _RateLimiterState(limit_per_minute)
+        else:
+            with self._shared_states_lock:
+                state = self._shared_states.get(shared_key)
+                if state is None:
+                    state = _RateLimiterState(limit_per_minute)
+                    self._shared_states[shared_key] = state
+                self._state = state
 
     def before_request(self) -> None:
-        now = self.clock()
-        while self.requests and now - self.requests[0] >= 60:
-            self.requests.popleft()
-        if len(self.requests) >= self.limit:
-            delay = max(0.0, 60 - (now - self.requests[0]))
-            self.sleep(delay)
-            now = self.clock()
-            while self.requests and now - self.requests[0] >= 60:
-                self.requests.popleft()
-        self.requests.append(self.clock())
+        with self._state.lock:
+            while True:
+                now = self.clock()
+                while self._state.requests and now - self._state.requests[0] >= 60:
+                    self._state.requests.popleft()
+                if len(self._state.requests) < self._state.limit:
+                    self._state.requests.append(now)
+                    return
+                delay = max(0.0, 60 - (now - self._state.requests[0]))
+                self.sleep(delay)
+
+
+class _RateLimiterState:
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.requests: deque[float] = deque()
+        self.lock = Lock()
 
 
 class AcessoriasDirectoryAdapter:
