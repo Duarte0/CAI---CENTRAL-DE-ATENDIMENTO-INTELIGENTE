@@ -6,7 +6,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 
 | ID | Especificação | Status | Prioridade/Fase | Dependências | Resumo |
 | --- | --- | --- | --- | --- | --- |
-| SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.2 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações e fronteiras de privacidade. |
+| SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.3 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações e fronteiras de privacidade. |
 | SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.5 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; não há superfície de diagnóstico de webhook. |
 | SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.3 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente. |
 | SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.6 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
@@ -18,9 +18,11 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.1; issue 0016 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, auditoria de lifecycle e snapshots de avaliação contra `company_departments`; não usa IA nem cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.1; issues 0017–0018 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, sem idempotency key do provider, com retry conservador somente sob prova de pré-envio e reconciliação manual. |
 
-A evidência mais recente registrada para SPEC-0004 é **192 passed, 61 skipped**
-na etapa offline e **61 passed, 192 deselected** na etapa PostgreSQL
-descartável (issue 0018). Os resultados **183/60** e **60/183** (issue 0017),
+A evidência mais recente registrada para SPEC-0004 é **193 passed, 61 skipped**
+na etapa offline e **61 passed, 193 deselected** na etapa PostgreSQL
+descartável (issue 0024). A evidência anterior de issue 0018 foi **192 passed,
+61 skipped** e **61 passed, 192 deselected**. Os resultados **183/60** e
+**60/183** (issue 0017),
 **177/56** e **56/177** (issue 0016),
 **175/48** e **48/175** (issue 0015),
 **169/42** e **42/169** (issue 0014),

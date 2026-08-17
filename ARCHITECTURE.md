@@ -293,6 +293,9 @@ The context pipeline is implemented in \`finalization.py\`, \`models.py\`, and
 - Quoted replies use bounded excerpts.
 - URLs, signed download links, tokens, and binary media are excluded from
   persisted snapshots.
+- Groq parser diagnostics expose only a safe outcome/category and bounded
+  structural metadata; raw or partial model responses and classification fields
+  are not logged.
 - Oversized context is chunked without splitting messages where possible,
   summarized by blocks, and then sent to final classification.
 
@@ -354,7 +357,9 @@ Implemented routes include:
 The webhook normally returns \`202\`; safely ignored events return \`200\` with an
 ignore reason. Missing persisted entities return \`404\`. There is no webhook
 diagnostic route. Logs and normal operational responses expose IDs and status
-without raw bodies, headers, secrets, tokens, signed URLs, or binary media.
+without raw bodies, model responses, classification content, headers, secrets,
+tokens, signed URLs, or binary media. Parser recovery retains only bounded
+structural metadata and a safe outcome/category.
 The query routes above are currently unversioned in the mounted FastAPI app;
 future `/v1/` and `/v2/` compatibility are policy/reference targets, not
 implemented aliases or prefixes in this checkout.
@@ -415,7 +420,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **192 passed, 61 skipped** offline and **61 passed, 192 deselected** in
+  was **193 passed, 61 skipped** offline and **61 passed, 193 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes

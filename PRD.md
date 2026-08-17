@@ -247,7 +247,9 @@ protocol exists, `display_title` follows `[{protocol}] - {title}` without
 changing `title`.
 
 Incomplete or truncated model responses must not be persisted as valid
-classifications.
+classifications. Parser recovery diagnostics may expose only a safe outcome or
+category and bounded structural metadata; they must not log the raw or partial
+model response, title, description, reasoning, or conversation content.
 
 ## 7. Output and operational interfaces
 
@@ -310,7 +312,8 @@ defined by the schema.
   webhooks and prevent external event injection. Query endpoints have no
   authentication or authorization layer for the single internal operator.
 - Production logs and durable operational records must avoid raw request bodies,
-  secrets, signed URLs, and binary media.
+  raw or partial model responses, classification content, secrets, signed URLs,
+  and binary media.
 - There is no webhook diagnostic endpoint. Raw request bodies, headers, secrets,
   tokens, signed URLs, and binary media are not returned or logged by supported
   routes. Operators use structured logs and existing operational metrics.
@@ -339,11 +342,11 @@ classification. The observed local runner evidence on 2026-08-17 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 192 passed, 61 skipped (the skips are deliberately absent
+- offline pytest: 193 passed, 61 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
 - Alembic: `0019_acessorias_request_creation` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 61 passed, 192 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 61 passed, 193 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, dependent image wake-up, and
   stable-ID department mapping with audited cycle snapshots, plus durable
@@ -355,7 +358,9 @@ the PostgreSQL stage. This evidence is local and disposable, not verification
 of Redis, DigiSac, Groq, replicas, deployment availability, or production
 readiness. There is no hosted CI runner enforcing the matrix. The raw-payload
 diagnostic surfaces were removed under issue `0006`; no debug endpoint is part
-of the supported HTTP surface.
+of the supported HTTP surface. Issue `0024` removes raw Groq classification
+response logging from parser diagnostics; local tests verify sanitized outcome
+metadata without making a provider-backed quality or production logging claim.
 
 ## 10. Product decisions
 

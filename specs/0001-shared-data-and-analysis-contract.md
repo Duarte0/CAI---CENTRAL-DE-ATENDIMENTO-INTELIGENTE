@@ -1,9 +1,9 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issue 0010 corrigiu a paridade da taxonomia no prompt; decisões de produto registradas abaixo
-- **Versão:** 1.2
+- **Status:** baseline ativo, derivado da implementação; issues 0010 e 0024 corrigiram a paridade da taxonomia no prompt e a fronteira de privacidade dos logs; decisões de produto registradas abaixo
+- **Versão:** 1.3
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010 e 0024
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
@@ -22,6 +22,12 @@ orientação delimitada. Os testes verificam a paridade derivada, a preservaçã
 do resultado canônico e a normalização/rejeição já existentes; não houve
 alteração de schema, persistência, API, precedência ou política do provedor.
 
+**Correção de privacidade (2026-08-17):** issue 0024 removeu a resposta bruta e
+o preview da resposta Groq dos avisos de `_parse_result()`. A recuperação
+envolta e a saída inválida continuam distinguíveis por `outcome` e metadados
+estruturais limitados; o parser, a validação, o retry/dead-letter e a
+persistência da classificação não foram alterados.
+
 ## Contrato de dados e integridade
 
 1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. Redis **deve** limitar-se a filas, locks, idempotência temporária e status/resultados com TTL.
@@ -35,17 +41,17 @@ alteração de schema, persistência, API, precedência ou política do provedor
 1. A resposta aceita do modelo **deve conter exatamente** `intent_type`, `confidence`, `title` e `description`. Resposta ausente, incompleta ou truncada **não pode** ser persistida como classificação válida. Um `intent_type` textual completo fora da taxonomia pode ser normalizado para `other`; saída estruturalmente inválida não pode ser aceita por essa normalização.
 2. `department`, `agent`, `protocol`, `display_title`, IDs, contagens e metadados de ciclo **devem** ser construídos pela aplicação, nunca solicitados como campos do modelo. `protocol` **não pode** entrar no contexto do modelo. Existindo protocolo, `display_title` **deve** ser `[{protocol}] - {title}` sem alterar `title`.
 3. O histórico de atribuição **deve** ser cronológico e idempotente por chave de evento. Todas as transferências observadas **devem** ser preservadas para acompanhar os departamentos que trataram o ticket da abertura ao fechamento. A resolução de nomes **deve** usar somente o diretório DigiSac sincronizado quando disponível.
-4. Filas, contexto, snapshots, logs e registros operacionais duráveis **não podem** conter URL assinada/de download, token, segredo, corpo bruto do webhook ou binário de mídia. Podem conter metadados seguros e texto extraído.
+4. Filas, contexto, snapshots, logs e registros operacionais duráveis **não podem** conter URL assinada/de download, token, segredo, corpo bruto do webhook, resposta bruta/parcial do modelo ou binário de mídia. Podem conter metadados seguros e texto extraído.
 
 ## Observabilidade e compatibilidade
 
-- Logs **devem** conter motivo sanitizado e IDs seguros suficientes para correlacionar falhas, sem conteúdo sensível.
+- Logs **devem** conter motivo sanitizado, categoria/outcome e IDs seguros suficientes para correlacionar falhas, sem conteúdo sensível; diagnósticos do parser podem conter somente metadados estruturais limitados.
 - `GET /health` **deve** verificar Redis e PostgreSQL e retornar `503` quando o banco não estiver pronto.
 - Os dados **devem** ser retidos indefinidamente por seu valor histórico, analítico e futuro uso na construção de FAQ sobre o corpus de classificações. Não são planejados migração de retenção, job de limpeza ou automação LGPD; exclusão manual direta no PostgreSQL é permitida caso a caso.
 
 ## Testes e aceitação
 
-Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo e rejeição de saída incompleta. Migrations/backfills **devem** ser verificados contra banco descartável.
+Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Migrations/backfills **devem** ser verificados contra banco descartável.
 
 - A mesma chave concorrente produz uma única classificação e o mesmo `public_id` para todos os chamadores.
 - Nenhuma saída sem os quatro campos contratuais produz um resultado persistido válido.

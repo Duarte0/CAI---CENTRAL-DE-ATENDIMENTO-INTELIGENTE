@@ -1024,16 +1024,15 @@ class IAWorker:
 
             logger.warning(
                 "Recovered Groq classification JSON from wrapped response; "
-                "json_offset=%s raw_response=%r",
-                match.start(),
-                result_text,
+                "outcome=wrapped json_offset=%s",
+                min(match.start(), 10_000),
             )
             return self._validate_result(typed_candidate)
 
         logger.warning(
             "Groq response does not contain a complete classification JSON; "
-            "response_preview=%r",
-            result_text[:500],
+            "outcome=invalid response_length=%s",
+            min(len(result_text), 10_000),
         )
         # Never persist the raw/truncated model response as business data. Raising
         # lets the existing retry/dead-letter policy handle transient generations.

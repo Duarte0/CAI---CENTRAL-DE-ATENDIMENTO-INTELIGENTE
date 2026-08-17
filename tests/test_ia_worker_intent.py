@@ -133,16 +133,41 @@ async def test_analyze_rejects_token_truncation():
 
 
 def test_parse_result_extracts_json_after_reasoning_tags(caplog):
+    reasoning = "PRIVATE_REASONING_SENTINEL_0024"
+    title = "PRIVATE_TITLE_SENTINEL_0024"
+    description = "PRIVATE_DESCRIPTION_SENTINEL_0024"
+
     result = _worker_without_init()._parse_result(
-        '<reasoning>{"step":"analisar { contexto }"}</reasoning>\n'
-        '{"intent_type":"problem","confidence":0.91,'
-        '"title":"Erro no sistema","description":"Falha ao emitir a guia."}'
+        f'<reasoning>{reasoning}</reasoning>\n'
+        f'{{"intent_type":"problem","confidence":0.91,"title":"{title}",'
+        f'"description":"{description}"}}'
     )
 
     assert result["intent_type"] == "problem"
     assert result["confidence"] == 0.91
-    assert result["title"] == "Erro no sistema"
+    assert result["title"] == title
     assert "Recovered Groq classification JSON" in caplog.text
+    assert "outcome=wrapped" in caplog.text
+    assert reasoning not in caplog.text
+    assert title not in caplog.text
+    assert description not in caplog.text
+    assert "raw_response" not in caplog.text
+
+
+def test_parse_result_invalid_response_logs_only_safe_metadata(caplog):
+    sentinel = "PRIVATE_MALFORMED_RESPONSE_SENTINEL_0024"
+    response = f"{sentinel}: output incompleto do cliente"
+
+    with pytest.raises(ValueError, match="valid classification JSON"):
+        _worker_without_init()._parse_result(response)
+
+    assert (
+        "Groq response does not contain a complete classification JSON"
+        in caplog.text
+    )
+    assert "outcome=invalid" in caplog.text
+    assert sentinel not in caplog.text
+    assert "response_preview" not in caplog.text
 
 
 def test_parse_result_extracts_nested_json_from_markdown(caplog):

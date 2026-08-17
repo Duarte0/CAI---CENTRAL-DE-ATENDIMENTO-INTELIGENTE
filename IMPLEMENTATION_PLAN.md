@@ -16,6 +16,11 @@ currently in progress._
   publication; leases, `next_attempt_at`, reconciliation, and idempotent
   identity recover interrupted work. Terminal image failure blocks only its
   dependent cycle; terminal audio failure is represented as a warning.
+- **[completed] Groq parser logging privacy** (SPEC-0001; issue 0024). Wrapped
+  and invalid classification-response diagnostics retain only safe outcome
+  categories and bounded structural metadata; raw/partial model output is not
+  logged. Parser recovery, validation, retry/dead-letter behavior, and
+  classification persistence remain unchanged.
 - **[completed] Persistent-only finalization** (PRD §5.4; SPEC-0003;
   issue 0005). The feature flag, Redis buffer/debounce, legacy worker branch,
   API fallbacks, models, and legacy tests were removed. Targeted search finds
@@ -32,9 +37,9 @@ currently in progress._
   0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
   PostgreSQL-marked family. The latest recorded full execution (issue 0018,
-  2026-08-17) passed compileall, strict Pyright, offline pytest (**192 passed,
+  2026-08-17) passed compileall, strict Pyright, offline pytest (**193 passed,
   61 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
-  (**61 passed, 192 deselected**). The 61 offline skips are expected missing
+  (**61 passed, 193 deselected**). The 61 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -284,8 +289,8 @@ Redis, deployment, or production readiness.
   (0004), legacy finalization removal (0005), raw-payload diagnostic-surface
   removal (0006), and persistent implementation documentation reconciliation
   (0007), generated OpenAPI HTTP contract publication (0008), active document
-  traceability/evidence reconciliation (0009), and financial taxonomy prompt
-  parity (0010).
+  traceability/evidence reconciliation (0009), financial taxonomy prompt
+  parity (0010), and Groq parser logging privacy (0024).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -314,6 +319,11 @@ Redis, deployment, or production readiness.
   PRD §6, `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, and is
   now present in the model prompt's allowed list and bounded guidance. The
   correction does not decide broader taxonomy semantics.
+- **Groq parser privacy defect (resolved by issue 0024):** `_parse_result()` no
+  longer logs raw or preview response content when recovering wrapped JSON or
+  rejecting invalid output. Tests assert that title, description, reasoning,
+  and unique malformed-response sentinels remain absent while safe outcome
+  metadata remains observable.
 - **Classification-policy boundary:** precedence expansion,
   confidence semantics, summary invariants, and structured-description choices
   are not approved product requirements. This work is blocked until they are
