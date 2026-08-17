@@ -1,7 +1,7 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
 - **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas sem versão
-- **Versão:** 1.5
+- **Versão:** 1.6
 - **Prioridade/Fase:** P0 / baseline de requisitos
 - **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001
 - **Dependências:** SPEC-0001
@@ -31,7 +31,7 @@ As rotas montadas são `POST /webhook/digisac`, `GET /health`, `GET /queues`, e 
 
 ## Segurança, observabilidade, testes e aceitação
 
-Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, segredo, token ou URL assinada. Não há autorização de leitura ou rate limit adicional para o operador interno; a integração Acessórias aprovada exigirá revisão de acesso em seu próprio contrato.
+Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, valores extraídos de mensagem/contato, segredo, token ou URL assinada. O diagnóstico de extração do parser fica limitado a presença, tipo e caminho de origem. Não há autorização de leitura ou rate limit adicional para o operador interno; a integração Acessórias aprovada exigirá revisão de acesso em seu próprio contrato.
 
 Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes de idempotência, falha de publicação, fechamento/reabertura e `404` nas consultas. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto e que uma assinatura inválida não atinge o parse.
 
@@ -41,4 +41,4 @@ Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignor
 
 ## Decisões registradas
 
-O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. A integração Acessórias aprovada terá revisão de acesso em contrato próprio e não altera esta superfície. A remoção das superfícies de diagnóstico foi aprovada; o operador monitora o sistema via logs e nenhuma superfície de debug é necessária.
+O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. A integração Acessórias aprovada terá revisão de acesso em contrato próprio e não altera esta superfície. A remoção das superfícies de diagnóstico foi aprovada; o operador monitora o sistema via logs e nenhuma superfície de debug é necessária. Issue `0025` registra que a extração normal do webhook também emite somente metadados seguros, sem valores de entrada.

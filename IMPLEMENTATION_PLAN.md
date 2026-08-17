@@ -21,6 +21,11 @@ currently in progress._
   categories and bounded structural metadata; raw/partial model output is not
   logged. Parser recovery, validation, retry/dead-letter behavior, and
   classification persistence remain unchanged.
+- **[completed] Webhook extraction logging privacy** (SPEC-0001/0002; issue
+  0025). Normal parser diagnostics retain only safe event, presence/type, and
+  source metadata; extracted message/contact values, URLs, secrets, and raw
+  bodies are not logged. Payload extraction, HMAC ordering, ignored-event
+  behavior, and downstream processing remain unchanged.
 - **[completed] Persistent-only finalization** (PRD §5.4; SPEC-0003;
   issue 0005). The feature flag, Redis buffer/debounce, legacy worker branch,
   API fallbacks, models, and legacy tests were removed. Targeted search finds
@@ -290,7 +295,8 @@ Redis, deployment, or production readiness.
   removal (0006), and persistent implementation documentation reconciliation
   (0007), generated OpenAPI HTTP contract publication (0008), active document
   traceability/evidence reconciliation (0009), financial taxonomy prompt
-  parity (0010), and Groq parser logging privacy (0024).
+  parity (0010), Groq parser logging privacy (0024), and webhook extraction
+  logging privacy (0025).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -324,6 +330,12 @@ Redis, deployment, or production readiness.
   rejecting invalid output. Tests assert that title, description, reasoning,
   and unique malformed-response sentinels remain absent while safe outcome
   metadata remains observable.
+- **Webhook extraction privacy defect (resolved by issue 0025):**
+  `WebhookPayload.extraction_debug()` now returns only bounded presence/type/
+  source metadata, and adjacent parser logs sanitize event, origin, and
+  message-type values. Direct and nested customer-content sentinels remain
+  absent from captured logs while ignored-event and HMAC behavior remain
+  unchanged.
 - **Classification-policy boundary:** precedence expansion,
   confidence semantics, summary invariants, and structured-description choices
   are not approved product requirements. This work is blocked until they are

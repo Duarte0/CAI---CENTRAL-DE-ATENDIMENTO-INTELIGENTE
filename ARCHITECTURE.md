@@ -358,8 +358,9 @@ The webhook normally returns \`202\`; safely ignored events return \`200\` with 
 ignore reason. Missing persisted entities return \`404\`. There is no webhook
 diagnostic route. Logs and normal operational responses expose IDs and status
 without raw bodies, model responses, classification content, headers, secrets,
-tokens, signed URLs, or binary media. Parser recovery retains only bounded
-structural metadata and a safe outcome/category.
+tokens, signed URLs, binary media, or extracted webhook values. Normal webhook
+extraction retains only safe event, presence/type, and source metadata. Parser
+recovery retains only bounded structural metadata and a safe outcome/category.
 The query routes above are currently unversioned in the mounted FastAPI app;
 future `/v1/` and `/v2/` compatibility are policy/reference targets, not
 implemented aliases or prefixes in this checkout.
@@ -436,6 +437,8 @@ records these delivery limitations:
   Redis buffer, debounce, feature flag, and legacy worker branch were removed.
 - The raw-payload diagnostic surfaces were removed under issue `0006`; no
   replacement debug route or raw-payload contract exists.
+- Issue `0025` removes extracted webhook values from normal logs while
+  preserving safe event, presence/type, and source metadata.
 - DigiSac Contacts full backfill is implemented under issue `0014` as an
   internal, typed acquisition and transactional PostgreSQL publication. It
   supports a validated one-page response and `page=N` fallback with global

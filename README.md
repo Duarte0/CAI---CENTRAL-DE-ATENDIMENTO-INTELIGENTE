@@ -474,7 +474,9 @@ Não há uma rota de diagnóstico de webhook. O endpoint de produção é a úni
 superfície de ingestão; respostas e logs operacionais expõem somente campos
 estruturados e motivos sanitizados, nunca o corpo bruto da requisição ou a
 resposta bruta/parcial do modelo, título, descrição ou raciocínio da
-classificação. Os diagnósticos de recuperação do parser Groq retêm somente
+classificação. A extração normal do webhook retém nos logs somente evento,
+presença/tipo e caminho de origem; não registra valores de mensagem/contato,
+URLs ou segredos. Os diagnósticos de recuperação do parser Groq retêm somente
 outcome e metadados estruturais limitados.
 
 ## Operação

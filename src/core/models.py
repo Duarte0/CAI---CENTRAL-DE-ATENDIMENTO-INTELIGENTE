@@ -140,7 +140,12 @@ class WebhookPayload(BaseModel):
         return None
 
     def extraction_debug(self) -> Dict[str, Any]:
-        """Values and source paths, suitable for structured debug logging."""
+        """Safe extraction metadata suitable for structured debug logging.
+
+        The application-facing extraction methods above return the original
+        values to the ingestion pipeline. This diagnostic projection must not
+        do so because it is emitted to retained application logs.
+        """
         fields = {
             "conversation_id": [
                 "conversation_id",
@@ -174,9 +179,25 @@ class WebhookPayload(BaseModel):
         result: Dict[str, Any] = {}
         for name, keys in fields.items():
             value, source = self._extract(keys)
-            result[name] = {"value": value, "source": source}
+            result[name] = {
+                "present": source is not None,
+                "type": (
+                    "bool" if isinstance(value, bool)
+                    else "int" if isinstance(value, int)
+                    else "float" if isinstance(value, float)
+                    else "str" if isinstance(value, str)
+                    else "datetime" if isinstance(value, datetime)
+                    else "scalar" if value is not None
+                    else None
+                ),
+                "source": source,
+            }
         if isinstance(self.message, str) and self.message.strip():
-            result["content"] = {"value": self.message, "source": "$.message"}
+            result["content"] = {
+                "present": True,
+                "type": "str",
+                "source": "$.message",
+            }
         return result
 
 

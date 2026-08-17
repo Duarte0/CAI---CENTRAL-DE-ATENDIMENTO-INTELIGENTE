@@ -54,4 +54,10 @@ def test_extracts_message_envelope_and_reports_sources():
     assert payload.get_message_id() == "msg-3"
     assert payload.get_content() == "Mensagem dentro do envelope"
     assert payload.get_sender_id() == "customer-3"
-    assert payload.extraction_debug()["content"]["source"] == "$.message.body"
+    extraction = payload.extraction_debug()
+    assert extraction["content"] == {
+        "present": True,
+        "type": "str",
+        "source": "$.message.body",
+    }
+    assert all("value" not in field for field in extraction.values())

@@ -312,11 +312,13 @@ defined by the schema.
   webhooks and prevent external event injection. Query endpoints have no
   authentication or authorization layer for the single internal operator.
 - Production logs and durable operational records must avoid raw request bodies,
-  raw or partial model responses, classification content, secrets, signed URLs,
-  and binary media.
+  extracted webhook message/contact values, raw or partial model responses,
+  classification content, secrets, signed URLs, and binary media.
 - There is no webhook diagnostic endpoint. Raw request bodies, headers, secrets,
   tokens, signed URLs, and binary media are not returned or logged by supported
-  routes. Operators use structured logs and existing operational metrics.
+  routes. Normal extraction logs retain only safe event, presence/type, and
+  source metadata. Operators use structured logs and existing operational
+  metrics.
 - Persisted snapshots contain safe metadata and extracted text, not download
   credentials or media binaries.
 - The implemented Acessórias provider adapter centralizes bearer authentication,
@@ -359,8 +361,9 @@ of Redis, DigiSac, Groq, replicas, deployment availability, or production
 readiness. There is no hosted CI runner enforcing the matrix. The raw-payload
 diagnostic surfaces were removed under issue `0006`; no debug endpoint is part
 of the supported HTTP surface. Issue `0024` removes raw Groq classification
-response logging from parser diagnostics; local tests verify sanitized outcome
-metadata without making a provider-backed quality or production logging claim.
+response logging from parser diagnostics, and issue `0025` removes raw values
+from normal webhook extraction logs; local tests verify sanitized metadata
+without making a provider-backed quality or production logging claim.
 
 ## 10. Product decisions
 

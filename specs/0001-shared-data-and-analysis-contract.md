@@ -1,9 +1,9 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010 e 0024 corrigiram a paridade da taxonomia no prompt e a fronteira de privacidade dos logs; decisões de produto registradas abaixo
-- **Versão:** 1.3
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024 e 0025 corrigiram a paridade da taxonomia no prompt e a fronteira de privacidade dos logs; decisões de produto registradas abaixo
+- **Versão:** 1.4
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010 e 0024
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024 e 0025
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
@@ -28,6 +28,10 @@ envolta e a saída inválida continuam distinguíveis por `outcome` e metadados
 estruturais limitados; o parser, a validação, o retry/dead-letter e a
 persistência da classificação não foram alterados.
 
+Issue 0025 estende essa fronteira ao parser normal do webhook: o diagnóstico de
+extração preserva somente presença, tipo e caminho de origem, sem registrar
+valores de mensagem/contato, URLs, segredos ou corpo bruto.
+
 ## Contrato de dados e integridade
 
 1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. Redis **deve** limitar-se a filas, locks, idempotência temporária e status/resultados com TTL.
@@ -46,6 +50,9 @@ persistência da classificação não foram alterados.
 ## Observabilidade e compatibilidade
 
 - Logs **devem** conter motivo sanitizado, categoria/outcome e IDs seguros suficientes para correlacionar falhas, sem conteúdo sensível; diagnósticos do parser podem conter somente metadados estruturais limitados.
+- Os diagnósticos de extração do webhook **devem** registrar somente evento seguro,
+  presença/tipo e caminho de origem; valores extraídos, corpo bruto, URLs e
+  segredos não podem atravessar essa fronteira de log.
 - `GET /health` **deve** verificar Redis e PostgreSQL e retornar `503` quando o banco não estiver pronto.
 - Os dados **devem** ser retidos indefinidamente por seu valor histórico, analítico e futuro uso na construção de FAQ sobre o corpus de classificações. Não são planejados migração de retenção, job de limpeza ou automação LGPD; exclusão manual direta no PostgreSQL é permitida caso a caso.
 
