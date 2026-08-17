@@ -1,7 +1,7 @@
 # SPEC-0009 — Resolução de identidade DigiSac–Acessórias
 
-- **Status:** implementado localmente pelo issue 0015; evidência descartável, sem provider/produção
-- **Versão:** 1.1
+- **Status:** implementado localmente pelos issues 0015 e 0026; evidência descartável, sem provider/produção
+- **Versão:** 1.2 (issue 0026 conecta a resolução ao limite de preparação do worker)
 - **Prioridade/Fase:** P1 / Milestone C — DigiSac ↔ Acessórias Identity Resolution
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone C; SPEC-0001, SPEC-0004, SPEC-0007 e SPEC-0008
 - **Dependências:** SPEC-0001, SPEC-0004, SPEC-0007 e SPEC-0008 implementadas; nenhum blocker de decisão de produto permanece neste milestone
@@ -16,6 +16,14 @@ compileall, Pyright estrito, **175 passed, 48 skipped** offline e **48 passed,
 175 deselected** na etapa PostgreSQL;
 isso é evidência local sintética/descartável e não comprova provider, Redis ou
 produção.
+
+**Integração de preparação (2026-08-17):** issue 0026 chama
+`resolve_cycle_identity()` somente com o contato de ticket persistido e exige o
+estado `confirmed` antes de avaliar departamento ou criar Request. Candidatos,
+grupos sem vínculo confirmado, ambiguidades, conflitos e resultados não
+resolvidos continuam bloqueando a cadeia sem promoção automática. A cobertura
+adicional está registrada na execução descartável do issue 0026; nenhum
+provider ou ambiente de produção foi usado.
 
 ## Objetivo e não objetivos
 

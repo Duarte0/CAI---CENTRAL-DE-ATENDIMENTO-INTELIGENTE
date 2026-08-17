@@ -180,6 +180,14 @@ webhook request path. The Contacts API also supports the implemented internal
 full backfill: it validates one-page or `page=N` responses, deduplicates by
 opaque `contact.id`, and publishes only a complete snapshot.
 
+Before any Acessórias Request operation, the terminal cycle retains only the
+canonical ticket `data.contact.id` and the worker runs the durable sequence
+`contact.id` → identity resolution → department-mapping snapshot → Request
+operation → provider POST. A message sender `contactId`, group participant,
+name, phone, or fallback metadata cannot replace the ticket contact. Missing,
+unconfirmed, ambiguous, conflicting, or invalid preparation facts fail closed
+without a provider POST.
+
 The local Acessórias directory durably retains companies (active and inactive),
 company contacts, departments, and current company-department relationships.
 Raw and normalized phone/email values are both preserved.
@@ -206,7 +214,7 @@ Current company departments are directory state, not a constraint that
 invalidates historical external Requests; a later evaluation may record a new
 outcome without rewriting a terminal snapshot.
 
-Issues 0017–0019 and 0021–0022 implement the durable Request boundary. A terminal eligible cycle
+Issues 0017–0019, 0021–0022 and 0026 implement the durable Request boundary. A terminal eligible cycle
 with one confirmed company and a current valid mapped department creates at
 most one PostgreSQL operation and one multipart `POST /requests`. Only a
 non-empty provider `id` becomes the persisted `SolID`; only an explicitly proven
@@ -223,6 +231,10 @@ trigger, and Request lifecycle operations remain outside this increment.
 The persisted payload is loaded and validated before `post_started_at`; a
 pre-provider load or validation failure is sanitized as retryable and retains no
 false post-start evidence.
+The internal recovery path for the historical `mapping_missing` state is
+restricted to operations with no `post_started_at`, `SolID`, attempt evidence,
+or reconciliation requirement; it reuses the same preparation sequence before
+re-entering the normal Request claim/delivery path.
 
 
 ## 6. Context and AI contract
@@ -349,23 +361,25 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`–`0022` added the Acessórias directory, DigiSac contact identity
+issues `0012`–`0022` and `0026` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
 resolution, stable-ID department mapping, and conservative Request transport
 classification. The observed local runner evidence on 2026-08-17 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 199 passed, 66 skipped (the skips are deliberately absent
+- offline pytest: 203 passed, 68 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0019_acessorias_request_creation` applied and verified on the runner target;
+- Alembic: `0020_cycle_contact_provenance` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 66 passed, 199 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 68 passed, 203 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, dependent image wake-up, and
   stable-ID department mapping with cycle-scoped audited snapshots, plus durable
   Request operation claims, retry classification, reconciliation, and
-  concurrency-safe shared rate admission across Request adapter instances.
+  concurrency-safe shared rate admission across Request adapter instances,
+  canonical ticket-contact provenance, preparation ordering, blocked gates, and
+  pre-POST `mapping_missing` recovery.
 
 The runner's offline stage does not select a finalization setting; it isolates
 the disposable database credentials and injects the runner-owned URL only for
@@ -393,7 +407,7 @@ The product owner has decided the following policies:
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016 and 0020 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019 and 0021–0022 with durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
+| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022 and 0026 with canonical preparation, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
 
 ## 11. Source traceability
 
@@ -405,7 +419,7 @@ The PRD is derived from:
   `src/core/message_filter.py`, `src/core/media.py`, and
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
-  `0001_initial` through `0019_acessorias_request_creation`;
+  `0001_initial` through `0020_cycle_contact_provenance`;
 - worker behavior: `src/workers/ia_worker.py`, `src/workers/audio_worker.py`,
   and `src/workers/image_worker.py`;
 - configuration and deployment: `src/core/config.py`, `.env.example`,

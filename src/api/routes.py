@@ -85,6 +85,14 @@ def _non_empty_string(value: Any) -> str | None:
     return normalized or None
 
 
+def _canonical_ticket_contact_external_id(data: Mapping[str, Any]) -> str | None:
+    contact = data.get("contact")
+    if not isinstance(contact, Mapping):
+        return None
+    contact_mapping = cast(Mapping[str, Any], contact)
+    return _non_empty_string(contact_mapping.get("id"))
+
+
 def _ticket_event_timestamp(
     payload: Mapping[str, Any], data: Mapping[str, Any]
 ) -> tuple[str, bool]:
@@ -496,6 +504,7 @@ async def digisac_webhook(
                 started_at=timestamp,
                 open_event_key=_cycle_event_key(event, ticket_id, payload_data, data),
                 start_strategy="ticket_created_event",
+                contact_external_id=_canonical_ticket_contact_external_id(data),
             )
             return {
                 "status": "ticket_created",
@@ -515,6 +524,7 @@ async def digisac_webhook(
                     event, ticket_id, payload_data, data
                 ),
                 start_strategy="ticket_reopened_event",
+                contact_external_id=_canonical_ticket_contact_external_id(data),
             )
             return {
                 "status": "ticket_reopened",
@@ -556,6 +566,7 @@ async def digisac_webhook(
             protocol=protocol,
             closed_at=closed_at,
             close_event_key=_cycle_event_key(event, ticket_id, payload_data, data),
+            contact_external_id=_canonical_ticket_contact_external_id(data),
         )
         if created:
             try:

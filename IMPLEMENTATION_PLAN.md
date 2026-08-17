@@ -31,20 +31,27 @@ currently in progress._
   API fallbacks, models, and legacy tests were removed. Targeted search finds
   no active legacy code or setting.
 - **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
-  owns schema through `0019_acessorias_request_creation`; migrations, backfills,
+  owns schema through `0020_cycle_contact_provenance`; migrations, backfills,
   import, and audit utilities are versioned. Application code verifies rather
   than creates schema.
+- **[completed] Acessórias preparation and pre-POST recovery** (SPEC-0008–0011;
+  issue 0026). Ticket cycles persist only the canonical `data.contact.id`, the
+  IA worker runs identity resolution and department mapping before Request
+  creation, blocked prerequisites fail closed, and the internal recovery path
+  can reopen only a proven pre-POST `mapping_missing` operation. Recovery and
+  Request state remain PostgreSQL-authoritative; no provider idempotency field
+  or public trigger was added.
 - **[completed] Webhook hardening and supported HTTP surface** (SPEC-0002;
   issue 0006). Production HMAC-before-parse handling remains; raw-payload
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0022,
-  2026-08-17) passed compileall, strict Pyright, offline pytest (**199 passed,
-  66 skipped**), Alembic `0019_acessorias_request_creation`, and PostgreSQL pytest
-  (**66 passed, 199 deselected**). The 66 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0026,
+  2026-08-17) passed compileall, strict Pyright, offline pytest (**203 passed,
+  68 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
+  (**68 passed, 203 deselected**). The 68 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
@@ -62,8 +69,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **261 tests**; the latest issue-0020
-  run passed **197 tests** and skipped the 64 PostgreSQL-dependent tests without
+- The current canonical collection contains **271 tests**; the latest issue-0026
+  run passed **203 tests** and skipped the 68 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -208,7 +215,7 @@ currently in progress._
    separate recoverable idempotency/reconciliation state ensures provider
    failure never invalidates a completed classification.
 
-   Specification outcome: SPEC-0011 v1.2 records the authorized multipart
+   Specification outcome: SPEC-0011 v1.4 records the authorized multipart
    `POST https://api.acessorias.com/requests`, Bearer boundary, external
    `tipo=E`, provider fields and success `id`/`SolID` contract. It centralizes
    priority `2`, preserves a single durable operation per cycle, and requires
@@ -224,14 +231,18 @@ currently in progress._
    `reconciliation_required`; status and `Retry-After` do not authorize a
    second POST because the provider contract has no non-creation proof signal.
    Milestones A–D supply the declared classification,
-   company and department facts; lifecycle work remains Milestone F.
+   company and department facts. Issue 0026 now executes those preparation
+   contracts in order and provides a narrowly gated recovery for the historical
+   pre-POST `mapping_missing` operation; lifecycle work remains Milestone F.
 
-   Build evidence (2026-08-17): the disposable runner passed compileall, strict
-   Pyright, offline pytest (**192 passed, 61 skipped**), Alembic head
-   `0019_acessorias_request_creation`, and PostgreSQL pytest (**61 passed,
-   192 deselected**). Tests cover exact multipart fields, durable operation
+   Build evidence (2026-08-17, issues 0017–0019, 0021–0022 and 0026): the disposable runner passed compileall, strict
+   Pyright, offline pytest (**203 passed, 68 skipped**), Alembic head
+   `0020_cycle_contact_provenance`, and PostgreSQL pytest (**68 passed,
+   203 deselected**). Tests cover exact multipart fields, durable operation
    uniqueness, terminal eligibility, safe retry, uncertain outcomes, claims,
-   manual reconciliation/release, concurrency, rollback guards, and privacy.
+   manual reconciliation/release, concurrency, rollback guards, privacy,
+   canonical ticket-contact provenance, preparation ordering, blocked
+   identity/mapping gates, and pre-POST mapping-missing recovery/replay.
    This is local synthetic/disposable evidence only; no provider credential,
    Redis, deployment, or production claim was made.
    Issue 0018 additionally verifies the explicit pre-send retry marker,
@@ -266,18 +277,20 @@ tests cover the typed boundary, validation, deduplication, and failure-safe
 publication.
 Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
-issue 0015. Milestone D is implemented under issues 0016 and 0020; Milestone E is
-implemented under issues 0017–0019 and 0021–0022 with its Request contract and A–D facts
+issue 0015 and the preparation integration under issue 0026. Milestone D is implemented under issues 0016, 0020 and 0026; Milestone E is
+implemented under issues 0017–0019, 0021–0022 and 0026 with its Request contract and A–D facts
 available. No specification in this sequence authorizes application changes
 until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
-was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019/0021/0022
-build sync records department mapping, the corrected Request transport and
-shared Request rate admission boundary and the conservative `429` boundary:
+was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019/0021/0022/0026
+build sync records department mapping, the corrected Request transport,
+canonical preparation/recovery, shared Request rate admission boundary and the
+conservative `429` boundary:
 README, PRD, architecture, SPEC-0008,
 SPEC-0009, SPEC-0010, the specs index, and this plan record the implemented
-backfill, identity resolution, mapping, Request creation, Alembic `0019`, and the latest local
+backfill, identity resolution, mapping, Request creation, canonical cycle-contact provenance,
+Alembic `0020`, and the latest local
 runner evidence, including the cycle-scoped department-mapping correction in
 issue 0020, the issue-0021 pre-POST boundary, and issue 0022's `429`
 reconciliation. These results remain disposable/local and do not imply provider,
@@ -385,7 +398,7 @@ Redis, deployment, or production readiness.
 
 ## Recommended next pass
 
-Milestones C and D are complete under issues 0015, 0016, and 0020, and Milestone E is
-implemented under issues 0017–0019 and 0021–0022. Open corrective issue 0023 remains
+Milestones C and D are complete under issues 0015, 0016, 0020, and 0026, and Milestone E is
+implemented under issues 0017–0019, 0021–0022, and 0026. Open corrective issue 0023 remains
 before Milestone F can be considered the next optional increment; that
 milestone still requires a new product decision and specification.

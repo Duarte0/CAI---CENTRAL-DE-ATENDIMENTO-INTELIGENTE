@@ -12,6 +12,7 @@ from groq import Groq
 from src.core.config import settings
 from src.core.analysis import with_protocol
 from src.core.acessorias_requests import create_request_for_cycle
+from src.core.acessorias_preparation import prepare_cycle_for_request
 from src.core.db import (  # noqa: F401
     close_database,
     get_pending_content_extractions,
@@ -187,6 +188,20 @@ class IAWorker:
                 )
         if published:
             logger.debug("Published due finalization cycles: count=%s", published)
+
+    async def _prepare_and_create_request(
+        self, cycle_id: str
+    ) -> dict[str, Any] | None:
+        preparation = await prepare_cycle_for_request(cycle_id)
+        if not preparation.ready:
+            logger.info(
+                "Acessórias Request preparation blocked: cycle_id=%s stage=%s reason=%s",
+                cycle_id,
+                preparation.stage,
+                preparation.reason,
+            )
+            return None
+        return await create_request_for_cycle(cycle_id)
 
     async def _recover_history(self, conversation_id: str) -> DigisacHistory:
         client = DigisacClient()
@@ -681,14 +696,15 @@ class IAWorker:
             },
         )
         try:
-            request_operation = await create_request_for_cycle(cycle_id)
-            logger.info(
-                "Acessórias Request operation evaluated: cycle_id=%s state=%s "
-                "failure_category=%s",
-                cycle_id,
-                request_operation.get("state"),
-                request_operation.get("failure_category"),
-            )
+            request_operation = await self._prepare_and_create_request(cycle_id)
+            if request_operation is not None:
+                logger.info(
+                    "Acessórias Request operation evaluated: cycle_id=%s state=%s "
+                    "failure_category=%s",
+                    cycle_id,
+                    request_operation.get("state"),
+                    request_operation.get("failure_category"),
+                )
         except Exception as exc:
             # Request delivery is a separate durable operation. A provider or
             # reconciliation failure must never roll back the classification.

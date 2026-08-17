@@ -1,7 +1,7 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0019 e 0021–0022; evidência descartável, sem provider/produção
-- **Versão:** 1.3 (issue 0022 corrige a fronteira conservadora de `429` sem alterar o contrato de reconciliação)
+- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022 e 0026; evidência descartável, sem provider/produção
+- **Versão:** 1.4 (issue 0026 conecta preparação durável e recuperação pré-POST sem alterar o contrato do provider)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0008 implementadas; Milestones C (SPEC-0009) e D (SPEC-0010) concluídos para o ciclo elegível; credencial operacional segura disponível
@@ -66,6 +66,17 @@ sem novo POST e reconciliação manual de `SolID`. A evidência é local
 sintética/descartável, sem credencial real, provider, Redis, deployment ou
 produção.
 
+**Integração de preparação (2026-08-17):** issue 0026 torna explícita a ordem
+terminal → identidade confirmada → snapshot de mapping resolvido → operação
+durável → provider POST. A recuperação interna de `mapping_missing` só pode
+reabrir uma operação com prova durável de que nenhum POST começou; operações
+com marcador de envio, `SolID`, tentativa, estado incerto ou reconciliação
+continuam fora de retry automático. A migration `0020` preserva a proveniência
+do contato do ticket e o estado de auditoria da preparação. A execução local
+descartável passou compileall, Pyright estrito, **203 passed, 68 skipped**
+offline e **68 passed, 203 deselected** em PostgreSQL 16, sem provider ou
+produção.
+
 ## Objetivo e não objetivos
 
 Definir o efeito externo durável que cria um Request Acessórias depois que uma classificação terminal elegível, uma empresa Acessórias inequivocamente resolvida e um departamento Acessórias válido já existirem. O contrato deve manter a ligação CAI–Request, incluindo o `SolID` retornado, e garantir que falha, reconciliação ou intervenção operacional no provider nunca desfaça, corrompa ou reescreva a classificação persistida.
@@ -74,7 +85,7 @@ Esta especificação não sincroniza diretórios, resolve identidade, mapeia dep
 
 ## Estado de referência e fronteira canônica
 
-O checkout atual possui o adapter de criação, migration `0019`, estado de
+O checkout atual possui o adapter de criação, migrations `0019` e `0020`, estado de
 entrega, `SolID`, chamada externa controlada e testes correspondentes. SPEC-0007
 é canônica para o diretório Acessórias, SPEC-0009 para a resolução de empresa e
 SPEC-0010 para o departamento selecionado e seu snapshot. Esta SPEC é canônica

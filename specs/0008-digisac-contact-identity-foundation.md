@@ -1,7 +1,7 @@
 # SPEC-0008 — Fundação de identidade de contato DigiSac
 
-- **Status:** implementada localmente pelos issues 0013 e 0014
-- **Versão:** 1.3
+- **Status:** implementada localmente pelos issues 0013, 0014 e 0026
+- **Versão:** 1.4 (issue 0026 adiciona a proveniência durável do contato de ticket)
 - **Prioridade/Fase:** P0 / Milestone B — DigiSac Contact Identity Foundation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone B; SPEC-0001, SPEC-0002, SPEC-0004 e SPEC-0007
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0004 e SPEC-0007
@@ -22,6 +22,15 @@ local/sintética e descartável, sem credencial ou sincronização de produção
 O issue 0015 acrescenta, de forma aditiva, `raw_email` e `normalized_email`
 para permitir a resolução exata prevista na SPEC-0009; esses campos não mudam
 a identidade canônica `contact.id`.
+
+**Integração de preparação (2026-08-17):** issue 0026 adiciona a migration
+Alembic `0020_cycle_contact_provenance` e persiste no ciclo somente o
+`data.contact.id` do snapshot canônico de ticket. O worker usa esse valor para
+localizar o contato durável antes de chamar a resolução; `message.contactId`,
+participantes de grupo e metadata derivada não podem substituí-lo. A execução
+local descartável passou compileall, Pyright estrito, **203 passed, 68 skipped**
+offline e **68 passed, 203 deselected** em PostgreSQL 16; isso não comprova
+DigiSac, provider ou produção.
 
 ## Objetivo e não objetivos
 

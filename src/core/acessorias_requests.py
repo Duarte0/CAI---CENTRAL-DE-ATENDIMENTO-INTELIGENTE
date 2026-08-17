@@ -204,6 +204,14 @@ def _safe_actor(value: str | None) -> str | None:
     return normalized
 
 
+def _claim_owner(value: str | None, *, prefix: str) -> str:
+    candidate = value or f"{prefix}:{os.getpid()}:{id(asyncio.current_task())}"
+    normalized = re.sub(r"[^a-zA-Z0-9_.:@-]", "-", candidate)[:160]
+    if not normalized:
+        raise ValueError("claim owner is invalid")
+    return normalized
+
+
 class AcessoriasRequestAdapter:
     """Authenticated multipart write adapter for ``POST /requests``."""
 
@@ -610,6 +618,189 @@ def _claim_operation_sync(operation_id: int, owner: str, lease_seconds: int) -> 
     return _serialize_operation(cast(Mapping[str, Any] | None, row)) if row else None
 
 
+def _get_operation_for_cycle_sync(cycle_public_id: str) -> dict[str, Any] | None:
+    with get_database_pool().connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            row = cursor.execute(
+                """
+                SELECT operation.*
+                FROM acessorias_request_operations AS operation
+                JOIN conversation_processing_cycles AS cycle
+                  ON cycle.id = operation.source_cycle_id
+                WHERE cycle.public_id = %s
+                """,
+                (cycle_public_id,),
+            ).fetchone()
+    return None if row is None else _serialize_operation(cast(Mapping[str, Any], row))
+
+
+def _claim_mapping_missing_recovery_sync(
+    cycle_public_id: str, owner: str, lease_seconds: int
+) -> dict[str, Any] | None:
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    SELECT operation.*
+                    FROM acessorias_request_operations AS operation
+                    JOIN conversation_processing_cycles AS cycle
+                      ON cycle.id = operation.source_cycle_id
+                    WHERE cycle.public_id = %s
+                      AND operation.state = 'definitive_failure'
+                      AND operation.failure_category = 'mapping_missing'
+                      AND operation.post_started_at IS NULL
+                      AND operation.sol_id IS NULL
+                      AND operation.attempt_count = 0
+                      AND operation.first_attempt_at IS NULL
+                      AND operation.last_attempt_at IS NULL
+                      AND operation.reconciliation_json = '{}'::jsonb
+                    FOR UPDATE
+                    """,
+                    (cycle_public_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                claim_expires_at = row.get("claim_expires_at")
+                if (
+                    row.get("claim_owner") is not None
+                    and claim_expires_at is not None
+                    and claim_expires_at > datetime.now(timezone.utc)
+                    and row.get("claim_owner") != owner
+                ):
+                    return None
+                claimed = cursor.execute(
+                    """
+                    UPDATE acessorias_request_operations
+                    SET claim_owner = %s,
+                        claim_expires_at = CURRENT_TIMESTAMP
+                            + (%s * INTERVAL '1 second'),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                      AND state = 'definitive_failure'
+                      AND failure_category = 'mapping_missing'
+                      AND post_started_at IS NULL
+                      AND sol_id IS NULL
+                      AND attempt_count = 0
+                      AND first_attempt_at IS NULL
+                      AND last_attempt_at IS NULL
+                    RETURNING *
+                    """,
+                    (owner, lease_seconds, row["id"]),
+                ).fetchone()
+    return _serialize_operation(cast(Mapping[str, Any] | None, claimed)) if claimed else None
+
+
+def _record_preparation_recovery_blocked_sync(
+    operation_id: int,
+    owner: str,
+    *,
+    stage: str,
+    reason: str,
+) -> dict[str, Any]:
+    safe_stage = _safe_category(stage)
+    safe_reason = _safe_category(reason)
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    UPDATE acessorias_request_operations
+                    SET claim_owner = NULL,
+                        claim_expires_at = NULL,
+                        preparation_recovery_json = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                      AND state = 'definitive_failure'
+                      AND failure_category = 'mapping_missing'
+                      AND claim_owner = %s
+                      AND post_started_at IS NULL
+                      AND sol_id IS NULL
+                    RETURNING *
+                    """,
+                    (
+                        Jsonb(
+                            {
+                                "source": "internal_preparation_recovery",
+                                "status": "blocked",
+                                "stage": safe_stage,
+                                "reason": safe_reason,
+                            }
+                        ),
+                        operation_id,
+                        owner,
+                    ),
+                ).fetchone()
+    if row is None:
+        raise RuntimeError("preparation recovery claim was lost")
+    return _serialize_operation(cast(Mapping[str, Any], row))
+
+
+def _reopen_prepared_operation_sync(
+    operation_id: int, owner: str, cycle_public_id: str
+) -> dict[str, Any]:
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            cycle = _cycle_snapshot(connection, cycle_public_id)
+            if cycle is None:
+                raise LookupError("conversation cycle not found")
+            mapping = _mapping_snapshot(connection, int(cycle["id"]))
+            state, reason, facts, payload = _operation_state(connection, cycle, mapping)
+            if state != "not_started" or facts is None or payload is None:
+                raise AcessoriasRequestError(
+                    _safe_category(reason or "preparation_not_ready"),
+                    "prepared Request facts are not valid",
+                )
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    UPDATE acessorias_request_operations
+                    SET company_id = %s,
+                        company_external_id = %s,
+                        department_mapping_id = %s,
+                        department_external_id = %s,
+                        payload_fingerprint = %s,
+                        payload_metadata_json = %s,
+                        state = 'not_started',
+                        failure_category = NULL,
+                        failure_message = NULL,
+                        preparation_recovery_json = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                      AND state = 'definitive_failure'
+                      AND failure_category = 'mapping_missing'
+                      AND claim_owner = %s
+                      AND post_started_at IS NULL
+                      AND sol_id IS NULL
+                      AND attempt_count = 0
+                      AND first_attempt_at IS NULL
+                      AND last_attempt_at IS NULL
+                    RETURNING *
+                    """,
+                    (
+                        facts["company_id"],
+                        facts["company_external_id"],
+                        facts["department_mapping_id"],
+                        facts["department_external_id"],
+                        payload.fingerprint,
+                        Jsonb(payload.metadata),
+                        Jsonb(
+                            {
+                                "source": "internal_preparation_recovery",
+                                "status": "prepared",
+                                "stage": "ready",
+                                "reason": "mapping_missing_recovered",
+                            }
+                        ),
+                        operation_id,
+                        owner,
+                    ),
+                ).fetchone()
+    if row is None:
+        raise RuntimeError("preparation recovery claim was lost")
+    return _serialize_operation(cast(Mapping[str, Any], row))
+
+
 def _load_payload_sync(operation_id: int) -> AcessoriasRequestPayload:
     with get_database_pool().connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
@@ -725,8 +916,7 @@ async def create_request_for_cycle(
     if operation["state"] not in {"not_started", "retryable_failure"}:
         return operation
     operation_id = int(operation["id"])
-    claim_owner = owner or f"request:{os.getpid()}:{id(asyncio.current_task())}"
-    claim_owner = re.sub(r"[^a-zA-Z0-9_.:@-]", "-", claim_owner)[:160]
+    claim_owner = _claim_owner(owner, prefix="request")
     claimed = await asyncio.to_thread(
         _claim_operation_sync,
         operation_id,
@@ -767,6 +957,47 @@ async def create_request_for_cycle(
         outcome = AcessoriasRequestOutcome.reconciliation("provider_exception")
     return await asyncio.to_thread(
         _finish_operation_sync, operation_id, claim_owner, outcome
+    )
+
+
+async def recover_mapping_missing_request(
+    cycle_public_id: str,
+    *,
+    provider: AcessoriasRequestProvider | None = None,
+    owner: str | None = None,
+) -> dict[str, Any] | None:
+    """Recover only a proven pre-POST operation after canonical preparation succeeds."""
+    claim_owner = _claim_owner(owner, prefix="preparation-recovery")
+    claimed = await asyncio.to_thread(
+        _claim_mapping_missing_recovery_sync,
+        cycle_public_id,
+        claim_owner,
+        settings.finalization_lease_seconds,
+    )
+    if claimed is None:
+        return await asyncio.to_thread(_get_operation_for_cycle_sync, cycle_public_id)
+
+    from src.core.acessorias_preparation import prepare_cycle_for_request
+
+    preparation = await prepare_cycle_for_request(cycle_public_id)
+    if not preparation.ready:
+        return await asyncio.to_thread(
+            _record_preparation_recovery_blocked_sync,
+            int(claimed["id"]),
+            claim_owner,
+            stage=preparation.stage,
+            reason=preparation.reason,
+        )
+    await asyncio.to_thread(
+        _reopen_prepared_operation_sync,
+        int(claimed["id"]),
+        claim_owner,
+        cycle_public_id,
+    )
+    return await create_request_for_cycle(
+        cycle_public_id,
+        provider=provider,
+        owner=claim_owner,
     )
 
 

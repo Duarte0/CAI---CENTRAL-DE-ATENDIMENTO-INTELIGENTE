@@ -1,7 +1,7 @@
 # SPEC-0010 — Mapeamento de departamento DigiSac para Acessórias
 
-- **Status:** implementado localmente pelos issues 0016 e 0020; evidência descartável, sem provider/produção
-- **Versão:** 1.2
+- **Status:** implementado localmente pelos issues 0016, 0020 e 0026; evidência descartável, sem provider/produção
+- **Versão:** 1.3 (issue 0026 conecta a avaliação ao limite de preparação do worker)
 - **Prioridade/Fase:** P1 / Milestone D — DigiSac Department → Acessórias Department Mapping
 - **Rastreabilidade:** PRD §§4, 5.2, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone D; SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0009
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007, SPEC-0008 e SPEC-0009; conclusão do Milestone C e disponibilidade da relação atual `company_departments`
@@ -21,6 +21,13 @@ limites/ID da atribuição selecionada ficam no snapshot de validação. O runne
 descartável passou compileall, Pyright estrito, **197 passed, 64 skipped** offline
 e **64 passed, 197 deselected** na etapa PostgreSQL; isso continua sendo
 evidência local sintética/descartável.
+
+**Integração de preparação (2026-08-17):** issue 0026 chama
+`evaluate_department_mapping()` somente depois de uma resolução de identidade
+`confirmed` e antes da operação Request. A avaliação continua usando a
+atribuição dentro dos limites persistidos, regra por IDs estáveis e relação
+corrente da empresa; falhas de identidade ou mapping permanecem explícitas e
+sem POST. A evidência é local/sintética e não comprova provider ou produção.
 
 ## Objetivo e não objetivos
 

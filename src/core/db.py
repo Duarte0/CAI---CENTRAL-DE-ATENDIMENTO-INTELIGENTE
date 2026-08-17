@@ -26,7 +26,7 @@ from src.core.identifiers import uuid7
 from src.core.intents import normalize_intent_type
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0019_acessorias_request_creation"
+CURRENT_SCHEMA_REVISION = "0020_cycle_contact_provenance"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -48,6 +48,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "0016_digisac_contact_identity",
         "0017_digisac_acessorias_identity",
         "0018_department_mapping",
+        "0019_acessorias_request_creation",
         CURRENT_SCHEMA_REVISION,
     }
 )
@@ -1692,14 +1693,31 @@ def _cycle_row(
     return _row_dict(row)
 
 
+def _normalize_cycle_contact_external_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 240 or any(
+        character in normalized for character in "\r\n\x00"
+    ):
+        raise ValueError("contact_external_id must be a safe stable ID")
+    return normalized
+
+
 def _create_open_cycle_sync(
     *,
     conversation_id: str,
     started_at: str | datetime,
     open_event_key: str,
     start_strategy: str,
+    contact_external_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     _require_cycle_schema()
+    normalized_contact_external_id = _normalize_cycle_contact_external_id(
+        contact_external_id
+    )
     now = datetime.now(timezone.utc)
     public_id = uuid7()
     with _get_pool().connection() as connection:
@@ -1746,9 +1764,10 @@ def _create_open_cycle_sync(
                     INSERT INTO conversation_processing_cycles (
                         public_id, conversation_id, sequence_number,
                         cycle_started_at, cycle_start_strategy, open_event_key,
+                        digisac_contact_external_id,
                         status, next_attempt_at, created_at, updated_at
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s,
                         'open', NULL, %s, %s
                     )
                     """,
@@ -1759,12 +1778,24 @@ def _create_open_cycle_sync(
                         _parse_timestamp(started_at),
                         start_strategy,
                         open_event_key,
+                        normalized_contact_external_id,
                         now,
                         now,
                     ),
                 )
             else:
                 public_id = existing[0]
+                if normalized_contact_external_id is not None:
+                    connection.execute(
+                        """
+                        UPDATE conversation_processing_cycles
+                        SET digisac_contact_external_id = COALESCE(
+                            digisac_contact_external_id, %s
+                        ), updated_at = %s
+                        WHERE public_id = %s
+                        """,
+                        (normalized_contact_external_id, now, public_id),
+                    )
             cycle = _cycle_row(connection, str(public_id))
     if cycle is None:
         raise RuntimeError("PostgreSQL did not return the conversation cycle")
@@ -1782,8 +1813,12 @@ def _close_cycle_sync(
     closed_at: str | datetime,
     close_event_key: str,
     fallback_start_strategy: str = "pending_api_inference",
+    contact_external_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     _require_cycle_schema()
+    normalized_contact_external_id = _normalize_cycle_contact_external_id(
+        contact_external_id
+    )
     now = datetime.now(timezone.utc)
     closed_timestamp = _parse_timestamp(closed_at)
     with _get_pool().connection() as connection:
@@ -1821,6 +1856,9 @@ def _close_cycle_sync(
                         UPDATE conversation_processing_cycles
                         SET protocol = %s, ticket_closed_at = %s,
                             close_event_key = %s, status = 'pending',
+                            digisac_contact_external_id = COALESCE(
+                                digisac_contact_external_id, %s
+                            ),
                             next_attempt_at = %s, updated_at = %s,
                             error_phase = NULL, error_message = NULL
                         WHERE id = %s
@@ -1829,6 +1867,7 @@ def _close_cycle_sync(
                             protocol,
                             closed_timestamp,
                             close_event_key,
+                            normalized_contact_external_id,
                             now
                             + timedelta(
                                 seconds=settings.digisac_history_initial_delay_seconds
@@ -1858,9 +1897,10 @@ def _close_cycle_sync(
                             public_id, conversation_id, sequence_number,
                             protocol, cycle_started_at, ticket_closed_at,
                             cycle_start_strategy, close_event_key, status,
+                            digisac_contact_external_id,
                             next_attempt_at, created_at, updated_at
                         ) VALUES (
-                            %s, %s, %s, %s, NULL, %s, %s, %s, 'pending',
+                            %s, %s, %s, %s, NULL, %s, %s, %s, 'pending', %s,
                             %s, %s, %s
                         )
                         """,
@@ -1872,6 +1912,7 @@ def _close_cycle_sync(
                             closed_timestamp,
                             fallback_start_strategy,
                             close_event_key,
+                            normalized_contact_external_id,
                             now
                             + timedelta(
                                 seconds=settings.digisac_history_initial_delay_seconds

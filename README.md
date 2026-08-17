@@ -94,8 +94,15 @@ deduplicada para execução posterior. A resolução preserva evidência
 fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
 imutável por ciclo; confirmação continua exclusivamente manual.
 
+O issue 0026 completa a fronteira de preparação: cada ciclo carrega somente o
+`data.contact.id` canônico do snapshot de ticket, resolve a identidade, avalia
+o mapping dentro dos limites persistidos e só então avalia a operação Request.
+Contato de mensagem, grupo, nome, telefone ou qualquer fallback não substitui
+essa proveniência. Identidade ou mapping bloqueado permanece observável e não
+faz POST.
+
 Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
-etapa implementada pelos issues 0017–0019 e 0021–0022 cria Requests somente após fatos
+etapa implementada pelos issues 0017–0019, 0021–0022 e 0026 cria Requests somente após fatos
 duráveis de ciclo, classificação, identidade confirmada e mapping válido; o
 efeito externo é separado por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
@@ -176,10 +183,12 @@ de execução. As principais estruturas são:
 - `digisac_contacts` e `digisac_contact_hydrations`: identidade DigiSac por
   `contact.id`, metadata observada e claims/retries duráveis de hydration;
 - `conversation_processing_cycles` e `conversation_cycle_messages`: estado,
-  snapshot, leases, agendamento e auditoria da finalização persistente.
+  snapshot, proveniência canônica do contato, leases, agendamento e auditoria
+  da finalização persistente.
 - `acessorias_request_operations` e `acessorias_request_reconciliations`:
   operação externa única por ciclo, payload fingerprintado sem conteúdo bruto,
-  claims/leases, `SolID`, falhas sanitizadas e reconciliação administrativa.
+  claims/leases, recuperação de preparação pré-POST, `SolID`, falhas
+  sanitizadas e reconciliação administrativa.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -450,7 +459,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0019_acessorias_request_creation` e só então
+ao destino, aplica e verifica Alembic `0020_cycle_contact_provenance` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -463,7 +472,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-17, a etapa offline produziu
-**199 passed, 66 skipped** e a etapa PostgreSQL produziu **66 passed, 199
+**203 passed, 68 skipped** e a etapa PostgreSQL produziu **68 passed, 203
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
@@ -472,7 +481,9 @@ fundação do diretório Acessórias, a identidade/hydration de contatos DigiSac
 a resolução conservadora de identidade, o mapeamento departamental com
 auditoria e snapshots por ciclo, e a criação durável de Request com retry
 seguro, payload pré-POST, claims concorrentes, reconciliação de resultado
-incerto e de `429`, `SolID` e admissão compartilhada entre adapters.
+incerto e de `429`, `SolID`, admissão compartilhada entre adapters, a ordem de
+preparação de identidade/mapping e a recuperação segura de operações
+`mapping_missing` sem POST prévio.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.

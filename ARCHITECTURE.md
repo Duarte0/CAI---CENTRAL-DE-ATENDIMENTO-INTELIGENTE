@@ -69,9 +69,9 @@ media results, or department mapping state.
 ## 2.1 Acessórias architecture and delivery boundary
 
 The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012),
-DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014),
-DigiSac–Acessórias identity resolution (SPEC-0009; issue 0015), and department
-mapping (SPEC-0010; issues 0016 and 0020) add provider boundaries and durable local
+DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014 and 0026),
+DigiSac–Acessórias identity resolution (SPEC-0009; issues 0015 and 0026), and department
+mapping (SPEC-0010; issues 0016, 0020, and 0026) add provider boundaries and durable local
 records. Contact snapshots from ticket webhooks are upserted by opaque
 `contact.id`; message-only references create a durable, deduplicated need for
 individual hydration outside the request path. The full Contacts backfill uses
@@ -117,8 +117,9 @@ administered PostgreSQL rule keyed by stable provider IDs and the confirmed
 company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
 Request operation runs only after a persisted valid
-classification and mapping; issues 0017–0019 and 0021–0022 give it durable one-cycle
-uniqueness, claim/reconciliation, failure state, and shared in-process
+classification, confirmed identity, and mapping; issues 0017–0019, 0021–0022,
+and 0026 give it durable one-cycle uniqueness, claim/reconciliation, failure
+state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start; the
 persisted payload is loaded and validated before `post_started_at`, and a
@@ -229,6 +230,10 @@ The IA worker then:
 10. calls Groq and persists the classification, snapshot, and result;
 11. transitions the cycle to a terminal state and publishes compatibility
     status/result data where applicable.
+12. resolves the canonical ticket contact identity and persists the cycle outcome;
+13. evaluates and persists the cycle-scoped department-mapping snapshot;
+14. claims or creates the durable Acessórias Request operation only when both
+    preparation stages are ready.
 
 Persistent cycle publication is guarded by \`enqueued_at\`. Reconcilers only
 republish due work and recover jobs whose publication/lease has expired.
@@ -322,7 +327,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0019_acessorias_request_creation\`. The main data groups
+Alembic owns the schema through \`0020_cycle_contact_provenance\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -335,8 +340,8 @@ are:
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, and immutable per-cycle outcomes. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
-| Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, and identity-resolution linkage. |
-| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, sanitized outcomes, and controlled `manual_db` reconciliation. |
+| Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, canonical ticket-contact provenance, and identity-resolution linkage. |
+| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
 JSONB where defined by the schema, and durable timestamps use \`TIMESTAMPTZ\`.
@@ -417,6 +422,8 @@ application verifies that schema at startup and does not create or mutate it.
   concurrency-safe in-process Sliding Window before each POST; its transient
   state contains no credentials, headers, payload, classification content, or
   PII.
+- A terminal cycle must pass canonical-contact identity and cycle-scoped mapping
+  preparation before a Request operation can reach the provider boundary.
 - A Request operation is persisted before every provider POST; only a non-empty
   provider `id` confirms completion, and uncertain transport outcomes cannot
   auto-post a second Request. Only an explicit pre-send boundary marker may
@@ -432,7 +439,7 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **199 passed, 66 skipped** offline and **66 passed, 199 deselected** in
+  was **203 passed, 68 skipped** offline and **68 passed, 203 deselected** in
   PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
   replica, deployment, or production availability or release readiness.
 - The runner's offline stage does not select a finalization setting and removes
@@ -468,8 +475,11 @@ records these delivery limitations:
   not add an HTTP route, IA routing, or fallback selection. Request creation is
   implemented separately under issue `0017`.
 
-- Durable Acessórias Request creation is implemented under issues `0017`–`0019` and
-  `0021`–`0022`. It
+- Durable Acessórias Request creation and preparation are implemented under issues
+  `0017`–`0019`, `0021`–`0022`, and `0026`. They resolve the canonical ticket
+  contact and cycle-scoped mapping before any provider call, and recover
+  `mapping_missing` only with durable proof that no POST started. The existing
+  operation then
   validates terminal-cycle, confirmed-identity, and current mapping facts,
   admits provider calls through the shared in-process rate limiter, sends only
   the approved multipart fields, persists `SolID` after a successful local
@@ -490,7 +500,8 @@ they limit release verification and future evolution decisions.
 - PostgreSQL access and cycle coordination: \`src/core/db.py\`,
   \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0019_acessorias_request_creation.py\`.
+  \`0019_acessorias_request_creation.py\` through
+  \`0020_cycle_contact_provenance.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
@@ -499,8 +510,9 @@ they limit release verification and future evolution decisions.
 - DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
   and Alembic \`0018_department_mapping.py\`.
 - Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,
-  \`src/workers/ia_worker.py\`, and Alembic
-  \`0019_acessorias_request_creation.py\`.
+  \`src/core/acessorias_preparation.py\`, \`src/workers/ia_worker.py\`, and
+  Alembic \`0019_acessorias_request_creation.py\` plus
+  \`0020_cycle_contact_provenance.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,
