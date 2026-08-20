@@ -64,7 +64,10 @@ flowchart LR
 The application uses one PostgreSQL connection pool per process. Database
 initialization verifies the Alembic schema and does not create or mutate
 tables. Redis is not the authoritative store for durable classifications,
-media results, or department mapping state.
+media results, or department mapping state. The pool lifecycle and schema
+verification remain in `src/core/db.py`; DigiSac contact persistence and
+hydration use the same pool through the focused internal
+`src/core/digisac_contact_repository.py` boundary.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -503,6 +506,11 @@ they limit release verification and future evolution decisions.
 - Shared message and context rules: \`src/core/models.py\`,
   \`src/core/message_filter.py\`, \`src/core/media.py\`,
   \`src/core/finalization.py\`.
+- PostgreSQL lifecycle, schema verification, and shared persistence primitives:
+  \`src/core/db.py\`; cycle coordination and domain persistence remain split
+  across the focused modules below.
+- DigiSac contact persistence and hydration: \`src/core/digisac_contact_repository.py\`,
+  with compatibility exports retained by \`src/core/db.py\`.
 - PostgreSQL access and cycle coordination: \`src/core/db.py\`,
   \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
