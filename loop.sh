@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Uso: ./loop.sh [plan|specs|issues|build|<N>] [max_iterações]
-# Modelos por fase: CODEX_PLAN_MODEL, CODEX_SPECS_MODEL, CODEX_ISSUES_MODEL, CODEX_BUILD_MODEL
-# Esforço por fase: CODEX_PLAN_EFFORT, CODEX_SPECS_EFFORT, CODEX_ISSUES_EFFORT, CODEX_BUILD_EFFORT
+# Uso: ./loop.sh [plan|specs|issues|bugs|refactor|build|<N>] [max_iterações]
+# Modelos por fase: CODEX_PLAN_MODEL, CODEX_SPECS_MODEL, CODEX_ISSUES_MODEL, CODEX_BUGS_MODEL, CODEX_REFACTOR_MODEL, CODEX_BUILD_MODEL
+# Esforço por fase: CODEX_PLAN_EFFORT, CODEX_SPECS_EFFORT, CODEX_ISSUES_EFFORT, CODEX_BUGS_EFFORT, CODEX_REFACTOR_EFFORT, CODEX_BUILD_EFFORT
 # Gerais: CODEX_TERRA_MODEL, CODEX_LUNA_MODEL, CODEX_LOG_DIR, NO_PROGRESS_LIMIT, ERROR_LIMIT
 
 TERRA_MODEL="${CODEX_TERRA_MODEL:-gpt-5.6-terra}"
@@ -15,6 +15,12 @@ SPECS_MODEL="${CODEX_SPECS_MODEL:-$TERRA_MODEL}"
 SPECS_EFFORT="${CODEX_SPECS_EFFORT:-medium}"
 ISSUES_MODEL="${CODEX_ISSUES_MODEL:-$LUNA_MODEL}"
 ISSUES_EFFORT="${CODEX_ISSUES_EFFORT:-high}"
+# Bugs são triagem orientada a evidências e seguem o mesmo contrato de criação de issues.
+BUGS_MODEL="${CODEX_BUGS_MODEL:-$LUNA_MODEL}"
+BUGS_EFFORT="${CODEX_BUGS_EFFORT:-high}"
+# Refatoração exige mais julgamento arquitetural antes de abrir a issue.
+REFACTOR_MODEL="${CODEX_REFACTOR_MODEL:-$TERRA_MODEL}"
+REFACTOR_EFFORT="${CODEX_REFACTOR_EFFORT:-low}"
 BUILD_MODEL="${CODEX_BUILD_MODEL:-$LUNA_MODEL}"
 BUILD_EFFORT="${CODEX_BUILD_EFFORT:-xhigh}"
 
@@ -47,10 +53,12 @@ case "${1:-}" in
     plan)   MODE=plan;   PROMPT=PROMPT_plan.md;   MAX="${2:-1}"; MODEL="$PLAN_MODEL";   EFFORT="$PLAN_EFFORT"   ;;
     specs)  MODE=specs;  PROMPT=PROMPT_specs.md;  MAX="${2:-1}"; MODEL="$SPECS_MODEL";  EFFORT="$SPECS_EFFORT"  ;;
     issues) MODE=issues; PROMPT=PROMPT_issues.md; MAX="${2:-0}"; MODEL="$ISSUES_MODEL"; EFFORT="$ISSUES_EFFORT" ;;
+    bugs)   MODE=bugs;   PROMPT=PROMPT_bugs.md;   MAX="${2:-0}"; MODEL="$BUGS_MODEL";   EFFORT="$BUGS_EFFORT"   ;;
+    refactor) MODE=refactor; PROMPT=PROMPT_refactor.md; MAX="${2:-0}"; MODEL="$REFACTOR_MODEL"; EFFORT="$REFACTOR_EFFORT" ;;
     build)  MODE=build;  PROMPT=PROMPT_build.md;  MAX="${2:-0}"; MODEL="$BUILD_MODEL";  EFFORT="$BUILD_EFFORT"  ;;
     "")     MODE=build;  PROMPT=PROMPT_build.md;  MAX=0;         MODEL="$BUILD_MODEL";  EFFORT="$BUILD_EFFORT"  ;;
     [0-9]*) MODE=build;  PROMPT=PROMPT_build.md;  MAX="$1";      MODEL="$BUILD_MODEL";  EFFORT="$BUILD_EFFORT"  ;;
-    *) err "Modo inválido: $1. Use: plan | specs | issues | build | <N>"; exit 1 ;;
+    *) err "Modo inválido: $1. Use: plan | specs | issues | bugs | refactor | build | <N>"; exit 1 ;;
 esac
 
 [[ "$MAX" =~ ^[0-9]+$ ]] || { err "O número máximo de iterações deve ser um inteiro não negativo: $MAX"; exit 1; }
