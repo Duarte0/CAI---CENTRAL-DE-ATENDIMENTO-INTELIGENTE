@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from src.api.middleware import verify_webhook_signature
 from src.api.openapi import install_openapi_contract
 from src.api.webhook_adapter import DigisacMessage, DigisacWebhookAdapter
-from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES
+from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES, SUPPORTED_MESSAGE_TYPES
 from src.core.config import settings
 from src.core.analysis import normalize_protocol
 from src.core.db import (
@@ -33,7 +33,13 @@ from src.core.db import (
     reserve_transcription,
     reserve_image_extraction,
     transition_cycle,
+    upsert_digisac_contact,
 )
+from src.core.digisac_contact_hydration import (
+    contact_hydration_loop,
+    request_contact_hydration,
+)
+from src.core.digisac_client import DigisacResponseError, normalize_contact
 from src.core.digisac_directory import directory_sync_loop
 from src.core.message_filter import is_bot_message
 from src.core.media import is_image_message
@@ -44,12 +50,47 @@ from src.utils.idempotency import IdempotencyService
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_WEBHOOK_EVENTS = {
+    "ticket.created",
+    "ticket.updated",
+    "message.created",
+    "message.updated",
+}
+
+
+def _safe_webhook_event(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "missing"
+    event = value.strip()
+    return event if event in _SUPPORTED_WEBHOOK_EVENTS else "unsupported"
+
+
+def _safe_message_origin(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "missing"
+    return "bot" if value.strip().lower() == "bot" else "other"
+
+
+def _safe_message_type(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "missing"
+    message_type = value.strip().lower()
+    return message_type if message_type in SUPPORTED_MESSAGE_TYPES else "unsupported"
+
 
 def _non_empty_string(value: Any) -> str | None:
     if value is None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _canonical_ticket_contact_external_id(data: Mapping[str, Any]) -> str | None:
+    contact = data.get("contact")
+    if not isinstance(contact, Mapping):
+        return None
+    contact_mapping = cast(Mapping[str, Any], contact)
+    return _non_empty_string(contact_mapping.get("id"))
 
 
 def _ticket_event_timestamp(
@@ -228,6 +269,32 @@ async def capture_ticket_assignment(
     return inserted
 
 
+async def capture_contact_snapshot(
+    payload: Mapping[str, Any], data: Mapping[str, Any]
+) -> bool:
+    raw_contact = data.get("contact")
+    if not isinstance(raw_contact, Mapping):
+        return False
+    raw_contact = cast(Mapping[str, Any], raw_contact)
+    try:
+        contact = normalize_contact(raw_contact)
+        observed_at, _has_timestamp = _ticket_event_timestamp(payload, data)
+        await upsert_digisac_contact(
+            contact,
+            source="ticket_webhook",
+            observed_at=observed_at,
+        )
+        return True
+    except DigisacResponseError:
+        logger.warning("DigiSac contact snapshot ignored: invalid contact shape")
+    except Exception:
+        logger.exception(
+            "DigiSac contact snapshot persistence failed: contact_id=%s",
+            _non_empty_string(raw_contact.get("id")) or "unknown",
+        )
+    return False
+
+
 async def enqueue_audio_transcription(
     redis: AsyncRedis, message: DigisacMessage
 ) -> bool:
@@ -297,12 +364,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await initialize_database()
     app.state.redis = create_redis_client()
     directory_task = asyncio.create_task(directory_sync_loop())
+    contact_hydration_task = asyncio.create_task(contact_hydration_loop())
     try:
         yield
     finally:
         directory_task.cancel()
+        contact_hydration_task.cancel()
         with suppress(asyncio.CancelledError):
             await directory_task
+        with suppress(asyncio.CancelledError):
+            await contact_hydration_task
         await app.state.redis.aclose()
         await close_database()
 
@@ -363,7 +434,7 @@ async def parse_webhook_payload(
     try:
         parsed_payload: Any = json.loads(raw_body)
     except json.JSONDecodeError as exc:
-        logger.warning("Digisac webhook contains invalid JSON: %s", exc)
+        logger.warning("Digisac webhook rejected: reason=invalid_json")
         raise HTTPException(
             status_code=400, detail="Invalid JSON payload") from exc
 
@@ -373,20 +444,21 @@ async def parse_webhook_payload(
         )
     raw_payload = cast(dict[str, Any], parsed_payload)
     logger.info(
-        "Digisac webhook parsed: event=%r top_level_keys=%s",
-        raw_payload.get("event"),
-        sorted(raw_payload),
+        "Digisac webhook parsed: event=%s top_level_key_count=%s",
+        _safe_webhook_event(raw_payload.get("event")),
+        len(raw_payload),
     )
     try:
         payload = WebhookPayload.model_validate(raw_payload)
     except ValueError as exc:
-        logger.warning("Digisac webhook validation failed: %s", exc)
+        logger.warning("Digisac webhook rejected: reason=validation_failed")
         raise HTTPException(
             status_code=400, detail="Webhook payload must be an object"
         ) from exc
 
-    logger.info("Digisac webhook field extraction: %s",
-                payload.extraction_debug())
+    logger.info(
+        "Digisac webhook field extraction: %s", payload.extraction_debug()
+    )
     return raw_payload, payload
 
 
@@ -402,10 +474,11 @@ async def digisac_webhook(
     data = payload_data.get("data")
     if not isinstance(data, dict):
         logger.warning(
-            "Digisac webhook rejected: event=%r data_type=%s top_level_keys=%s",
-            payload_data.get("event"),
+            "Digisac webhook rejected: event=%s data_type=%s "
+            "top_level_key_count=%s",
+            _safe_webhook_event(payload_data.get("event")),
             type(data).__name__,
-            sorted(payload_data),
+            len(payload_data),
         )
         raise HTTPException(
             status_code=400,
@@ -418,9 +491,12 @@ async def digisac_webhook(
         ticket_id = data.get("id")
         if not isinstance(ticket_id, str) or not ticket_id:
             logger.warning(
-                "Ticket webhook ignored: missing data.id event=%r", event)
+                "Ticket webhook ignored: missing data.id event=%s",
+                _safe_webhook_event(event),
+            )
             response.status_code = status.HTTP_200_OK
             return {"status": "ignored", "reason": "missing_ticket_id"}
+        await capture_contact_snapshot(payload_data, data)
         if event == "ticket.created":
             timestamp, _has_timestamp = _ticket_event_timestamp(payload_data, data)
             cycle, created = await create_open_cycle(
@@ -428,6 +504,7 @@ async def digisac_webhook(
                 started_at=timestamp,
                 open_event_key=_cycle_event_key(event, ticket_id, payload_data, data),
                 start_strategy="ticket_created_event",
+                contact_external_id=_canonical_ticket_contact_external_id(data),
             )
             return {
                 "status": "ticket_created",
@@ -447,6 +524,7 @@ async def digisac_webhook(
                     event, ticket_id, payload_data, data
                 ),
                 start_strategy="ticket_reopened_event",
+                contact_external_id=_canonical_ticket_contact_external_id(data),
             )
             return {
                 "status": "ticket_reopened",
@@ -488,6 +566,7 @@ async def digisac_webhook(
             protocol=protocol,
             closed_at=closed_at,
             close_event_key=_cycle_event_key(event, ticket_id, payload_data, data),
+            contact_external_id=_canonical_ticket_contact_external_id(data),
         )
         if created:
             try:
@@ -515,9 +594,17 @@ async def digisac_webhook(
         extra={
             "message_id": data.get("id"),
             "ticket_id": data.get("ticketId"),
-            "raw_is_from_bot": data.get("isFromBot"),
-            "raw_origin": data.get("origin"),
-            "raw_is_from_me": data.get("isFromMe"),
+            "is_from_bot": (
+                data.get("isFromBot")
+                if isinstance(data.get("isFromBot"), bool)
+                else None
+            ),
+            "origin": _safe_message_origin(data.get("origin")),
+            "is_from_me": (
+                data.get("isFromMe")
+                if isinstance(data.get("isFromMe"), bool)
+                else None
+            ),
         },
     )
     if is_bot_message(is_from_bot=data.get("isFromBot"), origin=data.get("origin")):
@@ -531,8 +618,12 @@ async def digisac_webhook(
                 "reason": reason,
                 "message_id": data.get("id"),
                 "ticket_id": data.get("ticketId"),
-                "is_from_bot": data.get("isFromBot"),
-                "origin": data.get("origin"),
+                "is_from_bot": (
+                    data.get("isFromBot")
+                    if isinstance(data.get("isFromBot"), bool)
+                    else None
+                ),
+                "origin": _safe_message_origin(data.get("origin")),
             },
         )
         response.status_code = status.HTTP_200_OK
@@ -546,27 +637,41 @@ async def digisac_webhook(
                 extra={
                     "message_id": data.get("id"),
                     "ticket_id": data.get("ticketId"),
-                    "message_type": data.get("type"),
+                    "message_type": _safe_message_type(data.get("type")),
                 },
             )
         logger.info(
-            "Digisac webhook ignored: event=%r reason=%s data_keys=%s",
-            payload_data.get("event"),
+            "Digisac webhook ignored: event=%s reason=%s data_key_count=%s",
+            _safe_webhook_event(payload_data.get("event")),
             adaptation.ignored_reason,
-            sorted(data),
+            len(data),
         )
         response.status_code = status.HTTP_200_OK
         return {"status": "ignored", "reason": adaptation.ignored_reason}
 
     message = adaptation.message
     assert message is not None
+    if message.sender_id:
+        try:
+            requested_at = (
+                message.timestamp.isoformat() if message.timestamp else None
+            )
+            await request_contact_hydration(
+                message.sender_id,
+                requested_at=requested_at,
+            )
+        except Exception:
+            logger.exception(
+                "DigiSac contact hydration request failed: contact_id=%s",
+                message.sender_id,
+            )
     logger.info(
         "Message bot detection normalized",
         extra={
             "message_id": message.message_id,
             "ticket_id": message.conversation_id,
             "is_from_bot": message.is_from_bot,
-            "origin": message.origin,
+            "origin": _safe_message_origin(message.origin),
             "is_from_me": message.is_from_me,
         },
     )

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import subprocess
 import tempfile
 import time
@@ -15,10 +16,18 @@ import requests
 from src.core.config import settings
 from src.core.db import (
     close_database,
+    get_transcription,
     initialize_database,
+    reserve_transcription,
     recover_stale_transcriptions,
     release_transcription_publication,
     set_transcription_status,
+)
+from src.core.provider_retry import (
+    TransientProviderError,
+    retry_after_from_text,
+    retry_after_seconds,
+    retry_delay,
 )
 from src.core.redis_client import AsyncRedis, create_redis_client
 
@@ -27,16 +36,46 @@ GROQ_TRANSCRIPTIONS_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 TRANSIENT_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 
 
-class TransientTranscriptionError(RuntimeError):
+class TransientTranscriptionError(TransientProviderError):
     """A network/upstream failure worth retrying."""
+
+
+def _response_retry_after(response: requests.Response) -> float | None:
+    header_delay = retry_after_seconds(
+        requests.HTTPError(response=response)
+    )
+    if header_delay is not None:
+        return header_delay
+    try:
+        return retry_after_from_text(getattr(response, "text", ""))
+    except Exception:
+        return None
 
 
 def _raise_for_status(response: requests.Response, operation: str) -> None:
     if response.status_code in TRANSIENT_HTTP_STATUSES:
         raise TransientTranscriptionError(
-            f"{operation} returned transient HTTP {response.status_code}"
+            f"{operation} returned transient HTTP {response.status_code}: "
+            f"{getattr(response, 'text', '')[:1000]}",
+            retry_after_seconds=_response_retry_after(response),
         )
     response.raise_for_status()
+
+
+def _is_transient_failure_text(message: str | None) -> bool:
+    if not message:
+        return False
+    lowered = message.lower()
+    return bool(
+        re.search(r"(?:error code:|http|transient http)\s*(?:408|425|429|500|502|503|504)", lowered)
+        or "rate_limit_exceeded" in lowered
+        or "tokens per minute" in lowered
+        or "tokens per day" in lowered
+        or "apiconnectionerror" in lowered
+        or "apitimeouterror" in lowered
+        or "timeout" in lowered
+        or "connection" in lowered
+    )
 
 
 def _find_audio_url(payload: Any) -> str | None:
@@ -87,7 +126,9 @@ def transcribe_message(message_id: str) -> str:
         _raise_for_status(audio, "audio download")
     except (requests.Timeout, requests.ConnectionError) as exc:
         raise TransientTranscriptionError(
-            f"DigiSac download failed: {exc}") from exc
+            f"DigiSac download failed: {exc}",
+            retry_after_seconds=retry_after_seconds(exc),
+        ) from exc
 
     with tempfile.TemporaryDirectory(prefix="cai-audio-") as temp_dir:
         source = Path(temp_dir) / "recording.oga"
@@ -135,7 +176,9 @@ def transcribe_message(message_id: str) -> str:
             _raise_for_status(response, "Groq transcription")
         except (requests.Timeout, requests.ConnectionError) as exc:
             raise TransientTranscriptionError(
-                f"Groq request failed: {exc}") from exc
+                f"Groq request failed: {exc}",
+                retry_after_seconds=retry_after_seconds(exc),
+            ) from exc
 
         text = response.json().get("text")
         if not isinstance(text, str) or not text.strip():
@@ -148,7 +191,16 @@ class AudioTranscriptionWorker:
         self.redis = redis_client
         self.queue = "audio_transcription_queue"
         self.dead_letter = "audio_transcription_dead_letter"
-        self.max_retries = settings.max_retry_attempts
+        self.rate_limited_until = 0.0
+
+    def _retry_delay(self, exc: TransientTranscriptionError, attempt: int) -> float:
+        return retry_delay(
+            attempt=attempt,
+            base_seconds=settings.audio_retry_base_seconds,
+            max_delay_seconds=settings.audio_retry_max_delay_seconds,
+            provider_margin_seconds=settings.audio_retry_provider_margin_seconds,
+            provider_delay_seconds=exc.retry_after_seconds,
+        )
 
     async def process_job(self, job: dict[str, Any]) -> None:
         message_id = job.get("message_id")
@@ -169,15 +221,17 @@ class AudioTranscriptionWorker:
         except Exception as exc:
             attempt = int(job.get("attempt", 0)) + 1
             transient = isinstance(exc, TransientTranscriptionError)
-            if transient and attempt < self.max_retries:
-                delay = min(2**attempt, 60)
-                job.update(attempt=attempt, not_before=time.time() + delay)
+            if transient:
+                delay = self._retry_delay(exc, attempt)
+                retry_at = time.time() + delay
+                self.rate_limited_until = max(self.rate_limited_until, retry_at)
+                job.update(attempt=attempt, not_before=retry_at)
                 transitioned = await set_transcription_status(
                     message_id,
                     "pending",
                     error_message=str(exc),
                     next_attempt_at=datetime.fromtimestamp(
-                        float(job["not_before"]), tz=timezone.utc
+                        retry_at, tz=timezone.utc
                     ),
                     expected_updated_at=lease,
                 )
@@ -187,11 +241,21 @@ class AudioTranscriptionWorker:
                         message_id,
                     )
                     return
+                try:
+                    await self.redis.rpush(self.queue, json.dumps(job))
+                except Exception as publish_exc:
+                    await release_transcription_publication(
+                        message_id,
+                        f"retry queue publish failed: {publish_exc}",
+                    )
+                    raise
                 logger.warning(
-                    "Audio transcription retry scheduled: message_id=%s attempt=%s delay=%ss error=%s",
+                    "Audio transcription retry scheduled: message_id=%s "
+                    "attempt=%s delay=%.3fs provider_retry_after=%s error=%s",
                     message_id,
                     attempt,
                     delay,
+                    exc.retry_after_seconds,
                     exc,
                 )
                 return
@@ -202,6 +266,7 @@ class AudioTranscriptionWorker:
                 expected_updated_at=lease,
             )
             if transitioned is not None:
+                await self._remove_matching_dead_letters(message_id)
                 await self.redis.rpush(self.dead_letter, json.dumps(job))
             logger.exception(
                 "Audio transcription failed: message_id=%s attempt=%s",
@@ -222,7 +287,105 @@ class AudioTranscriptionWorker:
                 message_id,
             )
             return
+        await self._remove_matching_dead_letters(message_id)
         logger.info("Audio transcription completed: message_id=%s", message_id)
+
+    async def _remove_matching_dead_letters(self, message_id: str) -> int:
+        removed = 0
+        raw_items = await self.redis.lrange(self.dead_letter, 0, -1)
+        for raw in dict.fromkeys(raw_items):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                parsed_job = cast(dict[str, Any], parsed)
+            else:
+                continue
+            if parsed_job.get("message_id") == message_id:
+                removed += await self.redis.lrem(self.dead_letter, 0, raw)
+        return removed
+
+    async def recover_transient_dead_letters(self) -> int:
+        raw_items = await self.redis.lrange(self.dead_letter, 0, -1)
+        queued_message_ids: set[str] = set()
+        for raw in await self.redis.lrange(self.queue, 0, -1):
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict):
+                queued_id = cast(dict[str, Any], parsed).get("message_id")
+                if isinstance(queued_id, str) and queued_id:
+                    queued_message_ids.add(queued_id)
+        jobs_by_message: dict[str, dict[str, Any]] = {}
+        for raw in raw_items:
+            try:
+                parsed: Any = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            parsed_job = cast(dict[str, Any], parsed)
+            message_id = parsed_job.get("message_id")
+            if isinstance(message_id, str) and message_id:
+                jobs_by_message.setdefault(message_id, parsed_job)
+
+        recovered = 0
+        for message_id, job in jobs_by_message.items():
+            if message_id in queued_message_ids:
+                continue
+            row = await get_transcription(message_id)
+            if row is None:
+                continue
+            if row["status"] == "completed":
+                await self._remove_matching_dead_letters(message_id)
+                continue
+            error_message = row.get("error_message")
+            if row["status"] != "failed" or not isinstance(error_message, str):
+                continue
+            if not _is_transient_failure_text(error_message):
+                continue
+            if not await reserve_transcription(
+                message_id,
+                row.get("conversation_id"),
+                str(row.get("model") or settings.audio_transcription_model),
+            ):
+                continue
+            attempt = max(int(job.get("attempt", 0)), 0)
+            delay = self._retry_delay(
+                TransientTranscriptionError(
+                    "legacy transient audio dead letter",
+                    retry_after_seconds=0.0,
+                ),
+                attempt + 1,
+            )
+            retry_at = time.time() + delay
+            transitioned = await set_transcription_status(
+                message_id,
+                "pending",
+                error_message="legacy transient audio dead letter",
+                next_attempt_at=datetime.fromtimestamp(retry_at, tz=timezone.utc),
+                expected_statuses=("pending",),
+            )
+            if transitioned is not None:
+                job = {
+                    "message_id": message_id,
+                    "conversation_id": row.get("conversation_id"),
+                    "attempt": attempt,
+                    "not_before": retry_at,
+                }
+                try:
+                    await self.redis.rpush(self.queue, json.dumps(job))
+                except Exception as publish_exc:
+                    await release_transcription_publication(
+                        message_id,
+                        f"dead-letter recovery publish failed: {publish_exc}",
+                    )
+                    raise
+                queued_message_ids.add(message_id)
+                recovered += 1
+        return recovered
 
     async def _remove_matching_queue_items(self, message_id: str) -> int:
         removed = 0
@@ -292,8 +455,19 @@ class AudioTranscriptionWorker:
     async def process(self) -> None:
         logger.info("Audio transcription worker started")
         next_recovery_at = 0.0
+        next_dead_letter_recovery_at = 0.0
         while True:
             try:
+                rate_limit_remaining = self.rate_limited_until - time.time()
+                if rate_limit_remaining > 0:
+                    await asyncio.sleep(min(rate_limit_remaining, 1.0))
+                    continue
+                if time.monotonic() >= next_dead_letter_recovery_at:
+                    await self.recover_transient_dead_letters()
+                    next_dead_letter_recovery_at = (
+                        time.monotonic()
+                        + settings.audio_dead_letter_recovery_interval_seconds
+                    )
                 if time.monotonic() >= next_recovery_at:
                     await self.recover_stale_jobs()
                     next_recovery_at = (

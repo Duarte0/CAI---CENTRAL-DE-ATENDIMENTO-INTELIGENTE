@@ -1,5 +1,5 @@
 # src/core/config.py
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     groq_api_key: Optional[str] = None
     digisac_api_key: Optional[str] = None
     digisac_api_base_url: str = "https://inov.digisac.chat/api/v1"
+    acessorias_api_token: Optional[str] = None
+    acessorias_api_base_url: str = "https://api.acessorias.com"
     webhook_secret: Optional[str] = None
 
     # Database & Cache
@@ -48,6 +50,10 @@ class Settings(BaseSettings):
     audio_conversion_timeout_seconds: int = 60
     audio_transcription_timeout_seconds: int = 60
     audio_transcription_model: str = "whisper-large-v3-turbo"
+    audio_retry_base_seconds: float = 2.0
+    audio_retry_max_delay_seconds: float = 15 * 60
+    audio_retry_provider_margin_seconds: float = 1.0
+    audio_dead_letter_recovery_interval_seconds: float = 60.0
     image_vision_model: str = "qwen/qwen3.6-27b"
     image_vision_max_completion_tokens: int = 5000
     image_max_bytes: int = 4 * 1024 * 1024
@@ -69,10 +75,19 @@ class Settings(BaseSettings):
     digisac_directory_max_retries: int = 3
     digisac_directory_sync_interval_seconds: int = 60 * 60 * 24
     digisac_directory_refresh_cooldown_seconds: int = 60 * 15
+    acessorias_request_timeout_seconds: float = 15.0
+    acessorias_max_attempts: int = 3
+    acessorias_retry_base_seconds: float = 1.0
+    acessorias_retry_max_delay_seconds: float = 60.0
+    acessorias_retry_provider_margin_seconds: float = 1.0
+    acessorias_rate_limit_per_minute: int = 100
+    acessorias_page_safety_limit: int = 1000
     digisac_history_initial_delay_seconds: float = 2.0
     digisac_history_request_timeout_seconds: float = 15.0
     digisac_history_max_attempts: int = 3
     digisac_history_retry_base_seconds: float = 2.0
+    digisac_contact_backfill_per_page: int = 5000
+    digisac_contact_hydration_interval_seconds: float = 5.0
     finalization_reconcile_interval_seconds: float = 5.0
     finalization_lease_seconds: int = 300
     media_status_recheck_seconds: float = 30.0
@@ -95,7 +110,7 @@ class Settings(BaseSettings):
 
     @field_validator("debug", mode="before")
     @classmethod
-    def normalize_debug(cls, value):
+    def normalize_debug(cls, value: Any) -> Any:
         if isinstance(value, str) and value.lower() in {"release", "production"}:
             return False
         return value
@@ -104,8 +119,13 @@ class Settings(BaseSettings):
         "digisac_history_initial_delay_seconds",
         "digisac_history_request_timeout_seconds",
         "digisac_history_retry_base_seconds",
+        "digisac_contact_hydration_interval_seconds",
         "finalization_reconcile_interval_seconds",
         "media_status_recheck_seconds",
+        "audio_retry_base_seconds",
+        "audio_retry_max_delay_seconds",
+        "audio_retry_provider_margin_seconds",
+        "audio_dead_letter_recovery_interval_seconds",
         "image_retry_base_seconds",
         "image_retry_max_delay_seconds",
         "image_retry_provider_margin_seconds",
@@ -114,6 +134,10 @@ class Settings(BaseSettings):
         "ia_retry_max_delay_seconds",
         "ia_retry_provider_margin_seconds",
         "content_reconcile_interval_seconds",
+        "acessorias_request_timeout_seconds",
+        "acessorias_retry_base_seconds",
+        "acessorias_retry_max_delay_seconds",
+        "acessorias_retry_provider_margin_seconds",
     )
     @classmethod
     def positive_seconds(cls, value: float) -> float:
@@ -123,17 +147,38 @@ class Settings(BaseSettings):
 
     @field_validator(
         "digisac_history_max_attempts",
+        "digisac_contact_backfill_per_page",
         "finalization_lease_seconds",
         "quoted_message_max_chars",
         "ia_context_safe_input_tokens",
         "ia_context_chunk_tokens",
         "ia_context_summary_output_tokens",
+        "acessorias_max_attempts",
+        "acessorias_rate_limit_per_minute",
+        "acessorias_page_safety_limit",
     )
     @classmethod
     def positive_integer(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("limit settings must be positive")
         return value
+
+    @field_validator("acessorias_rate_limit_per_minute")
+    @classmethod
+    def limit_acessorias_rate(cls, value: int) -> int:
+        if value > 100:
+            raise ValueError("ACESSORIAS_RATE_LIMIT_PER_MINUTE cannot exceed 100")
+        return value
+
+    @model_validator(mode="after")
+    def validate_acessorias_retry_limits(self) -> "Settings":
+        if self.acessorias_retry_max_delay_seconds < self.acessorias_retry_base_seconds:
+            raise ValueError(
+                "ACESSORIAS_RETRY_MAX_DELAY_SECONDS must be at least the base delay"
+            )
+        if not self.acessorias_api_base_url.strip():
+            raise ValueError("ACESSORIAS_API_BASE_URL must not be empty")
+        return self
 
     @model_validator(mode="after")
     def validate_context_limits(self) -> "Settings":

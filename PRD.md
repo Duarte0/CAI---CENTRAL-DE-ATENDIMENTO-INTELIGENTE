@@ -12,9 +12,11 @@ reconstructs the relevant conversation, enriches audio and image messages,
 classifies the customer's intent with Groq, and exposes an auditable result
 through an HTTP API.
 
-CAI is an analysis and operational-support system. It does not open tickets,
-reply to customers, transfer tickets, or autonomously decide the department or
-agent responsible for a ticket.
+CAI is an analysis and operational-support system. The implemented system does
+not open DigiSac tickets, reply to customers, transfer tickets, or autonomously
+decide the department or agent responsible for a ticket. The approved
+Acessórias directory, identity, department mapping, and durable external
+Request increments are implemented locally behind their own contracts.
 
 The requirements in this document describe capabilities present in the current
 repository. Product policies approved by the product owner are recorded as
@@ -33,8 +35,9 @@ The implementation establishes these technical actors:
 
 The system has one internal operator and is not exposed to external or
 third-party API consumers. Query endpoints do not require login, API keys,
-JWTs, or a separate authorization layer. When the Acessórias integration is
-built, access-control requirements will be revisited.
+JWTs, or a separate authorization layer. The approved Acessórias integration
+is not an HTTP surface for those consumers; its provider credentials and
+access-control requirements will be specified before implementation.
 
 ## 3. Product goals
 
@@ -53,8 +56,9 @@ CAI must:
 6. Build a classification corpus that supports a future FAQ system and
    preserve conversation history as a long-term record of customer-service
    interactions and conversation evolution.
-7. Track classification results over time to observe AI evolution and support a
-   future Acessórias integration for department routing and request creation.
+7. Integrate the approved DigiSac → CAI → Acessórias flow safely: maintain
+   external directories, resolve identity conservatively, map departments, and
+   later create auditable, idempotent external Requests.
 
 ## 4. Non-goals and product boundaries
 
@@ -69,6 +73,13 @@ CAI does not currently:
 - delete or archive data automatically; data is retained indefinitely, with
   manual deletion by direct PostgreSQL query only when needed;
 - provide a general-purpose public API contract beyond the implemented routes.
+
+The directory foundation does not create or update Requests, synchronize Users,
+expose resolution/refresh endpoints or a UI, use fuzzy name matching, or change
+the IA contract. The implemented Request increment creates only external
+Requests of `tipo=E` from eligible durable facts. A unique phone match is a
+candidate, not an automatic confirmation; DigiSac groups remain unresolved
+unless an explicit confirmed link exists.
 
 ## 5. End-to-end workflow
 
@@ -152,6 +163,79 @@ Persistent claims, leases, publication markers, `next_attempt_at`, and
 reconcilers allow work abandoned by a process failure to be recovered without
 duplicating terminal classifications.
 
+### 5.5 Approved Acessórias integration status
+
+The approved product flow is DigiSac ticket/conversation and contact → CAI
+classification → Acessórias company resolution → Acessórias department mapping
+→ durable external Request → persisted CAI-to-Request link. The Acessórias
+Directory Foundation (SPEC-0007; issue 0012) is implemented locally and
+establishes only the directories required for this flow.
+
+CAI now retains a minimal local DigiSac-contact representation keyed by
+`contact.id`; `contact.data.number` is evidence only and
+`contact.idFromService` is not an Acessórias matching key. Ticket webhooks are
+the preferred incremental source when they include the complete contact;
+message references schedule deduplicated individual hydration outside the
+webhook request path. The Contacts API also supports the implemented internal
+full backfill: it validates one-page or `page=N` responses, deduplicates by
+opaque `contact.id`, and publishes only a complete snapshot.
+
+Before any Acessórias Request operation, the terminal cycle retains only the
+canonical ticket `data.contact.id` and the worker runs the durable sequence
+`contact.id` → identity resolution → department-mapping snapshot → Request
+operation → provider POST. A message sender `contactId`, group participant,
+name, phone, or fallback metadata cannot replace the ticket contact. Missing,
+unconfirmed, ambiguous, conflicting, or invalid preparation facts fail closed
+without a provider POST.
+
+The local Acessórias directory durably retains companies (active and inactive),
+company contacts, departments, and current company-department relationships.
+Raw and normalized phone/email values are both preserved.
+PostgreSQL is the local durable authority; Redis is never the identity or
+directory authority.
+
+Identity distinguishes technical match evidence, persisted contact-company
+links, audited link transitions, and the resolution used by a conversation/
+cycle. Issue 0015 implements candidate, confirmed, ambiguous, unresolved, and
+rejected semantics, including one DigiSac contact linked to multiple companies.
+Exact normalized phone, an approved deterministic Brazilian mobile variant, and
+exact normalized email may discover candidates; only an explicit/manual
+confirmation initially produces `confirmed`. Group names and numbers are
+diagnostic only, not automatic matching evidence.
+
+Department routing is implemented under issues 0016 and 0020: it maps the
+cycle-applicable DigiSac department through a PostgreSQL rule keyed by stable
+external IDs and validates the selected Acessórias department against the
+resolved company's current directory relationship. The assignment is selected
+only within the cycle's persisted `cycle_started_at`/`ticket_closed_at` interval
+with deterministic timestamp/ID ordering; an insufficient boundary remains
+unresolved. `intent_type`, names, and fallback selection are not mapping inputs.
+Current company departments are directory state, not a constraint that
+invalidates historical external Requests; a later evaluation may record a new
+outcome without rewriting a terminal snapshot.
+
+Issues 0017–0019, 0021–0022 and 0026 implement the durable Request boundary. A terminal eligible cycle
+with one confirmed company and a current valid mapped department creates at
+most one PostgreSQL operation and one multipart `POST /requests`. Only a
+non-empty provider `id` becomes the persisted `SolID`; only an explicitly proven
+pre-send transport failure may retry, while ordinary connection, timeout, and
+protocol failures require `manual_db` reconciliation. A `429` without a
+documented proof of remote non-creation also requires `manual_db` reconciliation;
+status and `Retry-After` alone do not authorize a second POST. Request adapter instances
+in the same process share the configured Sliding Window by provider endpoint
+and configuration before the POST; this transient coordination state contains
+no token, header, payload, classification content, or PII. The operation stores no
+raw title, description, payload, token, header, provider body, or PII and never
+changes the originating classification. There is no public or admin HTTP
+trigger, and Request lifecycle operations remain outside this increment.
+The persisted payload is loaded and validated before `post_started_at`; a
+pre-provider load or validation failure is sanitized as retryable and retains no
+false post-start evidence.
+The internal recovery path for the historical `mapping_missing` state is
+restricted to operations with no `post_started_at`, `SolID`, attempt evidence,
+or reconciliation requirement; it reuses the same preparation sequence before
+re-entering the normal Request claim/delivery path.
+
 
 ## 6. Context and AI contract
 
@@ -186,7 +270,9 @@ protocol exists, `display_title` follows `[{protocol}] - {title}` without
 changing `title`.
 
 Incomplete or truncated model responses must not be persisted as valid
-classifications.
+classifications. Parser recovery diagnostics may expose only a safe outcome or
+category and bounded structural metadata; they must not log the raw or partial
+model response, title, description, reasoning, or conversation content.
 
 ## 7. Output and operational interfaces
 
@@ -217,9 +303,10 @@ and unavailable dependencies cause health failure with `503`.
 ### Durable data
 
 PostgreSQL is the durable source of truth for classifications, ordered message
-links, media states/results, assignment history, DigiSac directory data, and
-persistent cycles. Alembic owns the schema; application startup must verify the
-schema and must not create or mutate tables.
+links, media states/results, assignment history, DigiSac directory data,
+persistent cycles, identity/mapping snapshots, and Acessórias Request
+operations/reconciliation. All are Alembic-owned durable data. Application
+startup must verify the schema and must not create or mutate tables.
 
 Redis is limited to queues, locks, temporary idempotency, and TTL-based
 status/results.
@@ -248,12 +335,21 @@ defined by the schema.
   webhooks and prevent external event injection. Query endpoints have no
   authentication or authorization layer for the single internal operator.
 - Production logs and durable operational records must avoid raw request bodies,
-  secrets, signed URLs, and binary media.
+  extracted webhook message/contact values, raw or partial model responses,
+  classification content, secrets, signed URLs, and binary media.
 - There is no webhook diagnostic endpoint. Raw request bodies, headers, secrets,
   tokens, signed URLs, and binary media are not returned or logged by supported
-  routes. Operators use structured logs and existing operational metrics.
+  routes. Normal extraction logs retain only safe event, presence/type, and
+  source metadata. Operators use structured logs and existing operational
+  metrics.
 - Persisted snapshots contain safe metadata and extracted text, not download
   credentials or media binaries.
+- The implemented Acessórias provider adapter centralizes bearer authentication,
+  timeout/retry/rate-limit handling, shared in-process Request admission,
+  parsing, sanitized logs, and test doubles;
+  Authorization headers and real provider tokens must never be persisted or
+  logged. No provider credential or production synchronization was used for
+  the local implementation evidence.
 - Data is retained indefinitely for historical analysis, FAQ-corpus use, and
   tracking conversation evolution. No automatic deletion, archival, cleanup
   job, retention schema change, or LGPD-driven automation is planned. Manual
@@ -264,25 +360,37 @@ defined by the schema.
 
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
-`0002` completed tracked test isolation and the disposable PostgreSQL runner.
-The observed local runner evidence on 2026-08-09 is:
+`0002` completed tracked test isolation and the disposable PostgreSQL runner;
+issues `0012`–`0022` and `0026` added the Acessórias directory, DigiSac contact identity
+foundation, complete Contacts backfill, conservative cross-system identity
+resolution, stable-ID department mapping, and conservative Request transport
+classification. The observed local runner evidence on 2026-08-17 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 122 passed, 33 skipped (the skips are deliberately absent
+- offline pytest: 203 passed, 68 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0014_retry_scheduling` applied and verified on the runner target; and
-- PostgreSQL pytest: 33 passed, 122 deselected, with no prerequisite skips. The
+- Alembic: `0020_cycle_contact_provenance` applied and verified on the runner target;
+  and
+- PostgreSQL pytest: 68 passed, 203 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
-  due-only media recovery, queue deduplication, and dependent image wake-up.
+  due-only media recovery, queue deduplication, dependent image wake-up, and
+  stable-ID department mapping with cycle-scoped audited snapshots, plus durable
+  Request operation claims, retry classification, reconciliation, and
+  concurrency-safe shared rate admission across Request adapter instances,
+  canonical ticket-contact provenance, preparation ordering, blocked gates, and
+  pre-POST `mapping_missing` recovery.
 
 The runner's offline stage does not select a finalization setting; it isolates
 the disposable database credentials and injects the runner-owned URL only for
 the PostgreSQL stage. This evidence is local and disposable, not verification
 of Redis, DigiSac, Groq, replicas, deployment availability, or production
 readiness. There is no hosted CI runner enforcing the matrix. The raw-payload
-diagnostic surfaces were removed under Phase 1 item 5; no debug endpoint is part
-of the supported HTTP surface.
+diagnostic surfaces were removed under issue `0006`; no debug endpoint is part
+of the supported HTTP surface. Issue `0024` removes raw Groq classification
+response logging from parser diagnostics, and issue `0025` removes raw values
+from normal webhook extraction logs; local tests verify sanitized metadata
+without making a provider-backed quality or production logging claim.
 
 ## 10. Product decisions
 
@@ -291,13 +399,15 @@ The product owner has decided the following policies:
 | Decision | Why it matters | Current status |
 | --- | --- | --- |
 | Retention, archival, deletion, and legal/privacy policy | Determines storage jobs, compliance behavior, and schema/lifecycle changes. | Decided — retain indefinitely; no automatic cleanup or archival; manual direct-PostgreSQL deletion only if needed. |
-| API consumer authentication and authorization | Determines whether query endpoints can be exposed beyond trusted internal services. | Decided — single internal operator; no query authentication/authorization; require production `WEBHOOK_SECRET`; revisit for Acessórias. |
+| API consumer authentication and authorization | Determines whether query endpoints can be exposed beyond trusted internal services. | Decided — single internal operator; no query authentication/authorization; require production `WEBHOOK_SECRET`; specify Acessórias provider access controls before its implementation. |
 | Rate limits and external compatibility guarantees | Determines production API protection and versioning commitments. | No rate limiting. The current query routes are unversioned in source; `/v1/` and `/v2/` compatibility remains a future versioning policy and is not claimed as mounted behavior. Webhooks/operations remain unversioned. |
 | SLA targets for webhook acceptance and classification completion | Determines capacity, alerting, and provider fallback design. | Decided — no SLA targets, alerting thresholds, or capacity commitments at this stage. |
 | Long-term Redis-buffer posture | Determines whether to retain, migrate, or deprecate the single-worker legacy path. | Completed — the legacy mode, flag, Redis keys, code paths, and legacy test coverage were removed; persistent history remains. |
-| Historical assignment interpretation | Determines which assignment events are business-significant and how they are presented. | Decided — preserve all observed transfers chronologically to track departments from open to close and support future Acessórias routing. |
+| Historical assignment interpretation | Determines which assignment events are business-significant and how they are presented. | Decided — preserve all observed transfers chronologically to track departments from open to close; Acessórias mapping uses the assignment applicable to each persisted cycle interval. |
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
-| Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and future Acessórias integration value. |
+| Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
+| Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
+| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022 and 0026 with canonical preparation, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
 
 ## 11. Source traceability
 
@@ -309,7 +419,7 @@ The PRD is derived from:
   `src/core/message_filter.py`, `src/core/media.py`, and
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
-  `0001_initial` through `0014_durable_retry_scheduling`;
+  `0001_initial` through `0020_cycle_contact_provenance`;
 - worker behavior: `src/workers/ia_worker.py`, `src/workers/audio_worker.py`,
   and `src/workers/image_worker.py`;
 - configuration and deployment: `src/core/config.py`, `.env.example`,

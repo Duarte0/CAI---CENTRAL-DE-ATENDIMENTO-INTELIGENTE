@@ -11,6 +11,8 @@ from groq import Groq
 
 from src.core.config import settings
 from src.core.analysis import with_protocol
+from src.core.acessorias_requests import create_request_for_cycle
+from src.core.acessorias_preparation import prepare_cycle_for_request
 from src.core.db import (  # noqa: F401
     close_database,
     get_pending_content_extractions,
@@ -186,6 +188,20 @@ class IAWorker:
                 )
         if published:
             logger.debug("Published due finalization cycles: count=%s", published)
+
+    async def _prepare_and_create_request(
+        self, cycle_id: str
+    ) -> dict[str, Any] | None:
+        preparation = await prepare_cycle_for_request(cycle_id)
+        if not preparation.ready:
+            logger.info(
+                "Acessórias Request preparation blocked: cycle_id=%s stage=%s reason=%s",
+                cycle_id,
+                preparation.stage,
+                preparation.reason,
+            )
+            return None
+        return await create_request_for_cycle(cycle_id)
 
     async def _recover_history(self, conversation_id: str) -> DigisacHistory:
         client = DigisacClient()
@@ -679,6 +695,25 @@ class IAWorker:
                 "lease_expires_at": None,
             },
         )
+        try:
+            request_operation = await self._prepare_and_create_request(cycle_id)
+            if request_operation is not None:
+                logger.info(
+                    "Acessórias Request operation evaluated: cycle_id=%s state=%s "
+                    "failure_category=%s",
+                    cycle_id,
+                    request_operation.get("state"),
+                    request_operation.get("failure_category"),
+                )
+        except Exception as exc:
+            # Request delivery is a separate durable operation. A provider or
+            # reconciliation failure must never roll back the classification.
+            logger.error(
+                "Acessórias Request operation could not be evaluated: "
+                "cycle_id=%s error_type=%s",
+                cycle_id,
+                type(exc).__name__,
+            )
         result = with_protocol(result, cycle.get("protocol"))
         if identity.public_id is not None:
             result["classification_public_id"] = str(identity.public_id)
@@ -1005,16 +1040,15 @@ class IAWorker:
 
             logger.warning(
                 "Recovered Groq classification JSON from wrapped response; "
-                "json_offset=%s raw_response=%r",
-                match.start(),
-                result_text,
+                "outcome=wrapped json_offset=%s",
+                min(match.start(), 10_000),
             )
             return self._validate_result(typed_candidate)
 
         logger.warning(
             "Groq response does not contain a complete classification JSON; "
-            "response_preview=%r",
-            result_text[:500],
+            "outcome=invalid response_length=%s",
+            min(len(result_text), 10_000),
         )
         # Never persist the raw/truncated model response as business data. Raising
         # lets the existing retry/dead-letter policy handle transient generations.
@@ -1165,7 +1199,7 @@ Para o campo "confidence", siga estas regras numeradas:
 
 Responda apenas com um objeto JSON no seguinte formato, sem nenhum texto adicional:
 {{
-  "intent_type": "um de: question, problem, request, complaint, payment, billing, document, protocol, other",
+  "intent_type": "um de: question, problem, request, complaint, payment, billing, financial, document, protocol, other",
   "confidence": NÚMERO entre 0.0 e 1.0,
   "title": "título curto e abrangente",
   "description": "descrição estruturada e detalhada"
@@ -1180,7 +1214,9 @@ reclama de um valor cobrado mas a mensagem deixa clara a intenção/ação final
 pagar (a intenção de pagar sempre prevalece sobre a reclamação do valor);
 "billing" para cobrança, boleto ou valor cobrado quando NÃO há confirmação ou
 intenção de pagamento na mesma conversa (ex.: cliente apenas questiona ou
-contesta o valor, sem indicar que vai pagar); "document" para envio, reenvio
+contesta o valor, sem indicar que vai pagar); "financial" para questões
+financeiras gerais, como fluxo de caixa, empréstimos ou investimentos;
+"document" para envio, reenvio
 ou pendência de documento; e "protocol" para protocolo ou andamento de
 processo. Se houver pagamento seguido de protocolo, escolha "payment" quando a
 ação do cliente foi pagar e "protocol" quando o foco for acompanhar/protocolar.

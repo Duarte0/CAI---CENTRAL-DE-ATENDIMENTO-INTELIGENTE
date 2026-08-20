@@ -3,6 +3,7 @@
     "src/api/routes.py",
     "src/api/webhook_adapter.py",
     "src/core/db.py",
+    "src/core/department_mapping.py",
     "src/core/models.py",
     "src/workers/audio_worker.py",
     "src/workers/ia_worker.py",

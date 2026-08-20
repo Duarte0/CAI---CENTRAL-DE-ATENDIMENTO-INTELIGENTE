@@ -19,7 +19,7 @@ COMPOSE_FILE = ROOT / "docker-compose.test.yml"
 TEST_DATABASE = "cai_test"
 TEST_USER = "cai_test"
 TEST_PASSWORD = "cai_test"
-EXPECTED_SCHEMA = "0014_retry_scheduling"
+EXPECTED_SCHEMA = "0020_cycle_contact_provenance"
 
 
 class RunnerFailure(RuntimeError):
@@ -279,7 +279,6 @@ def run() -> int:
                 "-m",
                 "pytest",
                 "-q",
-                "--ignore=tests/test_webhook_local.py",
             ],
             environment=offline_environment,
         )
@@ -324,7 +323,6 @@ def run() -> int:
                 "-q",
                 "-m",
                 "postgres",
-                "--ignore=tests/test_webhook_local.py",
             ],
             environment=test_environment,
         )

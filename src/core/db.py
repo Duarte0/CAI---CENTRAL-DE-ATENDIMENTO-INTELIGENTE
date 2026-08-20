@@ -21,11 +21,12 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from src.core.config import settings
+from src.core.digisac_client import DigisacContact
 from src.core.identifiers import uuid7
 from src.core.intents import normalize_intent_type
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0014_retry_scheduling"
+CURRENT_SCHEMA_REVISION = "0020_cycle_contact_provenance"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -42,6 +43,12 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "0011_public_id_final",
         "0012_validate_event_fk",
         "0013_conversation_cycles",
+        "0014_retry_scheduling",
+        "0015_acessorias_directory",
+        "0016_digisac_contact_identity",
+        "0017_digisac_acessorias_identity",
+        "0018_department_mapping",
+        "0019_acessorias_request_creation",
         CURRENT_SCHEMA_REVISION,
     }
 )
@@ -55,6 +62,7 @@ class SchemaCapabilities:
     classification_idempotency_index: bool = False
     classification_messages: bool = False
     conversation_cycles: bool = False
+    contact_identity: bool = False
 
 
 @dataclass(frozen=True)
@@ -100,6 +108,11 @@ def _get_pool() -> ConnectionPool[psycopg.Connection[Any]]:
     if _pool is None:
         raise RuntimeError("Database pool is not initialized")
     return _pool
+
+
+def get_database_pool() -> ConnectionPool[psycopg.Connection[Any]]:
+    """Return the initialized process-local pool for durable integrations."""
+    return _get_pool()
 
 
 def _configure_connection_sync(connection: psycopg.Connection[Any]) -> None:
@@ -186,6 +199,9 @@ def _verify_schema_sync() -> None:
                 ) IS NOT NULL,
                 to_regclass(
                     current_schema() || '.conversation_processing_cycles'
+                ) IS NOT NULL,
+                to_regclass(
+                    current_schema() || '.digisac_contacts'
                 ) IS NOT NULL
             """
         ).fetchone()
@@ -196,6 +212,7 @@ def _verify_schema_sync() -> None:
         classification_idempotency_index=bool(capabilities[1]),
         classification_messages=bool(capabilities[2]),
         conversation_cycles=bool(capabilities[3]),
+        contact_identity=bool(capabilities[4]),
     )
     logger.info(
         "PostgreSQL schema verified: revision=%s identity=%s "
@@ -214,6 +231,11 @@ def _verify_schema_sync() -> None:
     if row[0] != CURRENT_SCHEMA_REVISION:
         raise RuntimeError(
             "durable finalization requires migration "
+            f"{CURRENT_SCHEMA_REVISION}"
+        )
+    if not _schema_capabilities.contact_identity:
+        raise RuntimeError(
+            "DigiSac contact identity requires migration "
             f"{CURRENT_SCHEMA_REVISION}"
         )
 
@@ -435,6 +457,534 @@ def _directory_refresh_is_due_sync(cooldown_seconds: int) -> bool:
 async def directory_refresh_is_due(cooldown_seconds: int) -> bool:
     return await asyncio.to_thread(
         _directory_refresh_is_due_sync, cooldown_seconds
+    )
+
+
+_CONTACT_PROVIDER_FIELDS = (
+    "name",
+    "alternative_name",
+    "internal_name",
+    "raw_number",
+    "normalized_number",
+    "raw_email",
+    "normalized_email",
+    "is_group",
+    "account_id",
+    "service_id",
+    "provider_created_at",
+    "provider_updated_at",
+    "provider_deleted_at",
+)
+
+
+def _contact_has_metadata(row: Mapping[str, Any]) -> bool:
+    return (
+        row.get("provider_updated_at") is not None
+        or row.get("provider_created_at") is not None
+    )
+
+
+def _upsert_digisac_contact_cursor(
+    cursor: Any,
+    contact: DigisacContact,
+    normalized_source: str,
+    observed: datetime,
+) -> Mapping[str, Any]:
+    values = {field: getattr(contact, field) for field in _CONTACT_PROVIDER_FIELDS}
+    row = cursor.execute(
+        """
+        SELECT *
+        FROM digisac_contacts
+        WHERE external_id = %s
+        FOR UPDATE
+        """,
+        (contact.external_id,),
+    ).fetchone()
+    if row is None:
+        inserted = cursor.execute(
+            """
+            INSERT INTO digisac_contacts (
+                external_id, name, alternative_name, internal_name,
+                raw_number, normalized_number, raw_email, normalized_email,
+                is_group, account_id,
+                service_id, provider_created_at, provider_updated_at,
+                provider_deleted_at, last_seen_at, last_source
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s
+            )
+            RETURNING *
+            """,
+            (
+                contact.external_id,
+                *[values[field] for field in _CONTACT_PROVIDER_FIELDS],
+                observed,
+                normalized_source,
+            ),
+        ).fetchone()
+        if inserted is None:
+            raise RuntimeError("PostgreSQL did not return contact")
+        row = inserted
+    else:
+        old_updated = row["provider_updated_at"]
+        new_updated = contact.provider_updated_at
+        older = (
+            old_updated is not None
+            and new_updated is not None
+            and new_updated < old_updated
+        )
+        unordered = old_updated is not None and new_updated is None
+        merged = dict(row)
+        for field in _CONTACT_PROVIDER_FIELDS:
+            incoming = values[field]
+            if incoming is None or older or (unordered and row[field] is not None):
+                merged[field] = row[field]
+            else:
+                merged[field] = incoming
+        if old_updated is not None and (
+            new_updated is None or new_updated < old_updated
+        ):
+            merged["provider_updated_at"] = old_updated
+        elif new_updated is not None:
+            merged["provider_updated_at"] = new_updated
+        merged["last_seen_at"] = max(row["last_seen_at"], observed)
+        merged["last_source"] = (
+            row["last_source"] if older or unordered else normalized_source
+        )
+        updated = cursor.execute(
+            """
+            UPDATE digisac_contacts
+            SET name = %s,
+                alternative_name = %s,
+                internal_name = %s,
+                raw_number = %s,
+                normalized_number = %s,
+                raw_email = %s,
+                normalized_email = %s,
+                is_group = %s,
+                account_id = %s,
+                service_id = %s,
+                provider_created_at = %s,
+                provider_updated_at = %s,
+                provider_deleted_at = %s,
+                last_seen_at = %s,
+                last_source = %s,
+                updated_at = now()
+            WHERE id = %s
+            RETURNING *
+            """,
+            (
+                *(merged[field] for field in _CONTACT_PROVIDER_FIELDS),
+                merged["last_seen_at"],
+                merged["last_source"],
+                row["id"],
+            ),
+        ).fetchone()
+        if updated is None:
+            raise RuntimeError("PostgreSQL did not update contact")
+        row = updated
+    if normalized_source == "ticket_webhook":
+        cursor.execute(
+            """
+            UPDATE digisac_contact_hydrations
+            SET status = 'succeeded',
+                next_attempt_at = NULL,
+                lease_until = NULL,
+                completed_at = COALESCE(completed_at, now()),
+                failure_category = NULL,
+                failure_message = NULL,
+                updated_at = now()
+            WHERE contact_id = %s
+            """,
+            (row["id"],),
+        )
+    return row
+
+
+def _upsert_digisac_contact_sync(
+    contact: DigisacContact,
+    source: str,
+    observed_at: str | datetime | None = None,
+) -> dict[str, Any]:
+    normalized_source = source.strip()
+    if not normalized_source:
+        raise ValueError("contact source must not be blank")
+    observed = (
+        _parse_timestamp(observed_at)
+        if isinstance(observed_at, (str, datetime))
+        else datetime.now(timezone.utc)
+    )
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = _upsert_digisac_contact_cursor(
+                    cursor, contact, normalized_source, observed
+                )
+    result = _row_dict(row)
+    if result is None:
+        raise RuntimeError("PostgreSQL did not return contact state")
+    return result
+
+
+async def upsert_digisac_contact(
+    contact: DigisacContact,
+    *,
+    source: str,
+    observed_at: str | datetime | None = None,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        _upsert_digisac_contact_sync, contact, source, observed_at
+    )
+
+
+def _publish_digisac_contact_backfill_sync(
+    contacts: Sequence[DigisacContact],
+    observed_at: str | datetime | None = None,
+) -> dict[str, int]:
+    observed = (
+        _parse_timestamp(observed_at)
+        if isinstance(observed_at, (str, datetime))
+        else datetime.now(timezone.utc)
+    )
+    unique_contacts = tuple(
+        {contact.external_id: contact for contact in contacts}.values()
+    )
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                ("cai:digisac_contacts:full_backfill",),
+            )
+            with connection.cursor(row_factory=dict_row) as cursor:
+                for contact in unique_contacts:
+                    _upsert_digisac_contact_cursor(
+                        cursor, contact, "contacts_backfill", observed
+                    )
+    return {
+        "published_count": len(unique_contacts),
+        "unique_count": len(unique_contacts),
+    }
+
+
+async def publish_digisac_contact_backfill(
+    contacts: Sequence[DigisacContact],
+    *,
+    observed_at: str | datetime | None = None,
+) -> dict[str, int]:
+    """Publish a validated snapshot atomically under a process-shared lock."""
+    return await asyncio.to_thread(
+        _publish_digisac_contact_backfill_sync, contacts, observed_at
+    )
+
+
+def _request_digisac_contact_hydration_sync(
+    external_id: str, requested_at: str | datetime | None = None
+) -> bool:
+    normalized_id = external_id.strip()
+    if not normalized_id:
+        return False
+    requested = (
+        _parse_timestamp(requested_at)
+        if isinstance(requested_at, (str, datetime))
+        else datetime.now(timezone.utc)
+    )
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                contact = cursor.execute(
+                    """
+                    INSERT INTO digisac_contacts (
+                        external_id, last_seen_at, last_source
+                    ) VALUES (%s, %s, 'message_reference')
+                    ON CONFLICT (external_id) DO UPDATE SET
+                        last_seen_at = GREATEST(
+                            digisac_contacts.last_seen_at, EXCLUDED.last_seen_at
+                        ),
+                        updated_at = now()
+                    RETURNING *
+                    """,
+                    (normalized_id, requested),
+                ).fetchone()
+                if contact is None:
+                    raise RuntimeError("PostgreSQL did not return contact placeholder")
+                state = cursor.execute(
+                    """
+                    SELECT *
+                    FROM digisac_contact_hydrations
+                    WHERE contact_id = %s
+                    FOR UPDATE
+                    """,
+                    (contact["id"],),
+                ).fetchone()
+                if state is not None and state["status"] in {"pending", "running"}:
+                    return False
+                if _contact_has_metadata(contact) and (
+                    state is None or state["status"] == "succeeded"
+                ):
+                    return False
+                if state is None:
+                    cursor.execute(
+                        """
+                        INSERT INTO digisac_contact_hydrations (
+                            contact_id, status, requested_at
+                        ) VALUES (%s, 'pending', %s)
+                        """,
+                        (contact["id"], requested),
+                    )
+                    return True
+                if state["status"] == "running":
+                    return False
+                cursor.execute(
+                    """
+                    UPDATE digisac_contact_hydrations
+                    SET status = 'pending',
+                        requested_at = LEAST(requested_at, %s),
+                        next_attempt_at = NULL,
+                        lease_until = NULL,
+                        failure_category = NULL,
+                        failure_message = NULL,
+                        updated_at = now()
+                    WHERE contact_id = %s
+                    """,
+                    (requested, contact["id"]),
+                )
+                return True
+
+
+async def request_digisac_contact_hydration(
+    external_id: str, *, requested_at: str | datetime | None = None
+) -> bool:
+    return await asyncio.to_thread(
+        _request_digisac_contact_hydration_sync, external_id, requested_at
+    )
+
+
+def _claim_digisac_contact_hydration_sync(lease_seconds: int) -> dict[str, Any] | None:
+    if lease_seconds <= 0:
+        raise ValueError("contact hydration lease must be positive")
+    now = datetime.now(timezone.utc)
+    lease_until = now + timedelta(seconds=lease_seconds)
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    SELECT h.contact_id, c.external_id, h.attempt_count
+                    FROM digisac_contact_hydrations AS h
+                    JOIN digisac_contacts AS c ON c.id = h.contact_id
+                    WHERE (
+                        h.status IN ('pending', 'failed')
+                        AND (
+                            h.next_attempt_at IS NULL
+                            OR h.next_attempt_at <= %s
+                        )
+                    ) OR (
+                        h.status = 'running'
+                        AND h.lease_until IS NOT NULL
+                        AND h.lease_until <= %s
+                    )
+                    ORDER BY h.requested_at ASC, h.contact_id ASC
+                    FOR UPDATE OF h SKIP LOCKED
+                    LIMIT 1
+                    """,
+                    (now, now),
+                ).fetchone()
+                if row is None:
+                    return None
+                updated = cursor.execute(
+                    """
+                    UPDATE digisac_contact_hydrations
+                    SET status = 'running',
+                        attempt_count = attempt_count + 1,
+                        last_attempt_at = %s,
+                        next_attempt_at = NULL,
+                        lease_until = %s,
+                        updated_at = now()
+                    WHERE contact_id = %s
+                    RETURNING attempt_count
+                    """,
+                    (now, lease_until, row["contact_id"]),
+                ).fetchone()
+                if updated is None:
+                    raise RuntimeError("PostgreSQL did not claim contact hydration")
+                return {
+                    "contact_id": row["contact_id"],
+                    "external_id": row["external_id"],
+                    "attempt_count": updated["attempt_count"],
+                    "lease_until": lease_until,
+                }
+
+
+async def claim_digisac_contact_hydration(
+    *, lease_seconds: int | None = None
+) -> dict[str, Any] | None:
+    return await asyncio.to_thread(
+        _claim_digisac_contact_hydration_sync,
+        lease_seconds or settings.finalization_lease_seconds,
+    )
+
+
+def _mark_digisac_contact_hydration_success_sync(
+    external_id: str, expected_lease_until: datetime
+) -> bool:
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            result = connection.execute(
+                """
+                UPDATE digisac_contact_hydrations AS h
+                SET status = 'succeeded',
+                    next_attempt_at = NULL,
+                    lease_until = NULL,
+                    completed_at = now(),
+                    failure_category = NULL,
+                    failure_message = NULL,
+                    updated_at = now()
+                FROM digisac_contacts AS c
+                WHERE c.id = h.contact_id
+                  AND c.external_id = %s
+                  AND h.status = 'running'
+                  AND h.lease_until = %s
+                """,
+                (external_id, expected_lease_until),
+            )
+            return result.rowcount == 1
+
+
+async def mark_digisac_contact_hydration_success(
+    external_id: str, *, expected_lease_until: datetime
+) -> bool:
+    return await asyncio.to_thread(
+        _mark_digisac_contact_hydration_success_sync,
+        external_id,
+        expected_lease_until,
+    )
+
+
+def _safe_failure_category(category: str) -> str:
+    safe = "".join(
+        character
+        for character in category.lower()
+        if character.isascii() and (character.isalnum() or character in "_:-")
+    )
+    return safe[:80] or "unknown"
+
+
+def _mark_digisac_contact_hydration_failure_sync(
+    external_id: str,
+    category: str,
+    *,
+    retryable: bool,
+    expected_lease_until: datetime,
+    max_attempts: int | None = None,
+) -> bool:
+    safe_category = _safe_failure_category(category)
+    limit = max_attempts or settings.digisac_history_max_attempts
+    with _get_pool().connection() as connection:
+        with connection.transaction():
+            row = connection.execute(
+                """
+                SELECT h.attempt_count
+                FROM digisac_contact_hydrations AS h
+                JOIN digisac_contacts AS c ON c.id = h.contact_id
+                WHERE c.external_id = %s
+                  AND h.status = 'running'
+                  AND h.lease_until = %s
+                FOR UPDATE
+                """,
+                (external_id, expected_lease_until),
+            ).fetchone()
+            if row is None:
+                return False
+            attempt_count = int(row[0])
+            should_retry = retryable and attempt_count < limit
+            delay = min(
+                60.0,
+                settings.digisac_history_retry_base_seconds
+                * (2 ** max(0, attempt_count - 1)),
+            )
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE digisac_contact_hydrations AS h
+                    SET status = 'failed',
+                        next_attempt_at = %s,
+                        lease_until = NULL,
+                        completed_at = NULL,
+                        failure_category = %s,
+                        failure_message = %s,
+                        updated_at = now()
+                    FROM digisac_contacts AS c
+                    WHERE c.id = h.contact_id
+                      AND c.external_id = %s
+                      AND h.lease_until = %s
+                    """,
+                    (
+                        datetime.now(timezone.utc) + timedelta(seconds=delay)
+                        if should_retry
+                        else None,
+                        safe_category,
+                        f"contact hydration failed: {safe_category}",
+                        external_id,
+                        expected_lease_until,
+                    ),
+                )
+            return True
+
+
+async def mark_digisac_contact_hydration_failure(
+    external_id: str,
+    category: str,
+    *,
+    retryable: bool,
+    expected_lease_until: datetime,
+    max_attempts: int | None = None,
+) -> bool:
+    return await asyncio.to_thread(
+        _mark_digisac_contact_hydration_failure_sync,
+        external_id,
+        category,
+        retryable=retryable,
+        expected_lease_until=expected_lease_until,
+        max_attempts=max_attempts,
+    )
+
+
+def _get_digisac_contact_sync(external_id: str) -> dict[str, Any] | None:
+    with _get_pool().connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            row = cursor.execute(
+                "SELECT * FROM digisac_contacts WHERE external_id = %s",
+                (external_id,),
+            ).fetchone()
+    return _row_dict(row)
+
+
+async def get_digisac_contact(external_id: str) -> dict[str, Any] | None:
+    return await asyncio.to_thread(_get_digisac_contact_sync, external_id)
+
+
+def _get_digisac_contact_hydration_sync(
+    external_id: str,
+) -> dict[str, Any] | None:
+    with _get_pool().connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            row = cursor.execute(
+                """
+                SELECT h.*
+                FROM digisac_contact_hydrations AS h
+                JOIN digisac_contacts AS c ON c.id = h.contact_id
+                WHERE c.external_id = %s
+                """,
+                (external_id,),
+            ).fetchone()
+    return _row_dict(row)
+
+
+async def get_digisac_contact_hydration(
+    external_id: str,
+) -> dict[str, Any] | None:
+    return await asyncio.to_thread(
+        _get_digisac_contact_hydration_sync, external_id
     )
 
 
@@ -1143,14 +1693,31 @@ def _cycle_row(
     return _row_dict(row)
 
 
+def _normalize_cycle_contact_external_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 240 or any(
+        character in normalized for character in "\r\n\x00"
+    ):
+        raise ValueError("contact_external_id must be a safe stable ID")
+    return normalized
+
+
 def _create_open_cycle_sync(
     *,
     conversation_id: str,
     started_at: str | datetime,
     open_event_key: str,
     start_strategy: str,
+    contact_external_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     _require_cycle_schema()
+    normalized_contact_external_id = _normalize_cycle_contact_external_id(
+        contact_external_id
+    )
     now = datetime.now(timezone.utc)
     public_id = uuid7()
     with _get_pool().connection() as connection:
@@ -1197,9 +1764,10 @@ def _create_open_cycle_sync(
                     INSERT INTO conversation_processing_cycles (
                         public_id, conversation_id, sequence_number,
                         cycle_started_at, cycle_start_strategy, open_event_key,
+                        digisac_contact_external_id,
                         status, next_attempt_at, created_at, updated_at
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s,
                         'open', NULL, %s, %s
                     )
                     """,
@@ -1210,12 +1778,24 @@ def _create_open_cycle_sync(
                         _parse_timestamp(started_at),
                         start_strategy,
                         open_event_key,
+                        normalized_contact_external_id,
                         now,
                         now,
                     ),
                 )
             else:
                 public_id = existing[0]
+                if normalized_contact_external_id is not None:
+                    connection.execute(
+                        """
+                        UPDATE conversation_processing_cycles
+                        SET digisac_contact_external_id = COALESCE(
+                            digisac_contact_external_id, %s
+                        ), updated_at = %s
+                        WHERE public_id = %s
+                        """,
+                        (normalized_contact_external_id, now, public_id),
+                    )
             cycle = _cycle_row(connection, str(public_id))
     if cycle is None:
         raise RuntimeError("PostgreSQL did not return the conversation cycle")
@@ -1233,8 +1813,12 @@ def _close_cycle_sync(
     closed_at: str | datetime,
     close_event_key: str,
     fallback_start_strategy: str = "pending_api_inference",
+    contact_external_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     _require_cycle_schema()
+    normalized_contact_external_id = _normalize_cycle_contact_external_id(
+        contact_external_id
+    )
     now = datetime.now(timezone.utc)
     closed_timestamp = _parse_timestamp(closed_at)
     with _get_pool().connection() as connection:
@@ -1272,6 +1856,9 @@ def _close_cycle_sync(
                         UPDATE conversation_processing_cycles
                         SET protocol = %s, ticket_closed_at = %s,
                             close_event_key = %s, status = 'pending',
+                            digisac_contact_external_id = COALESCE(
+                                digisac_contact_external_id, %s
+                            ),
                             next_attempt_at = %s, updated_at = %s,
                             error_phase = NULL, error_message = NULL
                         WHERE id = %s
@@ -1280,6 +1867,7 @@ def _close_cycle_sync(
                             protocol,
                             closed_timestamp,
                             close_event_key,
+                            normalized_contact_external_id,
                             now
                             + timedelta(
                                 seconds=settings.digisac_history_initial_delay_seconds
@@ -1309,9 +1897,10 @@ def _close_cycle_sync(
                             public_id, conversation_id, sequence_number,
                             protocol, cycle_started_at, ticket_closed_at,
                             cycle_start_strategy, close_event_key, status,
+                            digisac_contact_external_id,
                             next_attempt_at, created_at, updated_at
                         ) VALUES (
-                            %s, %s, %s, %s, NULL, %s, %s, %s, 'pending',
+                            %s, %s, %s, %s, NULL, %s, %s, %s, 'pending', %s,
                             %s, %s, %s
                         )
                         """,
@@ -1323,6 +1912,7 @@ def _close_cycle_sync(
                             closed_timestamp,
                             fallback_start_strategy,
                             close_event_key,
+                            normalized_contact_external_id,
                             now
                             + timedelta(
                                 seconds=settings.digisac_history_initial_delay_seconds

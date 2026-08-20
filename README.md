@@ -5,8 +5,9 @@ O CAI recebe webhooks da DigiSac, reconstrói a conversa de cada ticket, enrique
 cliente. O resultado e todo o estado operacional relevante ficam auditáveis no
 PostgreSQL.
 
-O sistema **não abre chamados, não responde ao cliente e não transfere tickets**.
-Ele termina na classificação e na disponibilização do resultado por API.
+No runtime atual, o sistema **não abre chamados, não responde ao cliente e não
+transfere tickets**. Ele termina na classificação e na disponibilização do
+resultado por API.
 
 ## O que o projeto faz
 
@@ -81,6 +82,56 @@ ia_worker
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação.
 
+## Integração Acessórias aprovada
+
+Os issues 0012–0016 implementaram localmente a fundação do diretório durável
+da Acessórias, a identidade mínima de contato DigiSac, o full backfill, a
+resolução conservadora de identidade e o mapeamento departamental por IDs
+estáveis. O contato é persistido
+por `contact.id`, snapshots de ticket são reconciliados no PostgreSQL e
+referências `contactId` de mensagens apenas registram hydration individual
+deduplicada para execução posterior. A resolução preserva evidência
+fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
+imutável por ciclo; confirmação continua exclusivamente manual.
+
+O issue 0026 completa a fronteira de preparação: cada ciclo carrega somente o
+`data.contact.id` canônico do snapshot de ticket, resolve a identidade, avalia
+o mapping dentro dos limites persistidos e só então avalia a operação Request.
+Contato de mensagem, grupo, nome, telefone ou qualquer fallback não substitui
+essa proveniência. Identidade ou mapping bloqueado permanece observável e não
+faz POST.
+
+Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
+etapa implementada pelos issues 0017–0019, 0021–0022 e 0026 cria Requests somente após fatos
+duráveis de ciclo, classificação, identidade confirmada e mapping válido; o
+efeito externo é separado por uma operação PostgreSQL única por ciclo, com
+`SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
+e reconciliação `manual_db`. O payload persistido é carregado e validado antes do
+marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
+provider. Os adapters de Request no mesmo processo compartilham
+o limite Sliding Window por endpoint/configuração antes do POST, sem persistir
+token, header ou payload. Uma `ConnectionError`, timeout ou falha de
+protocolo comum permanece ambígua e não inicia um segundo POST. Uma resposta
+`429` sem prova documentada de não criação também exige reconciliação e ignora
+`Retry-After` como autorização para novo POST. Telefone, nome,
+`idFromService`, `jidId`,
+`lidId` e grupos permanecem apenas metadata/evidência; não há matching ou
+confirmação automática. O full backfill interno de Contacts valida a resposta
+de página única ou o fallback `page=N`, deduplica por `contact.id` e publica
+somente um snapshot completo em uma transação PostgreSQL; não cria rota pública
+nem autoridade de diretório no Redis.
+
+### Reconciliação manual de Request
+
+Uma operação em `reconciliation_required` só pode ser resolvida no procedimento
+controlado `manual_db`: depois de consultar a Acessórias, o operador pode
+registrar explicitamente o `SolID` por `reconcile_request_operation`; somente
+com prova de ausência remota pode liberar uma nova tentativa por
+`release_request_operation`. Ambas as operações exigem uma chave idempotente,
+motivo seguro, timestamp durável e ator opcional; nenhum usuário da conversa,
+token, corpo do provider ou conteúdo da classificação é usado como ator ou
+evidência.
+
 ## Finalização persistente por histórico DigiSac
 
 Cada abertura/reabertura cria uma sequência e cada fechamento persiste um ciclo
@@ -129,8 +180,15 @@ de execução. As principais estruturas são:
   idempotência das atribuições;
 - `digisac_departments`, `digisac_users` e
   `digisac_directory_sync_state`: diretório local para resolução de nomes;
+- `digisac_contacts` e `digisac_contact_hydrations`: identidade DigiSac por
+  `contact.id`, metadata observada e claims/retries duráveis de hydration;
 - `conversation_processing_cycles` e `conversation_cycle_messages`: estado,
-  snapshot, leases, agendamento e auditoria da finalização persistente.
+  snapshot, proveniência canônica do contato, leases, agendamento e auditoria
+  da finalização persistente.
+- `acessorias_request_operations` e `acessorias_request_reconciliations`:
+  operação externa única por ciclo, payload fingerprintado sem conteúdo bruto,
+  claims/leases, recuperação de preparação pré-POST, `SolID`, falhas
+  sanitizadas e reconciliação administrativa.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -144,6 +202,8 @@ retenção ou arquivamento devem ser definidos como política operacional explí
   uma entrega DigiSac repetida recupere uma publicação que falhou.
 - Filas de mídia e ciclos usam reservas/claims persistentes para evitar
   publicações concorrentes e recuperar trabalho abandonado.
+- A identidade de contato usa somente `contact.id`; hydration individual é
+  deduplicada no PostgreSQL e nunca é chamada em linha pelo webhook.
 - Retries transitórios respeitam `Retry-After`, backoff e limites configurados.
 - O histórico de atribuições nunca inventa transferências. IDs desconhecidos são
   preservados e os nomes só vêm dos endpoints de departamentos e usuários.
@@ -180,11 +240,15 @@ Variáveis principais:
 | `REDIS_URL` | Redis de filas e coordenação. | `redis://localhost:6379` |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
 | `AUDIO_TRANSCRIPTION_MODEL` | Modelo de transcrição. | `whisper-large-v3-turbo` |
+| `AUDIO_RETRY_BASE_SECONDS` | Backoff inicial de falhas transitórias de áudio. | `2` |
+| `AUDIO_RETRY_MAX_DELAY_SECONDS` | Teto do backoff local de áudio. | `900` |
+| `AUDIO_RETRY_PROVIDER_MARGIN_SECONDS` | Margem adicionada ao `Retry-After` do provider. | `1` |
+| `AUDIO_DEAD_LETTER_RECOVERY_INTERVAL_SECONDS` | Intervalo de recuperação de dead-letters transitórios de áudio. | `60` |
 | `IMAGE_VISION_MODEL` | Modelo multimodal. | `qwen/qwen3.6-27b` |
 | `IMAGE_VISION_MAX_COMPLETION_TOKENS` | Orçamento inicial da resposta visual. | `5000` |
 | `MAX_TOKENS` | Orçamento solicitado à classificação; o worker impõe mínimo efetivo de `1000`. | `500` no `.env.example`; `3000` se ausente |
 | `PROMPT_VERSION` | Identificador do prompt persistido. | `v4` |
-| `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas. | `3` |
+| `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas do worker de classificação IA. | `3` |
 | `RESULT_TTL_SECONDS` | TTL de status/resultados transitórios no Redis. | `86400` |
 | `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por mídia. | `30` |
 | `CONTENT_RECOVERY_LEASE_SECONDS` | Lease de recuperação de mídia. | `300` |
@@ -236,6 +300,13 @@ python -m src.workers.image_worker
 ```
 
 Cada worker deve rodar em seu próprio processo.
+
+O backfill completo interno de Contacts pode ser executado após as migrations
+com credencial DigiSac configurada:
+
+```bash
+PYTHONPATH=/app python -m src.utils.backfill_digisac_contacts
+```
 
 ## API HTTP
 
@@ -356,17 +427,29 @@ docker compose -p cai exec ia_worker python -m src.utils.backfill_redis_history
 Testes offline:
 
 ```bash
-PYTHONPATH=/app pytest -q --ignore=tests/test_webhook_local.py
-python -m compileall -q src tests alembic
+PYTHONPATH=/app python -m pytest -q
+PYTHONPATH=/app python -m pytest --collect-only -q
+python -m compileall -q src tests alembic scripts
 npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
-depende de uma flag no `.env`. Em 2026-08-09, a execução produziu **122 passed,
-33 skipped**; os skips exigem `CAI_TEST_DATABASE_URL` e não comprovam o schema
-ou o runtime PostgreSQL.
-`tests/test_webhook_local.py`, quando presente, é um teste contra uma API local
-real e só deve ser incluído se ela estiver em execução.
+depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
+etapa offline produziu **177 passed, 56 skipped**; os skips exigem
+`CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
+
+O smoke test live do webhook é opt-in e requer uma API local deliberadamente
+iniciada. Ele preserva o payload sintético e o endpoint local existentes:
+
+```bash
+PYTHONPATH=/app python tests/test_webhook_local.py
+```
+
+Sem uma API em `localhost:8000`, o comando falha de forma visível com erro de
+conexão; ele não é executado durante importação, coleta pytest ou pelo runner
+canônico. Respostas HTTP não bem-sucedidas também resultam em código de saída
+não zero. O smoke test live não é evidência da suíte offline, PostgreSQL
+descartável, DigiSac, provedores ou produção.
 
 Verificação canônica completa, incluindo PostgreSQL descartável:
 
@@ -380,7 +463,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0014_retry_scheduling` e só então
+ao destino, aplica e verifica Alembic `0020_cycle_contact_provenance` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -389,21 +472,34 @@ sem acesso ao loopback do host, ele conecta somente o container do próprio
 runner à rede Compose temporária e usa `postgres-test:5432`; essa conexão
 também é verificada pelo processo de teste. O projeto, rede e armazenamento
 temporários são removidos mesmo quando uma etapa falha. Os resultados offline
-e PostgreSQL são reportados separadamente; `test_webhook_local.py` permanece
-fora da execução canônica.
+e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
+execução canônica.
 
-Na execução observada do runner após a verificação operacional, a etapa
-PostgreSQL produziu **33 passed, 122 deselected**. Esses testes cobrem, no
+Na execução observada do runner em 2026-08-17, a etapa offline produziu
+**203 passed, 68 skipped** e a etapa PostgreSQL produziu **68 passed, 203
+deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
-fila e o despertar somente dos ciclos dependentes de uma imagem recuperada.
+fila, o despertar somente dos ciclos dependentes de uma imagem recuperada, a
+fundação do diretório Acessórias, a identidade/hydration de contatos DigiSac,
+a resolução conservadora de identidade, o mapeamento departamental com
+auditoria e snapshots por ciclo, e a criação durável de Request com retry
+seguro, payload pré-POST, claims concorrentes, reconciliação de resultado
+incerto e de `429`, `SolID`, admissão compartilhada entre adapters, a ordem de
+preparação de identidade/mapping e a recuperação segura de operações
+`mapping_missing` sem POST prévio.
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
-estruturados e motivos sanitizados, nunca o corpo bruto da requisição.
+estruturados e motivos sanitizados, nunca o corpo bruto da requisição ou a
+resposta bruta/parcial do modelo, título, descrição ou raciocínio da
+classificação. A extração normal do webhook retém nos logs somente evento,
+presença/tipo e caminho de origem; não registra valores de mensagem/contato,
+URLs ou segredos. Os diagnósticos de recuperação do parser Groq retêm somente
+outcome e metadados estruturais limitados.
 
 ## Operação
 
