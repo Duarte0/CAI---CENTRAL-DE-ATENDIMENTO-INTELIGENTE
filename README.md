@@ -215,6 +215,12 @@ A persistência de classificações, vínculos ordenados de mensagens, protocolo
 consultas de existência fica isolada em
 `src/core/classification_repository.py`, com os exports compatíveis preservados
 em `src/core/db.py`.
+A persistência do cache de departamentos/usuários DigiSac, do estado de sync e
+da resolução de nomes fica isolada em
+`src/core/digisac_directory_repository.py`, usando o mesmo pool e preservando
+os exports compatíveis da fachada. O sincronizador
+`src/core/digisac_directory.py` continua dono da autenticação, paginação,
+retry, lock e loop periódico.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -461,8 +467,8 @@ npx --yes pyright
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
-etapa offline produziu **218 passed, 69 skipped** e a etapa PostgreSQL
-descartável **69 passed, 218 deselected**; os skips offline exigem
+etapa offline produziu **220 passed, 69 skipped** e a etapa PostgreSQL
+descartável **69 passed, 220 deselected**; os skips offline exigem
 `CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
 produção.
 
@@ -504,7 +510,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-20, a etapa offline produziu
-**218 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 218
+**220 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 220
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar

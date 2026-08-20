@@ -51,12 +51,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031, 0032). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031, 0032, 0033). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0032,
-  2026-08-20) passed compileall, strict Pyright, offline pytest (**218 passed,
+  PostgreSQL-marked family. The latest recorded full execution (issue 0033,
+  2026-08-20) passed compileall, strict Pyright, offline pytest (**220 passed,
   69 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
-  (**69 passed, 218 deselected**). The 69 offline skips are expected missing
+  (**69 passed, 220 deselected**). The 69 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 - **[completed] DigiSac contact persistence boundary** (issue 0028; SPEC-0008).
   Contact upsert/source precedence, atomic full-backfill publication, hydration
@@ -112,6 +112,19 @@ currently in progress._
   PostgreSQL pytest (**69 passed, 218 deselected**). This is local/disposable
   evidence and does not prove provider, Redis, deployment, or production
   behavior.
+- **[completed] DigiSac directory persistence boundary** (issue 0033;
+  SPEC-0001 and SPEC-0002). Directory cache upsert, synchronization state,
+  refresh-due evaluation, and user-name lookup now live in
+  `src/core/digisac_directory_repository.py`. `src/core/db.py` remains the
+  single pool, schema-capability, shared-timestamp, and compatibility-facade
+  owner; provider authentication, pagination, retry, locking, and periodic
+  orchestration remain in `src/core/digisac_directory.py`. No schema,
+  provider, workflow, retry, transaction, assignment, mapping, or privacy
+  semantics changed. The canonical runner passed compileall, strict Pyright,
+  offline pytest (**220 passed, 69 skipped**), Alembic head
+  `0020_cycle_contact_provenance`, and PostgreSQL pytest (**69 passed, 220
+  deselected**). This is local/disposable evidence and does not prove provider,
+  Redis, deployment, or production behavior.
 
 ### Implemented, with bounded verification only
 
@@ -128,8 +141,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **287 tests**; the latest issue-0032
-  run passed **218 tests** and skipped the 69 PostgreSQL-dependent tests without
+- The current canonical collection contains **289 tests**; the latest issue-0033
+  run passed **220 tests** and skipped the 69 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.

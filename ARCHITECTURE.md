@@ -79,7 +79,11 @@ and pending projections use the same pool through
 retained by the facade. Classification insertion, ordered message association,
 protocol metadata, and existence queries use the same pool through
 `src/core/classification_repository.py`, with compatibility exports retained by
-the facade.
+the facade. DigiSac directory cache persistence, sync state, and user-name
+lookup use the same pool through `src/core/digisac_directory_repository.py`,
+with compatibility exports retained by the facade. The provider-facing
+`src/core/digisac_directory.py` retains authentication, pagination, transient
+retry, synchronization locking, and periodic orchestration.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -535,6 +539,10 @@ they limit release verification and future evolution decisions.
 - Classification persistence, ordered message association, protocol metadata,
   and existence queries: \`src/core/classification_repository.py\`, with
   compatibility exports retained by \`src/core/db.py\`.
+- DigiSac directory cache persistence, sync state, and user-name lookup:
+  \`src/core/digisac_directory_repository.py\`, with compatibility exports
+  retained by \`src/core/db.py\`; provider synchronization remains in
+  \`src/core/digisac_directory.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through
