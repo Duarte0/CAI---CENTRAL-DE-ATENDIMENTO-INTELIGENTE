@@ -321,7 +321,10 @@ retry loops during quota or service failures.
 ## 8. Context and IA contract
 
 The context pipeline is implemented in \`finalization.py\`, \`models.py\`, and
-\`ia_worker.py\`.
+\`ia_worker.py\`. The model-facing classification contract is isolated in
+\`src/core/ia_classification.py\`; it contains only prompt construction,
+response recovery, validation, normalization, and sanitized parser diagnostics.
+The worker remains the provider invocation and lifecycle orchestration boundary.
 
 - Client and attendant messages remain in chronological order.
 - Attendant messages provide context but are not the classification target.
@@ -540,6 +543,9 @@ they limit release verification and future evolution decisions.
 - Classification persistence, ordered message association, protocol metadata,
   and existence queries: \`src/core/classification_repository.py\`, with
   compatibility exports retained by \`src/core/db.py\`.
+- IA model-facing classification contract: \`src/core/ia_classification.py\`;
+  provider invocation, retry/cooldown behavior, cycle orchestration, and
+  result enrichment remain in \`src/workers/ia_worker.py\`.
 - DigiSac directory cache persistence, sync state, and user-name lookup:
   \`src/core/digisac_directory_repository.py\`, with compatibility exports
   retained by \`src/core/db.py\`; provider synchronization remains in

@@ -39,6 +39,14 @@ passou compileall, Pyright estrito, **218 testes offline e 69 skips**, Alembic
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 
+O issue 0035 adicionou cobertura direta do módulo de contrato IA e preservou
+os testes de integração do worker para opções da chamada Groq, truncamento e
+resposta vazia. Sua verificação canônica passou compileall, Pyright estrito,
+**222 testes offline aprovados e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 222
+desselecionados**. Os resultados são locais/descartáveis e não afirmam
+disponibilidade de provider, Redis ou produção.
+
 A verificação operacional foi adicionada ao mesmo contrato
 de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
 de fila determinístico e identificadores sintéticos para verificar claim/lease

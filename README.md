@@ -174,7 +174,13 @@ binários de mídia não são persistidos no snapshot. Se o contexto ultrapassar
 `IA_CONTEXT_SAFE_INPUT_TOKENS`, ele é dividido sem cortar mensagens sempre que
 possível, resumido por blocos e só então enviado à classificação final.
 
-As categorias de `intent_type` são definidas em `src/core/intents.py`.
+As categorias de `intent_type` são definidas em `src/core/intents.py`. O contrato
+model-facing de classificação — prompts, recuperação/validação do JSON,
+normalização e diagnósticos sanitizados — vive em
+`src/core/ia_classification.py`, sem dependência de provider, Redis,
+PostgreSQL ou estado de ciclo. `src/workers/ia_worker.py` continua responsável
+pela chamada Groq, limites/erros do provider, enriquecimento do resultado,
+persistência e orquestração do ciclo.
 
 ## Persistência
 
@@ -216,6 +222,9 @@ A persistência de classificações, vínculos ordenados de mensagens, protocolo
 consultas de existência fica isolada em
 `src/core/classification_repository.py`, com os exports compatíveis preservados
 em `src/core/db.py`.
+O contrato puro de prompt e resposta da classificação fica isolado em
+`src/core/ia_classification.py`; o worker mantém somente a orquestração da
+chamada Groq e do ciclo.
 A persistência do cache de departamentos/usuários DigiSac, do estado de sync e
 da resolução de nomes fica isolada em
 `src/core/digisac_directory_repository.py`, usando o mesmo pool e preservando

@@ -1,9 +1,9 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; decisões de produto registradas abaixo
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; decisões de produto registradas abaixo
 - **Versão:** 1.4
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024 e 0025
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032 e 0035
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
@@ -39,6 +39,14 @@ consultas de existência em `src/core/classification_repository.py`. A fachada
 verificação de schema e os primitives compartilhados; não houve alteração de
 schema, identidade UUIDv7, idempotência, transação, contrato de IA, protocolo,
 privacidade ou semântica histórica.
+
+**Nota estrutural (2026-08-20):** o issue 0035 isolou o contrato model-facing
+em `src/core/ia_classification.py`: prompts, recuperação/validação do JSON,
+normalização e diagnósticos sanitizados não dependem de provider, Redis,
+PostgreSQL ou estado de ciclo. `src/workers/ia_worker.py` continua dono da
+chamada Groq, erros/cooldown, enriquecimento, persistência e orquestração. Não
+houve alteração da taxonomia, contrato de quatro campos, privacidade ou
+semântica de retry.
 
 ## Contrato de dados e integridade
 

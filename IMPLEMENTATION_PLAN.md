@@ -138,6 +138,18 @@ currently in progress._
   PostgreSQL pytest (**69 passed, 221 deselected**). This is local/disposable
   evidence and does not prove provider, Redis, deployment, or production
   behavior.
+- **[completed] IA classification-contract boundary** (issue 0035;
+  SPEC-0001, SPEC-0003 and SPEC-0004). Prompt construction, wrapped JSON
+  recovery, four-field validation, intent normalization, and sanitized parser
+  diagnostics now live in `src/core/ia_classification.py`; `IAWorker` retains
+  provider invocation, empty-context handling, error/cooldown behavior,
+  enrichment, persistence, and cycle orchestration. No taxonomy, prompt,
+  privacy, retry, persistence, API, schema, or provider semantics changed.
+  Focused boundary/worker tests passed **27 passed**; the canonical runner
+  passed compileall, strict Pyright, offline pytest (**222 passed, 69
+  skipped**), Alembic head `0020_cycle_contact_provenance`, and PostgreSQL
+  pytest (**69 passed, 222 deselected**). This is local/disposable evidence
+  and does not prove provider, Redis, deployment, or production behavior.
 
 ### Implemented, with bounded verification only
 
@@ -388,7 +400,8 @@ Redis, deployment, or production readiness.
 
 - **[P1 | completed locally | implementation] Restore `financial` taxonomy
   parity in the IA prompt** (PRD §6; SPEC-0001; `src/core/intents.py`;
-  `src/workers/ia_worker.py`; `tests/test_ia_worker_intent.py`). The prompt now
+  `src/core/ia_classification.py`; `src/workers/ia_worker.py`;
+  `tests/test_ia_worker_intent.py`). The prompt now
   names and guides every canonical intent while preserving the four-field
   output contract and current persistence/API semantics. Issue 0010 validation
   passed focused pytest (**16 passed**), offline pytest (**146 passed, 36
@@ -418,8 +431,8 @@ Redis, deployment, or production readiness.
   removal (0006), and persistent implementation documentation reconciliation
   (0007), generated OpenAPI HTTP contract publication (0008), active document
   traceability/evidence reconciliation (0009), financial taxonomy prompt
-  parity (0010), Groq parser logging privacy (0024), and webhook extraction
-  logging privacy (0025).
+  parity (0010), Groq parser logging privacy (0024), webhook extraction
+  logging privacy (0025), and IA classification-contract boundary (0035).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -448,11 +461,12 @@ Redis, deployment, or production readiness.
   PRD §6, `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, and is
   now present in the model prompt's allowed list and bounded guidance. The
   correction does not decide broader taxonomy semantics.
-- **Groq parser privacy defect (resolved by issue 0024):** `_parse_result()` no
-  longer logs raw or preview response content when recovering wrapped JSON or
-  rejecting invalid output. Tests assert that title, description, reasoning,
-  and unique malformed-response sentinels remain absent while safe outcome
-  metadata remains observable.
+- **Groq parser privacy defect (resolved by issue 0024 and structurally moved
+  by issue 0035):** `src/core/ia_classification.py::parse_result()` no longer
+  logs raw or preview response content when recovering wrapped JSON or rejecting
+  invalid output. Tests assert that title, description, reasoning, and unique
+  malformed-response sentinels remain absent while safe outcome metadata
+  remains observable.
 - **Webhook extraction privacy defect (resolved by issue 0025):**
   `WebhookPayload.extraction_debug()` now returns only bounded presence/type/
   source metadata, and adjacent parser logs sanitize event, origin, and
@@ -487,6 +501,7 @@ Redis, deployment, or production readiness.
 ## Recommended next pass
 
 Milestones C and D are complete under issues 0015, 0016, 0020, and 0026, and Milestone E is
-implemented under issues 0017–0019, 0021–0022, 0026, and structural boundary issue 0034. Open corrective issue 0023 remains
-before Milestone F can be considered the next optional increment; that
-milestone still requires a new product decision and specification.
+implemented under issues 0017–0019, 0021–0022, 0026, and structural boundary
+issues 0034–0035. Open structural issue 0036 remains as the next isolated
+provider/durable-operation boundary increment. Milestone F still requires a
+new product decision and specification.
