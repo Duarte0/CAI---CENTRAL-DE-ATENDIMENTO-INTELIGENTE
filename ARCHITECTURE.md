@@ -277,6 +277,10 @@ transcription model, and updates \`message_transcriptions\`. Transient provider
 failures honor \`Retry-After\` and durable backoff, remaining \`pending\` beyond
 the classification worker's attempt limit. Permanent audio failures go to the
 dead-letter and only persisted transient failures are recovered automatically.
+Queue and dead-letter entries are deduplicated by message ID; recovery retains
+one safety copy until a non-empty transcription is persisted. Failure logs and
+retry metadata use sanitized categories rather than provider bodies or signed
+URLs.
 Terminal audio failure leaves a safe marker in the context and can produce
 \`completed_with_warnings\`.
 

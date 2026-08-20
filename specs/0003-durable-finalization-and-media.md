@@ -1,7 +1,7 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020
-- **Versão:** 1.4
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027
+- **Versão:** 1.5
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
 - **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002
 - **Dependências:** SPEC-0001, SPEC-0002
@@ -20,6 +20,20 @@ o contrato nem afirma verificação de Redis, fornecedores ou produção.
 `cycle_started_at` e `ticket_closed_at` persistidos pelo ciclo. Quando esses
 limites não estão disponíveis, a avaliação dependente permanece bloqueada; não
 se infere uma fronteira a partir de atribuições posteriores.
+
+**Retry de áudio (2026-08-20):** falhas transitórias de provider, timeout e
+conexão permanecem `pending` com agenda durável além do limite de tentativas da
+classificação IA. Dead-letters legados só são reabertos com evidência
+persistida transitória; filas e dead-letters são deduplicados por mensagem, a
+cópia de segurança é mantida até uma transcrição não vazia ser persistida e
+erros armazenados/logados usam categorias sanitizadas. A evidência de execução
+local é registrada no issue 0027 e não afirma Redis, fornecedores ou produção.
+
+A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
+**212 testes offline aprovados e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 212
+desselecionados** no runner descartável. Os skips e resultados locais não
+comprovam Redis, fornecedores ou produção.
 
 ## Objetivo e não objetivos
 

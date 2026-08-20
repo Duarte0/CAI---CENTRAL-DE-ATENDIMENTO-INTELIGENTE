@@ -82,6 +82,14 @@ ia_worker
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação.
 
+Falhas transitórias de áudio permanecem `pending` com `next_attempt_at` e
+backoff independente do limite `MAX_RETRY_ATTEMPTS` da classificação IA. O
+worker recupera dead-letters antigos somente quando o erro persistido é
+demonstravelmente transitório, deduplica filas por `message_id` e mantém uma
+cópia de segurança até a persistência de uma transcrição não vazia. Erros
+persistidos e logs usam apenas categorias seguras, sem corpo do provider ou
+URL assinada.
+
 ## Integração Acessórias aprovada
 
 Os issues 0012–0016 implementaram localmente a fundação do diretório durável
@@ -434,9 +442,11 @@ npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
-depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
-etapa offline produziu **177 passed, 56 skipped**; os skips exigem
-`CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
+depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
+etapa offline produziu **212 passed, 69 skipped** e a etapa PostgreSQL
+descartável **69 passed, 212 deselected**; os skips offline exigem
+`CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
+produção.
 
 O smoke test live do webhook é opt-in e requer uma API local deliberadamente
 iniciada. Ele preserva o payload sintético e o endpoint local existentes:
@@ -475,8 +485,8 @@ temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
-Na execução observada do runner em 2026-08-17, a etapa offline produziu
-**203 passed, 68 skipped** e a etapa PostgreSQL produziu **68 passed, 203
+Na execução observada do runner em 2026-08-20, a etapa offline produziu
+**212 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 212
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar

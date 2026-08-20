@@ -19,7 +19,8 @@ currently in progress._
 - **[completed] Durable audio media retry parity** (issue 0027). Audio provider,
   timeout, and connection failures remain pending with durable provider-aware
   backoff beyond the classification retry limit; transient audio dead-letters
-  are reconciled safely and removed only after successful transcription.
+  are reconciled safely, deduplicated by message ID, and removed only after
+  successful non-empty transcription. Persisted failure metadata is sanitized.
 - **[completed] Groq parser logging privacy** (SPEC-0001; issue 0024). Wrapped
   and invalid classification-response diagnostics retain only safe outcome
   categories and bounded structural metadata; raw/partial model output is not
@@ -50,12 +51,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0026,
-  2026-08-17) passed compileall, strict Pyright, offline pytest (**203 passed,
-  68 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
-  (**68 passed, 203 deselected**). The 68 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0027,
+  2026-08-20) passed compileall, strict Pyright, offline pytest (**212 passed,
+  69 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
+  (**69 passed, 212 deselected**). The 69 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 
 ### Implemented, with bounded verification only
