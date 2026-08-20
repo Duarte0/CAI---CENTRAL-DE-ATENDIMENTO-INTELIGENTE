@@ -208,6 +208,16 @@ def _activity_from_status(value: object) -> bool | None:
         return value
     if isinstance(value, int) and value in {0, 1}:
         return bool(value)
+    if isinstance(value, str):
+        normalized = unicodedata.normalize("NFKD", value).casefold().strip()
+        normalized = "".join(
+            character for character in normalized
+            if not unicodedata.combining(character)
+        )
+        if normalized in {"1", "ativo", "ativa", "active", "enabled", "sim", "s"}:
+            return True
+        if normalized in {"0", "inativo", "inativa", "inactive", "disabled", "nao", "n"}:
+            return False
     return None
 
 

@@ -216,6 +216,18 @@ def test_payload_is_bounded_and_contains_only_approved_fields() -> None:
     }
 
 
+def test_payload_prefixes_subject_with_protocol() -> None:
+    payload = build_request_payload(
+        protocol="2026081425037",
+        title="Multa por atraso",
+        description="Descrição persistida",
+        company_external_id="company-1",
+        department_external_id="10",
+    )
+
+    assert payload.subject == "[2026081425037] - Multa por atraso"
+
+
 def test_provider_success_uses_multipart_and_only_persists_id() -> None:
     session = FakeSession([FakeResponse({"id": "SOL-42", "msg": "created"})])
     adapter = AcessoriasRequestAdapter(

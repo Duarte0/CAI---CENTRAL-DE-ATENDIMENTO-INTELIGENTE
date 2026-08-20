@@ -10,8 +10,9 @@
 Alembic `0016_digisac_contact_identity`, o cliente tipado para hydration
 individual, upsert incremental de snapshots de ticket, claims/retries duráveis
 no PostgreSQL e integração webhook sem chamada Contacts em linha. O runner
-descartável passou compileall, Pyright estrito, **160 passed, 40 skipped**
-offline e **40 passed, 160 deselected** em PostgreSQL 16; isso é evidência
+descartável mais recente (issue 0014) passou compileall, Pyright estrito,
+**169 passed, 42 skipped** offline e **42 passed, 169 deselected** em
+PostgreSQL 16; isso é evidência
 local sintética/descartável e não comprova provider, Redis ou produção. A
 evidência autorizada de Contacts, também em 2026-08-14, removeu o bloqueio de
 paginação do full backfill e definiu seu contrato de fallback multi-page abaixo.

@@ -261,7 +261,8 @@ classification.
   present; missing classification, non-terminal/failed/media-blocked cycle,
   unresolved/ambiguous/conflict identity, absent mapping, and invalid current
   department persist a blocked outcome and make no provider call.
-- [x] The subject is derived only from the persisted title, is deterministically
+- [x] The subject uses the persisted cycle protocol when available, prefixes the
+  persisted title as `[protocol] - title`, and is deterministically
   truncated to a non-empty value at 100 characters, and the description is
   derived only from the persisted description without another IA call.
 - [x] A provider response with a non-empty `id` persists that value as `SolID`

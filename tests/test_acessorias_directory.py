@@ -14,6 +14,7 @@ from src.core.acessorias_directory import (
     AcessoriasDirectoryAdapter,
     AcessoriasDirectoryError,
     AcessoriasSnapshot,
+    _activity_from_status,
     normalize_email,
     normalize_mobile,
     sync_acessorias_directory_sync,
@@ -76,6 +77,16 @@ def test_normalization_keeps_raw_contract_separate() -> None:
     assert normalize_mobile("  ") is None
     assert normalize_email("  User@Example.COM ") == "user@example.com"
     assert normalize_email("") is None
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [("Ativa", True), ("Ativo", True), ("Inativa", False), ("Não", False), ("unknown", None)],
+)
+def test_activity_accepts_provider_text_statuses(
+    status: str, expected: bool | None
+) -> None:
+    assert _activity_from_status(status) is expected
 
 
 def test_adapter_fetches_complete_pages_and_centralizes_bearer_header() -> None:

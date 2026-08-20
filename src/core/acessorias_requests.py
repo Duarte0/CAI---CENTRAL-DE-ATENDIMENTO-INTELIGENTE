@@ -119,6 +119,7 @@ def build_request_payload(
     *,
     title: str,
     description: str,
+    protocol: str | None = None,
     company_external_id: str,
     department_external_id: str,
 ) -> AcessoriasRequestPayload:
@@ -127,7 +128,14 @@ def build_request_payload(
         raise ValueError("classification title is required")
     if not isinstance(description, str):
         raise ValueError("classification description is required")
-    subject = title.strip()[:100]
+    normalized_title = title.strip()
+    normalized_protocol = protocol.strip() if isinstance(protocol, str) else ""
+    subject_source = (
+        f"[{normalized_protocol}] - {normalized_title}"
+        if normalized_protocol
+        else normalized_title
+    )
+    subject = subject_source[:100]
     if not subject:
         raise ValueError("classification title is required")
     company = company_external_id.strip()
@@ -401,7 +409,7 @@ def _cycle_snapshot(connection: psycopg.Connection[Any], cycle_public_id: str) -
         row = cursor.execute(
             """
             SELECT cycle.id, cycle.public_id, cycle.conversation_id, cycle.status,
-                   cycle.warning_count, cycle.classification_id,
+                   cycle.warning_count, cycle.classification_id, cycle.protocol,
                    classification.title, classification.description
             FROM conversation_processing_cycles AS cycle
             LEFT JOIN ia_classifications AS classification
@@ -487,6 +495,7 @@ def _operation_state(
         payload = build_request_payload(
             title=title,
             description=description,
+            protocol=cycle.get("protocol"),
             company_external_id=str(company["external_id"]),
             department_external_id=department_id,
         )
@@ -806,10 +815,12 @@ def _load_payload_sync(operation_id: int) -> AcessoriasRequestPayload:
         with connection.cursor(row_factory=dict_row) as cursor:
             row = cursor.execute(
                 """
-                SELECT classification.title, classification.description,
+                SELECT cycle.protocol, classification.title, classification.description,
                        operation.company_external_id,
                        operation.department_external_id
                 FROM acessorias_request_operations AS operation
+                JOIN conversation_processing_cycles AS cycle
+                  ON cycle.id = operation.source_cycle_id
                 JOIN ia_classifications AS classification
                   ON classification.id = operation.source_classification_id
                 WHERE operation.id = %s
@@ -821,6 +832,7 @@ def _load_payload_sync(operation_id: int) -> AcessoriasRequestPayload:
     return build_request_payload(
         title=cast(str, row["title"]),
         description=cast(str, row["description"]),
+        protocol=cast(str | None, row["protocol"]),
         company_external_id=cast(str, row["company_external_id"]),
         department_external_id=cast(str, row["department_external_id"]),
     )
