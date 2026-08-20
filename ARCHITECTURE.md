@@ -67,7 +67,10 @@ tables. Redis is not the authoritative store for durable classifications,
 media results, or department mapping state. The pool lifecycle and schema
 verification remain in `src/core/db.py`; DigiSac contact persistence and
 hydration use the same pool through the focused internal
-`src/core/digisac_contact_repository.py` boundary.
+`src/core/digisac_contact_repository.py` boundary. Conversation-cycle
+persistence and recovery use the same pool through
+`src/core/conversation_cycle_repository.py`; `src/core/db.py` retains
+compatibility exports for both focused repositories.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -507,12 +510,14 @@ they limit release verification and future evolution decisions.
   \`src/core/message_filter.py\`, \`src/core/media.py\`,
   \`src/core/finalization.py\`.
 - PostgreSQL lifecycle, schema verification, and shared persistence primitives:
-  \`src/core/db.py\`; cycle coordination and domain persistence remain split
-  across the focused modules below.
+  \`src/core/db.py\`; it remains the single pool/lifecycle and schema-capability
+  owner for the focused persistence boundaries below.
 - DigiSac contact persistence and hydration: \`src/core/digisac_contact_repository.py\`,
   with compatibility exports retained by \`src/core/db.py\`.
-- PostgreSQL access and cycle coordination: \`src/core/db.py\`,
-  \`src/core/department_mapping.py\`, and
+- Conversation-cycle persistence, membership, metrics, result projection, and
+  selective media unblocking: \`src/core/conversation_cycle_repository.py\`,
+  with compatibility exports retained by \`src/core/db.py\`.
+- PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through
   \`0020_cycle_contact_provenance.py\`.

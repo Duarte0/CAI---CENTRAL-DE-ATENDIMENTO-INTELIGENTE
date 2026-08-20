@@ -202,7 +202,10 @@ O ciclo de vida do pool e a verificação do schema permanecem em
 `src/core/db.py`. A persistência de contatos DigiSac e o estado durável de
 hydration ficam isolados em `src/core/digisac_contact_repository.py`, usando o
 mesmo pool e mantendo a fachada assíncrona compatível para os consumidores
-existentes.
+existentes. A persistência de ciclos, membership de mensagens, métricas,
+projeção de resultado e despertar seletivo de mídia ficam isolados em
+`src/core/conversation_cycle_repository.py`, também com exports compatíveis na
+fachada.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -449,8 +452,8 @@ npx --yes pyright
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
-etapa offline produziu **212 passed, 69 skipped** e a etapa PostgreSQL
-descartável **69 passed, 212 deselected**; os skips offline exigem
+etapa offline produziu **214 passed, 69 skipped** e a etapa PostgreSQL
+descartável **69 passed, 214 deselected**; os skips offline exigem
 `CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
 produção.
 
@@ -492,7 +495,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-20, a etapa offline produziu
-**213 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 213
+**214 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 214
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar

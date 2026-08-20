@@ -29,9 +29,17 @@ cópia de segurança é mantida até uma transcrição não vazia ser persistida
 erros armazenados/logados usam categorias sanitizadas. A evidência de execução
 local é registrada no issue 0027 e não afirma Redis, fornecedores ou produção.
 
+**Nota estrutural (2026-08-20):** o issue 0029 isolou a persistência de ciclos,
+membership de mensagens, projeções de resultado/métricas e recuperação seletiva
+de mídia em `src/core/conversation_cycle_repository.py`. A mudança preserva as
+assinaturas assíncronas, o pool único, a verificação do schema e os contratos de
+transação, idempotência, claims, leases, publicação e privacidade; `src/core/db.py`
+mantém o ciclo de vida do PostgreSQL e a fachada de compatibilidade. Não houve
+alteração de schema, filas, workflow, provider ou semântica durável.
+
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
-**212 testes offline aprovados e 69 skips**, Alembic
-`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 212
+**214 testes offline aprovados e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 214
 desselecionados** no runner descartável. Os skips e resultados locais não
 comprovam Redis, fornecedores ou produção.
 
