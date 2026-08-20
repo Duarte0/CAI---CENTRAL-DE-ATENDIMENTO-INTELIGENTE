@@ -344,9 +344,10 @@ defined by the schema.
   metrics.
 - Persisted snapshots contain safe metadata and extracted text, not download
   credentials or media binaries.
-- The implemented Acessórias provider adapter centralizes bearer authentication,
-  timeout/retry/rate-limit handling, shared in-process Request admission,
-  parsing, sanitized logs, and test doubles;
+- The implemented Acessórias provider adapters centralize bearer authentication,
+  timeout/retry handling, parsing, sanitized logs, and test doubles; the
+  provider-neutral `src/core/provider_coordination.py` boundary owns transient
+  rate admission and shared in-process Request coordination;
   Authorization headers and real provider tokens must never be persisted or
   logged. No provider credential or production synchronization was used for
   the local implementation evidence.
@@ -420,6 +421,9 @@ The PRD is derived from:
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
   `0001_initial` through `0020_cycle_contact_provenance`;
+- Acessórias provider adapters and transient coordination:
+  `src/core/acessorias_directory.py`, `src/core/acessorias_requests.py`, and
+  `src/core/provider_coordination.py`;
 - worker behavior: `src/workers/ia_worker.py`, `src/workers/audio_worker.py`,
   and `src/workers/image_worker.py`;
 - configuration and deployment: `src/core/config.py`, `.env.example`,

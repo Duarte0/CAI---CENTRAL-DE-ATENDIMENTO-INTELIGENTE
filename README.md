@@ -116,9 +116,10 @@ efeito externo é separado por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
 e reconciliação `manual_db`. O payload persistido é carregado e validado antes do
 marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
-provider. Os adapters de Request no mesmo processo compartilham
-o limite Sliding Window por endpoint/configuração antes do POST, sem persistir
-token, header ou payload. Uma `ConnectionError`, timeout ou falha de
+provider. Os adapters de Request no mesmo processo usam a fronteira neutra
+`src/core/provider_coordination.py` para compartilhar o limite Sliding Window
+por endpoint/configuração antes do POST, sem persistir token, header ou
+payload. Uma `ConnectionError`, timeout ou falha de
 protocolo comum permanece ambígua e não inicia um segundo POST. Uma resposta
 `429` sem prova documentada de não criação também exige reconciliação e ignora
 `Retry-After` como autorização para novo POST. Telefone, nome,

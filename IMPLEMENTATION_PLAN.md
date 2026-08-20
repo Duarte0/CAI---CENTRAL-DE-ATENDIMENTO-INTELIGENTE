@@ -125,6 +125,19 @@ currently in progress._
   `0020_cycle_contact_provenance`, and PostgreSQL pytest (**69 passed, 220
   deselected**). This is local/disposable evidence and does not prove provider,
   Redis, deployment, or production behavior.
+- **[completed] Neutral provider-coordination boundary** (issue 0034;
+  SPEC-0007 and SPEC-0011). The generic process-local Sliding Window state and
+  admission operation now live in `src/core/provider_coordination.py`; the
+  Directory and Request adapters depend on it directly. Directory admission
+  remains instance-local while Request admission remains shared by sanitized
+  endpoint/configuration key. No provider, retry, payload, durable-operation,
+  privacy, configuration, or schema semantics changed.
+  Focused adapter/boundary tests passed **36 passed, 10 skipped**; the
+  canonical runner passed compileall, strict Pyright, offline pytest (**221
+  passed, 69 skipped**), Alembic head `0020_cycle_contact_provenance`, and
+  PostgreSQL pytest (**69 passed, 221 deselected**). This is local/disposable
+  evidence and does not prove provider, Redis, deployment, or production
+  behavior.
 
 ### Implemented, with bounded verification only
 
@@ -296,12 +309,15 @@ currently in progress._
    pre-send failure can enter the bounded retry path; ordinary connection,
    timeout, and protocol failures require `manual_db` reconciliation. Issue
    0017 implements the operation, issue 0018 closes the ambiguous transport
-   gap, and issue 0019 makes Request adapter instances share the configured
+   gap, issue 0019 makes Request adapter instances share the configured
    in-process Sliding Window by provider endpoint/configuration, and issue 0021
    keeps persisted payload-load failures before `post_started_at` retryable
    without a provider call. Issue 0022 classifies an unproven `429` as
    `reconciliation_required`; status and `Retry-After` do not authorize a
    second POST because the provider contract has no non-creation proof signal.
+   Structural issue 0034 places the generic admission primitive in
+   `src/core/provider_coordination.py` without changing this policy or the
+   adapter-specific scopes.
    Milestones A–D supply the declared classification,
    company and department facts. Issue 0026 now executes those preparation
    contracts in order and provides a narrowly gated recovery for the historical
@@ -471,6 +487,6 @@ Redis, deployment, or production readiness.
 ## Recommended next pass
 
 Milestones C and D are complete under issues 0015, 0016, 0020, and 0026, and Milestone E is
-implemented under issues 0017–0019, 0021–0022, and 0026. Open corrective issue 0023 remains
+implemented under issues 0017–0019, 0021–0022, 0026, and structural boundary issue 0034. Open corrective issue 0023 remains
 before Milestone F can be considered the next optional increment; that
 milestone still requires a new product decision and specification.

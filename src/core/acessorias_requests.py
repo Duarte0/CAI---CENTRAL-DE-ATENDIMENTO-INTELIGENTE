@@ -25,9 +25,9 @@ import requests
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from src.core.acessorias_directory import _RateLimiter
 from src.core.config import settings
 from src.core.db import get_database_pool
+from src.core.provider_coordination import SlidingWindowRateLimiter
 
 
 REQUEST_FIELDS = (
@@ -278,7 +278,7 @@ class AcessoriasRequestAdapter:
             if rate_limit_per_minute is not None
             else settings.acessorias_rate_limit_per_minute
         )
-        self.rate_limiter = _RateLimiter(
+        self.rate_limiter = SlidingWindowRateLimiter(
             selected_rate_limit,
             sleep=sleep,
             clock=clock,

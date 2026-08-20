@@ -1,6 +1,6 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022 e 0026; evidência descartável, sem provider/produção
+- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022 e 0026; boundary estrutural pelo issue 0034; evidência descartável, sem provider/produção
 - **Versão:** 1.4 (issue 0026 conecta preparação durável e recuperação pré-POST sem alterar o contrato do provider)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
@@ -65,6 +65,12 @@ POST para `429` incerto, persistência de reconciliação, replays concorrentes
 sem novo POST e reconciliação manual de `SolID`. A evidência é local
 sintética/descartável, sem credencial real, provider, Redis, deployment ou
 produção.
+
+**Manutenção estrutural (2026-08-20):** issue 0034 moveu o estado e a
+admissão genérica do Sliding Window para `src/core/provider_coordination.py`.
+Os adapters de Request continuam compartilhando a janela no processo por
+endpoint/configuração, sem mudança no payload, retry, reconciliação, operação
+durável ou no limite contratado.
 
 **Integração de preparação (2026-08-17):** issue 0026 torna explícita a ordem
 terminal → identidade confirmada → snapshot de mapping resolvido → operação

@@ -137,8 +137,8 @@ company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
 Request operation runs only after a persisted valid
 classification, confirmed identity, and mapping; issues 0017–0019, 0021–0022,
-and 0026 give it durable one-cycle uniqueness, claim/reconciliation, failure
-state, and shared in-process
+0026, and structural boundary issue 0034 give it durable one-cycle uniqueness,
+claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start; the
 persisted payload is loaded and validated before `post_started_at`, and a
@@ -501,7 +501,8 @@ records these delivery limitations:
   implemented separately under issue `0017`.
 
 - Durable Acessórias Request creation and preparation are implemented under issues
-  `0017`–`0019`, `0021`–`0022`, and `0026`. They resolve the canonical ticket
+  `0017`–`0019`, `0021`–`0022`, `0026`, and structural boundary issue `0034`.
+  They resolve the canonical ticket
   contact and cycle-scoped mapping before any provider call, and recover
   `mapping_missing` only with durable proof that no POST started. The existing
   operation then
@@ -558,6 +559,9 @@ they limit release verification and future evolution decisions.
   \`src/core/acessorias_preparation.py\`, \`src/workers/ia_worker.py\`, and
   Alembic \`0019_acessorias_request_creation.py\` plus
   \`0020_cycle_contact_provenance.py\`.
+- Acessórias provider adapters and transient coordination:
+  \`src/core/acessorias_directory.py\`, \`src/core/acessorias_requests.py\`,
+  and \`src/core/provider_coordination.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,
