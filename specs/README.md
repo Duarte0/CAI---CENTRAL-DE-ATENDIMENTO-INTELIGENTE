@@ -8,7 +8,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | --- | --- | --- | --- | --- | --- |
 | SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.3 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações e fronteiras de privacidade. |
 | SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.5; boundary estrutural 0030 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; não há superfície de diagnóstico de webhook. |
-| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.5; boundary estrutural 0029 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; áudio transitório além do limite IA e dead-letter seguro; limites persistidos consumidos por roteamento. |
+| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.5; boundaries estruturais 0029 e 0031 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; áudio transitório além do limite IA e dead-letter seguro; limites persistidos consumidos por roteamento. |
 | SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.6 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
 | SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.3 | P1 / reconciliação documental | SPEC-0002–0004 | Corrige a documentação ativa sobre fluxo persistente único, rotas sem versão, OpenAPI publicado e a evidência de verificação registrada. |
 | SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.1 | P1 / documentação de compatibilidade | SPEC-0001–0005 | Publica OpenAPI/Swagger/ReDoc e introdução para consumidores a partir das oito rotas HTTP atualmente montadas. |
@@ -18,9 +18,10 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.4; issues 0017–0019, 0021–0022 e 0026 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
 
-A evidência mais recente registrada para SPEC-0004 é **215 passed, 69 skipped**
-na etapa offline e **69 passed, 215 deselected** na etapa PostgreSQL
-descartável (issue 0030). A evidência anterior de issue 0026 foi **203 passed,
+A evidência mais recente registrada para SPEC-0004 é **216 passed, 69 skipped**
+na etapa offline e **69 passed, 216 deselected** na etapa PostgreSQL
+descartável (issue 0031). A evidência anterior de issue 0030 foi **215 passed,
+69 skipped** e **69 passed, 215 deselected**. A evidência anterior de issue 0026 foi **203 passed,
 68 skipped** e **68 passed, 203 deselected**. A evidência anterior de issue 0022 foi **199 passed,
 66 skipped** e **66 passed, 199 deselected**. A evidência anterior de issue 0021 foi **198 passed,
 65 skipped** e **65 passed, 198 deselected**. A evidência anterior de issue 0020 foi **197 passed,

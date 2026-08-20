@@ -208,7 +208,9 @@ projeção de resultado e despertar seletivo de mídia ficam isolados em
 fachada. O histórico idempotente de atribuições e a projeção de nomes de
 departamento/agente ficam isolados em
 `src/core/ticket_assignment_repository.py`, mantendo os exports compatíveis
-da fachada.
+da fachada. A persistência durável compartilhada de transcrições e extrações de
+imagem fica isolada em `src/core/durable_media_repository.py`, com os exports
+de áudio/imagem preservados na fachada para API, workers, utilitários e testes.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -455,8 +457,8 @@ npx --yes pyright
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
-etapa offline produziu **215 passed, 69 skipped** e a etapa PostgreSQL
-descartável **69 passed, 215 deselected**; os skips offline exigem
+etapa offline produziu **216 passed, 69 skipped** e a etapa PostgreSQL
+descartável **69 passed, 216 deselected**; os skips offline exigem
 `CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
 produção.
 
@@ -498,7 +500,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-20, a etapa offline produziu
-**215 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 215
+**216 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 216
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar

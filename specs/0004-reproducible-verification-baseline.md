@@ -21,9 +21,15 @@ banco deliberadamente não é fornecido.
 Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
 do banco descartável somente na etapa PostgreSQL.
 
-A execução canônica mais recente, registrada no issue 0030 em 2026-08-20,
+A execução canônica anterior, registrada no issue 0030 em 2026-08-20,
 passou compileall, Pyright estrito, **215 testes offline e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL, 215 desselecionados**.
+Os resultados continuam sendo evidência local/descartável e não comprovam
+Redis, fornecedores, réplicas, deployment ou produção.
+
+A execução canônica mais recente, registrada no issue 0031 em 2026-08-20,
+passou compileall, Pyright estrito, **216 testes offline e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL, 216 desselecionados**.
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 

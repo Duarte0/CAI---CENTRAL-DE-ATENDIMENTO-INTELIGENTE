@@ -1,6 +1,6 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; boundaries estruturais nos issues 0029 e 0031
 - **Versão:** 1.5
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
 - **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002
@@ -37,9 +37,17 @@ transação, idempotência, claims, leases, publicação e privacidade; `src/cor
 mantém o ciclo de vida do PostgreSQL e a fachada de compatibilidade. Não houve
 alteração de schema, filas, workflow, provider ou semântica durável.
 
+**Nota estrutural (2026-08-20):** o issue 0031 isolou a persistência compartilhada
+de transcrições e extrações de imagem em `src/core/durable_media_repository.py`.
+Reservas por mensagem, transições protegidas, leituras, recuperação due-only,
+liberação de publicação e projeção de mídia pendente mantêm as assinaturas da
+fachada, o pool único, as transações, `SKIP LOCKED`, leases e as regras de
+privacidade. Não houve alteração de schema, filas, retry, workflow, provider ou
+semântica durável.
+
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
-**214 testes offline aprovados e 69 skips**, Alembic
-`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 214
+**216 testes offline aprovados e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 216
 desselecionados** no runner descartável. Os skips e resultados locais não
 comprovam Redis, fornecedores ou produção.
 

@@ -72,7 +72,11 @@ persistence and recovery use the same pool through
 `src/core/conversation_cycle_repository.py`. Ticket-assignment history and
 assignment-name projection use the same pool through
 `src/core/ticket_assignment_repository.py`. `src/core/db.py` retains
-compatibility exports for all focused repositories.
+compatibility exports for all focused repositories. Shared durable media
+reservation, state transitions, reads, recovery claims, publication release,
+and pending projections use the same pool through
+`src/core/durable_media_repository.py`, with audio/image compatibility exports
+retained by the facade.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -522,6 +526,9 @@ they limit release verification and future evolution decisions.
 - Ticket-assignment history and assignment-name projection:
   \`src/core/ticket_assignment_repository.py\`, with compatibility exports
   retained by \`src/core/db.py\`.
+- Durable transcription and image-extraction persistence:
+  \`src/core/durable_media_repository.py\`, with compatibility exports retained
+  by \`src/core/db.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through
