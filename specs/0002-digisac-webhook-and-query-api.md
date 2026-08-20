@@ -14,6 +14,13 @@ Especificar a entrada autenticada de eventos DigiSac, a normalização segura e 
 
 As rotas montadas são `POST /webhook/digisac`, `GET /health`, `GET /queues`, e as consultas de conversa/ciclo sem prefixo de versão. Em produção, `WEBHOOK_SECRET` deve estar configurado para validar a origem DigiSac e impedir injeção de eventos; não há autenticação adicional de leitores.
 
+**Nota estrutural (2026-08-20):** o issue 0030 isolou a persistência da chave
+de evento, do histórico cronológico de atribuições e da projeção de nomes em
+`src/core/ticket_assignment_repository.py`. `src/core/db.py` continua dono do
+pool, da verificação do schema e da fachada de compatibilidade; a captura do
+webhook, a construção de timestamp/chave e os formatos públicos permanecem
+inalterados.
+
 ## Ingestão, validação e normalização
 
 1. `POST /webhook/digisac` **deve** aceitar `ticket.created`, `ticket.updated`, `message.created` e `message.updated`. Evento não suportado **deve** retornar `200` com motivo seguro e não pode alterar estado.

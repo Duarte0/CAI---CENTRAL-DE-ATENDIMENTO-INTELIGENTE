@@ -69,8 +69,10 @@ verification remain in `src/core/db.py`; DigiSac contact persistence and
 hydration use the same pool through the focused internal
 `src/core/digisac_contact_repository.py` boundary. Conversation-cycle
 persistence and recovery use the same pool through
-`src/core/conversation_cycle_repository.py`; `src/core/db.py` retains
-compatibility exports for both focused repositories.
+`src/core/conversation_cycle_repository.py`. Ticket-assignment history and
+assignment-name projection use the same pool through
+`src/core/ticket_assignment_repository.py`. `src/core/db.py` retains
+compatibility exports for all focused repositories.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -517,6 +519,9 @@ they limit release verification and future evolution decisions.
 - Conversation-cycle persistence, membership, metrics, result projection, and
   selective media unblocking: \`src/core/conversation_cycle_repository.py\`,
   with compatibility exports retained by \`src/core/db.py\`.
+- Ticket-assignment history and assignment-name projection:
+  \`src/core/ticket_assignment_repository.py\`, with compatibility exports
+  retained by \`src/core/db.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through

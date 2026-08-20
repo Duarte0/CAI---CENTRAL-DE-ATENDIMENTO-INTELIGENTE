@@ -1,6 +1,6 @@
 # SPEC-0010 — Mapeamento de departamento DigiSac para Acessórias
 
-- **Status:** implementado localmente pelos issues 0016, 0020 e 0026; evidência descartável, sem provider/produção
+- **Status:** implementado localmente pelos issues 0016, 0020 e 0026; boundary estrutural 0030; evidência descartável, sem provider/produção
 - **Versão:** 1.3 (issue 0026 conecta a avaliação ao limite de preparação do worker)
 - **Prioridade/Fase:** P1 / Milestone D — DigiSac Department → Acessórias Department Mapping
 - **Rastreabilidade:** PRD §§4, 5.2, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone D; SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0009
@@ -28,6 +28,13 @@ evidência local sintética/descartável.
 atribuição dentro dos limites persistidos, regra por IDs estáveis e relação
 corrente da empresa; falhas de identidade ou mapping permanecem explícitas e
 sem POST. A evidência é local/sintética e não comprova provider ou produção.
+
+**Nota estrutural (2026-08-20):** o issue 0030 isolou a persistência e a
+projeção do histórico de atribuições em
+`src/core/ticket_assignment_repository.py`. A seleção do mapping continua no
+limite persistido do ciclo e usa o mesmo pool/schema Alembic por meio da
+fachada compatível; não houve mudança de regra, snapshot, identidade ou gate
+de Request.
 
 ## Objetivo e não objetivos
 
