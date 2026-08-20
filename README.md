@@ -240,11 +240,15 @@ Variáveis principais:
 | `REDIS_URL` | Redis de filas e coordenação. | `redis://localhost:6379` |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
 | `AUDIO_TRANSCRIPTION_MODEL` | Modelo de transcrição. | `whisper-large-v3-turbo` |
+| `AUDIO_RETRY_BASE_SECONDS` | Backoff inicial de falhas transitórias de áudio. | `2` |
+| `AUDIO_RETRY_MAX_DELAY_SECONDS` | Teto do backoff local de áudio. | `900` |
+| `AUDIO_RETRY_PROVIDER_MARGIN_SECONDS` | Margem adicionada ao `Retry-After` do provider. | `1` |
+| `AUDIO_DEAD_LETTER_RECOVERY_INTERVAL_SECONDS` | Intervalo de recuperação de dead-letters transitórios de áudio. | `60` |
 | `IMAGE_VISION_MODEL` | Modelo multimodal. | `qwen/qwen3.6-27b` |
 | `IMAGE_VISION_MAX_COMPLETION_TOKENS` | Orçamento inicial da resposta visual. | `5000` |
 | `MAX_TOKENS` | Orçamento solicitado à classificação; o worker impõe mínimo efetivo de `1000`. | `500` no `.env.example`; `3000` se ausente |
 | `PROMPT_VERSION` | Identificador do prompt persistido. | `v4` |
-| `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas. | `3` |
+| `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas do worker de classificação IA. | `3` |
 | `RESULT_TTL_SECONDS` | TTL de status/resultados transitórios no Redis. | `86400` |
 | `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por mídia. | `30` |
 | `CONTENT_RECOVERY_LEASE_SECONDS` | Lease de recuperação de mídia. | `300` |

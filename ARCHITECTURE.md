@@ -274,7 +274,9 @@ retry it.
 
 \`audio_worker\` downloads the DigiSac file, sends it to the configured Groq
 transcription model, and updates \`message_transcriptions\`. Transient provider
-failures honor \`Retry-After\`, backoff, and the configured attempt limit.
+failures honor \`Retry-After\` and durable backoff, remaining \`pending\` beyond
+the classification worker's attempt limit. Permanent audio failures go to the
+dead-letter and only persisted transient failures are recovered automatically.
 Terminal audio failure leaves a safe marker in the context and can produce
 \`completed_with_warnings\`.
 

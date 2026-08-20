@@ -16,6 +16,10 @@ currently in progress._
   publication; leases, `next_attempt_at`, reconciliation, and idempotent
   identity recover interrupted work. Terminal image failure blocks only its
   dependent cycle; terminal audio failure is represented as a warning.
+- **[completed] Durable audio media retry parity** (issue 0027). Audio provider,
+  timeout, and connection failures remain pending with durable provider-aware
+  backoff beyond the classification retry limit; transient audio dead-letters
+  are reconciled safely and removed only after successful transcription.
 - **[completed] Groq parser logging privacy** (SPEC-0001; issue 0024). Wrapped
   and invalid classification-response diagnostics retain only safe outcome
   categories and bounded structural metadata; raw/partial model output is not
