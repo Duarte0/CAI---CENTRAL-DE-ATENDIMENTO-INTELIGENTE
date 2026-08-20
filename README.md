@@ -116,7 +116,11 @@ efeito externo é separado por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
 e reconciliação `manual_db`. O payload persistido é carregado e validado antes do
 marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
-provider. Os adapters de Request no mesmo processo usam a fronteira neutra
+provider. A implementação separa o transporte externo em
+`src/core/acessorias_request_provider.py`; a operação PostgreSQL, os claims,
+reconciliação e a orquestração continuam em `src/core/acessorias_requests.py`,
+que reexporta os contratos do provider para manter os imports existentes. Os
+adapters de Request no mesmo processo usam a fronteira neutra
 `src/core/provider_coordination.py` para compartilhar o limite Sliding Window
 por endpoint/configuração antes do POST, sem persistir token, header ou
 payload. Uma `ConnectionError`, timeout ou falha de
@@ -477,8 +481,8 @@ npx --yes pyright
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
 depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
-etapa offline produziu **220 passed, 69 skipped** e a etapa PostgreSQL
-descartável **69 passed, 220 deselected**; os skips offline exigem
+etapa offline produziu **224 passed, 69 skipped** e a etapa PostgreSQL
+descartável **69 passed, 224 deselected**; os skips offline exigem
 `CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
 produção.
 
@@ -520,7 +524,7 @@ e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
 Na execução observada do runner em 2026-08-20, a etapa offline produziu
-**220 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 220
+**224 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 224
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar

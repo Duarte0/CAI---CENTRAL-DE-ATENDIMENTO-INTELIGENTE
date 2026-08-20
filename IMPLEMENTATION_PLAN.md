@@ -51,12 +51,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031, 0032, 0033). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031, 0032, 0033, 0036). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0033,
-  2026-08-20) passed compileall, strict Pyright, offline pytest (**220 passed,
+  PostgreSQL-marked family. The latest recorded full execution (issue 0036,
+  2026-08-20) passed compileall, strict Pyright, offline pytest (**224 passed,
   69 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
-  (**69 passed, 220 deselected**). The 69 offline skips are expected missing
+  (**69 passed, 224 deselected**). The 69 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 - **[completed] DigiSac contact persistence boundary** (issue 0028; SPEC-0008).
   Contact upsert/source precedence, atomic full-backfill publication, hydration
@@ -150,6 +150,18 @@ currently in progress._
   skipped**), Alembic head `0020_cycle_contact_provenance`, and PostgreSQL
   pytest (**69 passed, 222 deselected**). This is local/disposable evidence
   and does not prove provider, Redis, deployment, or production behavior.
+- **[completed] Acessórias Request provider boundary** (issue 0036;
+  SPEC-0011). The provider payload/outcome contract and HTTP adapter now live
+  in `src/core/acessorias_request_provider.py`; durable Request eligibility,
+  operation persistence, claims/leases, pre-POST validation, outcome recording,
+  reconciliation, and compatibility exports remain in
+  `src/core/acessorias_requests.py`. No Request, provider, rate-admission,
+  retry, persistence, schema, configuration, or public-contract semantics
+  changed. Focused provider/Request/preparation/Directory tests passed **41
+  passed, 12 skipped**; the canonical runner passed offline **224 passed, 69
+  skipped** and PostgreSQL **69 passed, 224 deselected**. This is
+  local/disposable evidence and does not prove provider, Redis, deployment, or
+  production behavior.
 
 ### Implemented, with bounded verification only
 
@@ -166,8 +178,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **289 tests**; the latest issue-0033
-  run passed **220 tests** and skipped the 69 PostgreSQL-dependent tests without
+- The current canonical collection contains **293 tests**; the latest issue-0036
+  run passed **224 tests** and skipped the 69 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -379,7 +391,8 @@ Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015 and the preparation integration under issue 0026. Milestone D is implemented under issues 0016, 0020 and 0026; Milestone E is
 implemented under issues 0017–0019, 0021–0022 and 0026 with its Request contract and A–D facts
-available. No specification in this sequence authorizes application changes
+available; structural provider/durable-operation ownership was completed by
+issue 0036. No specification in this sequence authorizes application changes
 until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
@@ -432,7 +445,8 @@ Redis, deployment, or production readiness.
   (0007), generated OpenAPI HTTP contract publication (0008), active document
   traceability/evidence reconciliation (0009), financial taxonomy prompt
   parity (0010), Groq parser logging privacy (0024), webhook extraction
-  logging privacy (0025), and IA classification-contract boundary (0035).
+  logging privacy (0025), IA classification-contract boundary (0035), and
+  Acessórias Request provider boundary (0036).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -502,6 +516,5 @@ Redis, deployment, or production readiness.
 
 Milestones C and D are complete under issues 0015, 0016, 0020, and 0026, and Milestone E is
 implemented under issues 0017–0019, 0021–0022, 0026, and structural boundary
-issues 0034–0035. Open structural issue 0036 remains as the next isolated
-provider/durable-operation boundary increment. Milestone F still requires a
-new product decision and specification.
+issues 0034 and 0036. Milestone F still requires a new product decision and
+specification.

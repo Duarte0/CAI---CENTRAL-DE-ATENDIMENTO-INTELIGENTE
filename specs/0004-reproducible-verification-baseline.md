@@ -47,6 +47,12 @@ resposta vazia. Sua verificação canônica passou compileall, Pyright estrito,
 desselecionados**. Os resultados são locais/descartáveis e não afirmam
 disponibilidade de provider, Redis ou produção.
 
+A execução canônica mais recente, registrada no issue 0036 em 2026-08-20,
+passou compileall, Pyright estrito, **224 testes offline aprovados e 69 skips**,
+Alembic `0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 224
+desselecionados**. Os resultados são locais/descartáveis e não afirmam
+disponibilidade de provider, Redis, deployment ou produção.
+
 A verificação operacional foi adicionada ao mesmo contrato
 de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte
 de fila determinístico e identificadores sintéticos para verificar claim/lease

@@ -1,6 +1,6 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022 e 0026; boundary estrutural pelo issue 0034; evidência descartável, sem provider/produção
+- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022 e 0026; boundaries estruturais pelos issues 0034 e 0036; evidência descartável, sem provider/produção
 - **Versão:** 1.4 (issue 0026 conecta preparação durável e recuperação pré-POST sem alterar o contrato do provider)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
@@ -71,6 +71,22 @@ admissão genérica do Sliding Window para `src/core/provider_coordination.py`.
 Os adapters de Request continuam compartilhando a janela no processo por
 endpoint/configuração, sem mudança no payload, retry, reconciliação, operação
 durável ou no limite contratado.
+
+**Manutenção estrutural adicional (2026-08-20):** issue 0036 separou o
+contrato de payload/outcome e o adapter HTTP em
+`src/core/acessorias_request_provider.py`. `src/core/acessorias_requests.py`
+continua responsável pela operação PostgreSQL, elegibilidade, claims/leases,
+marcador pré-POST, persistência de outcome e reconciliação, mantendo os
+imports de provider existentes como compatibilidade. Não houve alteração de
+payload, autenticação, retry, rate admission, idempotência, concorrência,
+reconciliação, schema ou comportamento externo.
+
+**Evidência da boundary (2026-08-20):** o teste focado de provider/Request,
+preparação e Directory passou com **41 testes aprovados e 12 skips**. O runner
+descartável passou compileall, Pyright estrito, **224 testes offline e 69
+skips**, Alembic `0020_cycle_contact_provenance` e **69 testes PostgreSQL, 224
+desselecionados**. A evidência é local/sintética/descartável e não comprova
+provider, Redis, deployment ou produção.
 
 **Integração de preparação (2026-08-17):** issue 0026 torna explícita a ordem
 terminal → identidade confirmada → snapshot de mapping resolvido → operação
