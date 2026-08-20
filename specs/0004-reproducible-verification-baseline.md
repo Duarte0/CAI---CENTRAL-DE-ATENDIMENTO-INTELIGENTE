@@ -27,9 +27,15 @@ passou compileall, Pyright estrito, **215 testes offline e 69 skips**, Alembic
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 
-A execução canônica mais recente, registrada no issue 0031 em 2026-08-20,
+A execução canônica anterior, registrada no issue 0031 em 2026-08-20,
 passou compileall, Pyright estrito, **216 testes offline e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL, 216 desselecionados**.
+Os resultados continuam sendo evidência local/descartável e não comprovam
+Redis, fornecedores, réplicas, deployment ou produção.
+
+A execução canônica mais recente, registrada no issue 0032 em 2026-08-20,
+passou compileall, Pyright estrito, **218 testes offline e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL, 218 desselecionados**.
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 

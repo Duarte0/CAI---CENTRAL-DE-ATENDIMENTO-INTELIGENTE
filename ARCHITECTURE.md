@@ -76,7 +76,10 @@ compatibility exports for all focused repositories. Shared durable media
 reservation, state transitions, reads, recovery claims, publication release,
 and pending projections use the same pool through
 `src/core/durable_media_repository.py`, with audio/image compatibility exports
-retained by the facade.
+retained by the facade. Classification insertion, ordered message association,
+protocol metadata, and existence queries use the same pool through
+`src/core/classification_repository.py`, with compatibility exports retained by
+the facade.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -529,6 +532,9 @@ they limit release verification and future evolution decisions.
 - Durable transcription and image-extraction persistence:
   \`src/core/durable_media_repository.py\`, with compatibility exports retained
   by \`src/core/db.py\`.
+- Classification persistence, ordered message association, protocol metadata,
+  and existence queries: \`src/core/classification_repository.py\`, with
+  compatibility exports retained by \`src/core/db.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through

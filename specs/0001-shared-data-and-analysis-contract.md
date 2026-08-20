@@ -1,6 +1,6 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024 e 0025 corrigiram a paridade da taxonomia no prompt e a fronteira de privacidade dos logs; decisões de produto registradas abaixo
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; decisões de produto registradas abaixo
 - **Versão:** 1.4
 - **Prioridade/Fase:** P0 / baseline de requisitos
 - **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024 e 0025
@@ -31,6 +31,14 @@ persistência da classificação não foram alterados.
 Issue 0025 estende essa fronteira ao parser normal do webhook: o diagnóstico de
 extração preserva somente presença, tipo e caminho de origem, sem registrar
 valores de mensagem/contato, URLs, segredos ou corpo bruto.
+
+**Nota estrutural (2026-08-20):** o issue 0032 isolou a persistência de
+classificações, vínculos ordenados de mensagens, atualização de protocolo e
+consultas de existência em `src/core/classification_repository.py`. A fachada
+`src/core/db.py` preserva os exports assíncronos e mantém o pool único, a
+verificação de schema e os primitives compartilhados; não houve alteração de
+schema, identidade UUIDv7, idempotência, transação, contrato de IA, protocolo,
+privacidade ou semântica histórica.
 
 ## Contrato de dados e integridade
 

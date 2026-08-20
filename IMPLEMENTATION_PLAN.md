@@ -51,12 +51,12 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031, 0032). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0031,
-  2026-08-20) passed compileall, strict Pyright, offline pytest (**216 passed,
+  PostgreSQL-marked family. The latest recorded full execution (issue 0032,
+  2026-08-20) passed compileall, strict Pyright, offline pytest (**218 passed,
   69 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
-  (**69 passed, 216 deselected**). The 69 offline skips are expected missing
+  (**69 passed, 218 deselected**). The 69 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
 - **[completed] DigiSac contact persistence boundary** (issue 0028; SPEC-0008).
   Contact upsert/source precedence, atomic full-backfill publication, hydration
@@ -101,6 +101,17 @@ currently in progress._
   Alembic head `0020_cycle_contact_provenance`, and PostgreSQL pytest (**69
   passed, 216 deselected**). This is local/disposable evidence and does not
   prove provider, Redis, deployment, or production behavior.
+- **[completed] Classification persistence boundary** (issue 0032; SPEC-0001).
+  Classification insertion, ordered message association, protocol updates, and
+  existence queries now live in `src/core/classification_repository.py`.
+  `src/core/db.py` remains the single pool, schema-capability, and
+  compatibility-facade owner; UUIDv7, conditional idempotency, transaction,
+  JSONB snapshot, protocol, and history semantics were unchanged. The
+  canonical runner passed compileall, strict Pyright, offline pytest (**218
+  passed, 69 skipped**), Alembic head `0020_cycle_contact_provenance`, and
+  PostgreSQL pytest (**69 passed, 218 deselected**). This is local/disposable
+  evidence and does not prove provider, Redis, deployment, or production
+  behavior.
 
 ### Implemented, with bounded verification only
 
@@ -117,8 +128,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **285 tests**; the latest issue-0031
-  run passed **216 tests** and skipped the 69 PostgreSQL-dependent tests without
+- The current canonical collection contains **287 tests**; the latest issue-0032
+  run passed **218 tests** and skipped the 69 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
