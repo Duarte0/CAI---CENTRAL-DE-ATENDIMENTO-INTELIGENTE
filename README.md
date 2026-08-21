@@ -422,6 +422,28 @@ não mapeadas de Redis ou servidor não têm um envelope de negócio estável.
 | `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo. |
 | `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo específico. |
 
+As oito rotas acima são a superfície HTTP operacional original e continuam sem
+autenticação adicional nas consultas. A administração da identidade Acessórias
+é uma superfície interna separada, com seis operações autenticadas por
+`Authorization: Bearer` usando `ADMIN_API_TOKEN`:
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/admin/acessorias/identity-links` | Triagem paginada de vínculos e evidências sanitizadas. |
+| `GET` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity` | Projeção segura de um contato canônico. |
+| `GET` | `/admin/acessorias/companies` | Busca paginada de empresas presentes e ativas. |
+| `POST` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm` | Confirmação idempotente de um par explícito. |
+| `POST` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject` | Rejeição idempotente com histórico de auditoria. |
+| `POST` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery` | Redescoberta determinística sobre fatos locais. |
+
+As seis rotas administrativas retornam somente IDs externos, estados, contagens
+e timestamps seguros. PostgreSQL é a autoridade dos comandos: o replay da
+mesma chave converge para o mesmo resultado, a reutilização incompatível da
+chave retorna conflito e locks por contato impedem transições duplicadas sob
+concorrência. Elas não chamam providers ou Redis, não alteram resolução
+histórica de ciclos e não criam Requests. Nenhuma UI administrativa é montada;
+SPEC-0013 continua uma proposta não ativa, bloqueada por autorização de produto.
+
 As consultas estão montadas sem prefixo de versão. `/v1/` e `/v2/` permanecem
 somente como política de compatibilidade futura; não são aliases nem rotas
 montadas neste checkout.
@@ -515,11 +537,11 @@ npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
-depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
+depende de uma flag no `.env`. Em uma execução histórica de 2026-08-20, a
 etapa offline produziu **224 passed, 69 skipped** e a etapa PostgreSQL
 descartável **69 passed, 224 deselected**; os skips offline exigem
 `CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
-produção.
+produção. O baseline atual está registrado abaixo, na execução do issue 0040.
 
 O smoke test live do webhook é opt-in e requer uma API local deliberadamente
 iniciada. Ele preserva o payload sintético e o endpoint local existentes:
@@ -558,7 +580,7 @@ temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
-Na execução observada do runner em 2026-08-20, a etapa offline produziu
+Em uma execução histórica observada do runner em 2026-08-20, a etapa offline produziu
 **224 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 224
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua

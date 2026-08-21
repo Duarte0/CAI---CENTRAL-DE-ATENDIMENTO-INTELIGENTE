@@ -408,6 +408,10 @@ deletion, if ever needed, is performed case by case by direct PostgreSQL query.
 
 Implemented routes include:
 
+The first eight routes below are the original operational HTTP surface. The
+last six are a separate internal SPEC-0012 administration surface and require
+Bearer `ADMIN_API_TOKEN`; they are not public API operations.
+
 | Route | Purpose |
 | --- | --- |
 | \`POST /webhook/digisac\` | Authenticated production webhook ingestion. |
@@ -498,10 +502,12 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **203 passed, 68 skipped** offline and **68 passed, 203 deselected** in
-  PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
-  replica, deployment, or production availability or release readiness.
+  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-21
+  evidence is Alembic `0022_identity_discovery_command`, **238 passed, 76
+  skipped** offline, and **76 passed, 238 deselected** in PostgreSQL; static and
+  disposable evidence does not prove Redis, DigiSac, Groq, secret-manager
+  provisioning, replicas, deployment, or production availability or release
+  readiness. The older `0020`/`203+68` result is historical evidence only.
 - The runner's offline stage does not select a finalization setting and removes
   the test database prerequisite before execution; only the PostgreSQL stage
   receives the runner-owned disposable database URL.
@@ -517,6 +523,13 @@ records these delivery limitations:
   replacement debug route or raw-payload contract exists.
 - Issue `0025` removes extracted webhook values from normal logs while
   preserving safe event, presence/type, and source metadata.
+- SPEC-0012 and issues `0038`–`0040` provide six authenticated internal
+  `/admin/acessorias` operations. They expose sanitized projections and
+  PostgreSQL-authoritative idempotent commands/discovery; same-key retries
+  converge, incompatible key reuse conflicts, and contact locking prevents
+  duplicate concurrent transitions. They do not call providers or Redis, create
+  Requests, or mutate historical cycle resolution. No SPEC-0013 administrative
+  UI is implemented or authorized.
 - DigiSac Contacts full backfill is implemented under issue `0014` as an
   internal, typed acquisition and transactional PostgreSQL publication. It
   supports a validated one-page response and `page=N` fallback with global
@@ -586,8 +599,7 @@ they limit release verification and future evolution decisions.
   \`src/core/digisac_directory.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0019_acessorias_request_creation.py\` through
-  \`0021_identity_admin_commands.py\`.
+  \`0022_identity_discovery_command.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.

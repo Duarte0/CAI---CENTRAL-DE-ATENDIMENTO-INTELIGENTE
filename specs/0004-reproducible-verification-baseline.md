@@ -1,45 +1,55 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
 - **Status:** implementado; baseline canônico e verificação operacional concluídos
-- **Versão:** 1.6
+- **Versão:** 1.7
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
 
+A evidência canônica mais recente do checkout foi registrada no issue 0040 em
+2026-08-21: compileall e Pyright estrito passaram; a etapa offline teve **238
+passed, 76 skipped**; Alembic atingiu
+`0022_identity_discovery_command`; e a etapa PostgreSQL descartável teve **76
+passed, 238 deselected**. Os skips são exclusivamente a política explícita de
+não configurar `CAI_TEST_DATABASE_URL` na etapa offline. Essa evidência local e
+descartável não comprova Redis, providers, secret manager, deployment ou
+produção. As contagens e revisões abaixo são histórico datado, não o baseline
+atual.
+
 O baseline foi implementado em 2026-08-09. Os módulos de teste
 são rastreáveis, o `conftest.py` não seleciona um modo alternativo e
 `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
-fornece a URL exata ao subprocesso PostgreSQL. A execução histórica mais
-recente registrada nesta especificação (issue 0016, 2026-08-14) produziu **177 passed, 56 skipped** na
+fornece a URL exata ao subprocesso PostgreSQL. A execução histórica registrada
+nesta especificação (issue 0016, 2026-08-14) produziu **177 passed, 56 skipped** na
 etapa offline, **56 passed, 177 deselected** na etapa PostgreSQL e zero
 diagnósticos no Pyright. Os 48 skips pertencem apenas à etapa offline, onde o
 banco deliberadamente não é fornecido.
 Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
 do banco descartável somente na etapa PostgreSQL.
 
-A execução canônica anterior, registrada no issue 0030 em 2026-08-20,
+Uma execução histórica registrada no issue 0030 em 2026-08-20,
 passou compileall, Pyright estrito, **215 testes offline e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL, 215 desselecionados**.
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 
-A execução canônica anterior, registrada no issue 0031 em 2026-08-20,
+Uma execução histórica registrada no issue 0031 em 2026-08-20,
 passou compileall, Pyright estrito, **216 testes offline e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL, 216 desselecionados**.
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 
-A execução canônica mais recente, registrada no issue 0032 em 2026-08-20,
+Uma execução histórica registrada no issue 0032 em 2026-08-20,
 passou compileall, Pyright estrito, **218 testes offline e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL, 218 desselecionados**.
 Os resultados continuam sendo evidência local/descartável e não comprovam
 Redis, fornecedores, réplicas, deployment ou produção.
 
-O issue 0035 adicionou cobertura direta do módulo de contrato IA e preservou
+A verificação histórica do issue 0035 adicionou cobertura direta do módulo de contrato IA e preservou
 os testes de integração do worker para opções da chamada Groq, truncamento e
 resposta vazia. Sua verificação canônica passou compileall, Pyright estrito,
 **222 testes offline aprovados e 69 skips**, Alembic
@@ -47,7 +57,7 @@ resposta vazia. Sua verificação canônica passou compileall, Pyright estrito,
 desselecionados**. Os resultados são locais/descartáveis e não afirmam
 disponibilidade de provider, Redis ou produção.
 
-A execução canônica mais recente, registrada no issue 0036 em 2026-08-20,
+Uma execução histórica registrada no issue 0036 em 2026-08-20,
 passou compileall, Pyright estrito, **224 testes offline aprovados e 69 skips**,
 Alembic `0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 224
 desselecionados**. Os resultados são locais/descartáveis e não afirmam
@@ -96,4 +106,10 @@ hostname interno `postgres-test:5432` sem tocar em outros projetos Compose.
 
 ## Decisão registrada
 
-O runner local versionado é o mecanismo canônico antes de qualquer deploy. GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não é necessário agora. A lista canônica inclui compileall, Pyright sem diagnósticos, a suíte offline e a família PostgreSQL em PostgreSQL 16 descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional. A execução mais recente registrada em 2026-08-14 passou nas etapas estáticas, offline, conectividade, Alembic e PostgreSQL; o teste live continua opt-in.
+O runner local versionado é o mecanismo canônico antes de qualquer deploy.
+GitHub Actions ou serviço externo de CI pode ser adicionado futuramente, mas não
+é necessário agora. A lista canônica inclui compileall, Pyright sem
+diagnósticos, a suíte offline e a família PostgreSQL em PostgreSQL 16
+descartável com `CAI_TEST_DATABASE_URL`, incluindo a fatia operacional. A
+evidência mais recente registrada é a do issue 0040 em 2026-08-21; o teste live
+continua opt-in.

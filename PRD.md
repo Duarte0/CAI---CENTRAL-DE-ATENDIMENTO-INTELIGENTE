@@ -35,10 +35,10 @@ The implementation establishes these technical actors:
 
 The system has one internal operator and is not exposed to external or
 third-party API consumers. Existing public query endpoints do not require
-login, API keys, JWTs, or a separate authorization layer. The internal
-Acessórias identity-triage routes introduced by SPEC-0012 are a separate
-authenticated administrative surface using `ADMIN_API_TOKEN`; they are not
-public consumer endpoints.
+login, API keys, JWTs, or a separate authorization layer. The six internal
+Acessórias identity-administration operations introduced by SPEC-0012 are a
+separate authenticated administrative surface using `ADMIN_API_TOKEN`; they
+are not public consumer endpoints and no administrative UI is mounted.
 
 ## 3. Product goals
 
@@ -195,15 +195,20 @@ Raw and normalized phone/email values are both preserved.
 PostgreSQL is the local durable authority; Redis is never the identity or
 directory authority.
 
-Issue 0038 implements the read-only first slice of SPEC-0012. The three
-`/admin/acessorias` GET routes expose bounded PostgreSQL projections for
-identity-link triage, one canonical contact, and present/active companies. They
-use opaque scope-bound cursors and return only stable IDs, safe display names,
-states, availability, evidence categories/counts/timestamps, and transition
-metadata. They do not expose phone/email/evidence values and do not call
-providers, Redis, discovery, hydration, synchronization, or Request code.
-Confirmation, rejection, and discovery commands remain separate follow-up
-increments.
+Issues 0038–0040 implement the complete six-operation SPEC-0012 surface under
+`/admin/acessorias`: three bounded GET projections for identity-link triage, one
+canonical contact, and present/active companies; idempotent confirmation and
+rejection commands; and deterministic identity discovery. The routes require
+Bearer `ADMIN_API_TOKEN`, use opaque scope-bound cursors where applicable, and
+return only stable IDs, safe display names, states, availability, evidence
+categories/counts/timestamps, and transition metadata. They do not expose
+phone/email/evidence values or call providers, Redis, discovery from reads,
+hydration, synchronization, or Request code. PostgreSQL is authoritative for
+command idempotency: same-key retries converge, incompatible key reuse is a
+conflict, and contact serialization prevents duplicate transitions under
+concurrency. Administrative discovery does not call providers or Redis, create
+Requests, or mutate historical cycle resolution. SPEC-0013 remains a
+non-active UI proposal pending product authorization.
 
 Identity distinguishes technical match evidence, persisted contact-company
 links, audited link transitions, and the resolution used by a conversation/
@@ -300,10 +305,18 @@ The current HTTP surface is:
 | `GET /conversations/{conversation_id}/cycles` | List persistent cycles for a conversation. |
 | `GET /cycles/{cycle_id}/status` | Return a persistent cycle record. |
 | `GET /cycles/{cycle_id}/result` | Return a persistent cycle result. |
+| `GET /admin/acessorias/identity-links` | Authenticated identity-link triage projection. |
+| `GET /admin/acessorias/contacts/{digisac_contact_external_id}/identity` | Authenticated canonical-contact identity projection. |
+| `GET /admin/acessorias/companies` | Authenticated present/active company search. |
+| `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm` | Authenticated idempotent confirmation of one explicit pair. |
+| `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject` | Authenticated idempotent rejection with audit history. |
+| `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery` | Authenticated idempotent deterministic discovery over local facts. |
 
 The mounted conversation and cycle query routes are currently unversioned.
 `/v1/` and `/v2/` remain future compatibility policy only; they are not aliases
-or implemented routes in this checkout.
+or implemented routes in this checkout. The first eight rows are the original
+operational HTTP surface; the six `/admin/acessorias` rows are internal and
+Bearer-protected, not public API operations.
 
 Normal webhook processing returns `202`. Safely ignored events return `200` with
 an ignore reason. Missing conversations, cycles, or unavailable results return
@@ -374,18 +387,18 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`–`0022`, `0026`, and `0038` added the Acessórias directory, DigiSac contact identity
+issues `0012`–`0022`, `0026`, and `0038`–`0040` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
 resolution, stable-ID department mapping, and conservative Request transport
-classification. The observed local runner evidence on 2026-08-17 is:
+classification. The observed local runner evidence on 2026-08-21 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 203 passed, 68 skipped (the skips are deliberately absent
+- offline pytest: 238 passed, 76 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0020_cycle_contact_provenance` applied and verified on the runner target;
+- Alembic: `0022_identity_discovery_command` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 68 passed, 203 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 76 passed, 238 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, dependent image wake-up, and
   stable-ID department mapping with cycle-scoped audited snapshots, plus durable
@@ -432,7 +445,11 @@ The PRD is derived from:
   `src/core/message_filter.py`, `src/core/media.py`, and
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
-  `0001_initial` through `0020_cycle_contact_provenance`;
+  `0001_initial` through `0022_identity_discovery_command`;
+- authenticated identity administration: `src/api/admin_routes.py`,
+  `src/core/identity_admin.py`, `src/core/identity_resolution.py`, Alembic
+  revisions `0021_identity_admin_commands` and `0022_identity_discovery_command`,
+  and SPEC-0012;
 - Acessórias provider adapters and transient coordination:
   `src/core/acessorias_directory.py`, `src/core/acessorias_requests.py`, and
   `src/core/provider_coordination.py`;
