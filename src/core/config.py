@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     acessorias_api_token: Optional[str] = None
     acessorias_api_base_url: str = "https://api.acessorias.com"
     webhook_secret: Optional[str] = None
+    admin_api_token: Optional[str] = None
 
     # Database & Cache
     redis_url: str = "redis://localhost:6379"
@@ -115,6 +116,16 @@ class Settings(BaseSettings):
             return False
         return value
 
+    @field_validator("admin_api_token")
+    @classmethod
+    def validate_admin_api_token(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("ADMIN_API_TOKEN must not be empty")
+        return normalized
+
     @field_validator(
         "digisac_history_initial_delay_seconds",
         "digisac_history_request_timeout_seconds",
@@ -191,3 +202,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def require_admin_api_token() -> str:
+    """Return the configured admin secret or fail closed at service startup."""
+    token = settings.admin_api_token
+    if not token:
+        raise RuntimeError(
+            "ADMIN_API_TOKEN is required to start the authenticated administrative API"
+        )
+    return token

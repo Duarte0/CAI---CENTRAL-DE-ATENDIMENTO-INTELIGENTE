@@ -13,12 +13,6 @@ class MemoryRedis:
         self.values[key] = value
         return True
 
-    async def setex(self, key, ttl, value):
-        self.values[key] = value
-
-    async def exists(self, key):
-        return int(key in self.values)
-
 
 @pytest.mark.asyncio
 async def test_try_mark_processed_is_atomic():

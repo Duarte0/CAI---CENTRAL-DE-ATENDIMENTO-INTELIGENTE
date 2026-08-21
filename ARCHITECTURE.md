@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, and queries. | Writes PostgreSQL and Redis. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, and authenticated identity triage/commands. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -64,7 +64,26 @@ flowchart LR
 The application uses one PostgreSQL connection pool per process. Database
 initialization verifies the Alembic schema and does not create or mutate
 tables. Redis is not the authoritative store for durable classifications,
-media results, or department mapping state.
+media results, or department mapping state. The pool lifecycle and schema
+verification remain in `src/core/db.py`; DigiSac contact persistence and
+hydration use the same pool through the focused internal
+`src/core/digisac_contact_repository.py` boundary. Conversation-cycle
+persistence and recovery use the same pool through
+`src/core/conversation_cycle_repository.py`. Ticket-assignment history and
+assignment-name projection use the same pool through
+`src/core/ticket_assignment_repository.py`. `src/core/db.py` retains
+compatibility exports for all focused repositories. Shared durable media
+reservation, state transitions, reads, recovery claims, publication release,
+and pending projections use the same pool through
+`src/core/durable_media_repository.py`, with audio/image compatibility exports
+retained by the facade. Classification insertion, ordered message association,
+protocol metadata, and existence queries use the same pool through
+`src/core/classification_repository.py`, with compatibility exports retained by
+the facade. DigiSac directory cache persistence, sync state, and user-name
+lookup use the same pool through `src/core/digisac_directory_repository.py`,
+with compatibility exports retained by the facade. The provider-facing
+`src/core/digisac_directory.py` retains authentication, pagination, transient
+retry, synchronization locking, and periodic orchestration.
 
 ## 2.1 Acessórias architecture and delivery boundary
 
@@ -90,6 +109,7 @@ flowchart LR
     DM --> FR[Durable Request operation]
     FC[Persisted CAI classification/cycle] --> IR
     FC --> FR
+    P --> ADM[Authenticated admin reads and commands]
 \`\`\`
 
 \`contact.id\` is the canonical DigiSac-contact external identity.
@@ -109,6 +129,20 @@ DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
 uses sanitized fingerprints, while raw and normalized directory identifiers
 remain in their canonical foundation records.
 
+SPEC-0012 and issues 0038–0040 add a separate administrative boundary at
+`/admin/acessorias`. Its bearer token is `ADMIN_API_TOKEN`, validated before
+application startup completes. `src/api/admin_routes.py` performs only HTTP
+authentication/validation and response projection; `src/core/identity_admin.py`
+performs bounded PostgreSQL reads with deterministic, signed cursors, while
+`src/core/identity_resolution.py` owns contact-locked confirmation/rejection and
+discovery transactions. The projection and command responses expose stable
+external IDs, safe state/source/timestamp metadata, and no phone/email values,
+raw evidence, conversation content, provider calls, Redis, hydration, sync,
+cycle updates, or Request operations. Command keys are hashed in the PostgreSQL
+`identity_admin_commands` ledger and are never returned or written to audit
+metadata. Discovery reuses that ledger under `identity_discovery` and never
+mutates historical cycle resolution.
+
 Department mapping uses the cycle-applicable DigiSac department from assignment
 history, selected only within the persisted `cycle_started_at` through
 `ticket_closed_at` interval and ordered by timestamp/ID, with an explicit
@@ -118,14 +152,17 @@ company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
 Request operation runs only after a persisted valid
 classification, confirmed identity, and mapping; issues 0017–0019, 0021–0022,
-and 0026 give it durable one-cycle uniqueness, claim/reconciliation, failure
-state, and shared in-process
+0026, and structural boundary issues 0034 and 0036 give it durable one-cycle
+uniqueness, claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start; the
 persisted payload is loaded and validated before `post_started_at`, and a
 pre-provider payload failure remains retryable without a false marker;
 ordinary connection, timeout, and protocol failures remain uncertain and cannot
-roll back a completed classification or trigger a second POST.
+roll back a completed classification or trigger a second POST. The provider
+payload/outcome contract and HTTP adapter are owned by
+`src/core/acessorias_request_provider.py`; `src/core/acessorias_requests.py`
+retains only durable Request operation orchestration and compatibility exports.
 
 ## 3. Inbound webhook flow
 
@@ -203,6 +240,14 @@ Important key families include:
 - \`processed:*\` for temporary webhook idempotency;
 - TTL-based \`ia_status:*\` and \`ia_result:*\` compatibility views.
 
+The former buffer/debounce families are not application paths. Issue 0037's
+manual \`scripts/redis_residue_cleanup.py\` command inventories those explicit
+families with Redis/PostgreSQL state before deletion, removes only reviewed
+orphaned keys one at a time, and retains the ambiguous \`ia_processing\` list.
+It does not alter durable PostgreSQL state or the active queue/dead-letter
+families above. The historical \`src/utils/backfill_redis_history.py\` utility
+remains available because migration/backfill code is not inferred to be dead.
+
 ## 5. Finalization modes
 
 Persistent DigiSac-history finalization is the only supported mode. Ticket
@@ -277,6 +322,10 @@ transcription model, and updates \`message_transcriptions\`. Transient provider
 failures honor \`Retry-After\` and durable backoff, remaining \`pending\` beyond
 the classification worker's attempt limit. Permanent audio failures go to the
 dead-letter and only persisted transient failures are recovered automatically.
+Queue and dead-letter entries are deduplicated by message ID; recovery retains
+one safety copy until a non-empty transcription is persisted. Failure logs and
+retry metadata use sanitized categories rather than provider bodies or signed
+URLs.
 Terminal audio failure leaves a safe marker in the context and can produce
 \`completed_with_warnings\`.
 
@@ -298,7 +347,10 @@ retry loops during quota or service failures.
 ## 8. Context and IA contract
 
 The context pipeline is implemented in \`finalization.py\`, \`models.py\`, and
-\`ia_worker.py\`.
+\`ia_worker.py\`. The model-facing classification contract is isolated in
+\`src/core/ia_classification.py\`; it contains only prompt construction,
+response recovery, validation, normalization, and sanitized parser diagnostics.
+The worker remains the provider invocation and lifecycle orchestration boundary.
 
 - Client and attendant messages remain in chronological order.
 - Attendant messages provide context but are not the classification target.
@@ -329,7 +381,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0020_cycle_contact_provenance\`. The main data groups
+Alembic owns the schema through \`0022_identity_discovery_command\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -340,7 +392,7 @@ are:
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
 | DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
-| Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, and immutable per-cycle outcomes. |
+| Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\`, \`identity_admin_commands\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, immutable per-cycle outcomes, and PostgreSQL command idempotency. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, canonical ticket-contact provenance, and identity-resolution linkage. |
 | Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. |
@@ -366,6 +418,12 @@ Implemented routes include:
 | \`GET /conversations/{conversation_id}/cycles\` | Persistent cycle list. |
 | \`GET /cycles/{cycle_id}/status\` | Persistent cycle status. |
 | \`GET /cycles/{cycle_id}/result\` | Persistent cycle result. |
+| \`GET /admin/acessorias/identity-links\` | Authenticated identity-link triage projection. |
+| \`GET /admin/acessorias/contacts/{digisac_contact_external_id}/identity\` | Authenticated canonical-contact identity projection. |
+| \`GET /admin/acessorias/companies\` | Authenticated present/active company search. |
+| \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm\` | Authenticated, idempotent confirmation of one explicit contact/company pair. |
+| \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject\` | Authenticated, idempotent rejection with preserved audit history. |
+| \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery\` | Authenticated, idempotent deterministic discovery over local PostgreSQL facts. |
 
 The webhook normally returns \`202\`; safely ignored events return \`200\` with an
 ignore reason. Missing persisted entities return \`404\`. There is no webhook
@@ -467,8 +525,9 @@ records these delivery limitations:
 - DigiSac–Acessórias identity resolution is implemented under issue `0015` as
   an internal PostgreSQL capability. It preserves sanitized evidence, audited
   many-to-many links, immutable cycle outcomes, and controlled `manual_db`
-  confirmation; it does not add an HTTP route, fuzzy matching, or provider
-  writes.
+  confirmation; the domain capability itself does not add a public or mutation
+  route, fuzzy matching, or provider writes. The separate SPEC-0012 read-only
+  administrative projection is implemented under issue `0038`.
 - DigiSac–Acessórias department mapping is implemented under issues `0016` and
   `0020` as an internal PostgreSQL capability. It preserves stable-ID rule
   versions and transitions, validates the current company-department relation
@@ -478,7 +537,9 @@ records these delivery limitations:
   implemented separately under issue `0017`.
 
 - Durable Acessórias Request creation and preparation are implemented under issues
-  `0017`–`0019`, `0021`–`0022`, and `0026`. They resolve the canonical ticket
+  `0017`–`0019`, `0021`–`0022`, `0026`, and structural boundary issues `0034` and
+  `0036`.
+  They resolve the canonical ticket
   contact and cycle-scoped mapping before any provider call, and recover
   `mapping_missing` only with durable proof that no POST started. The existing
   operation then
@@ -499,22 +560,54 @@ they limit release verification and future evolution decisions.
 - Shared message and context rules: \`src/core/models.py\`,
   \`src/core/message_filter.py\`, \`src/core/media.py\`,
   \`src/core/finalization.py\`.
-- PostgreSQL access and cycle coordination: \`src/core/db.py\`,
-  \`src/core/department_mapping.py\`, and
+- PostgreSQL lifecycle, schema verification, and shared persistence primitives:
+  \`src/core/db.py\`; it remains the single pool/lifecycle and schema-capability
+  owner for the focused persistence boundaries below.
+- DigiSac contact persistence and hydration: \`src/core/digisac_contact_repository.py\`,
+  with compatibility exports retained by \`src/core/db.py\`.
+- Conversation-cycle persistence, membership, metrics, result projection, and
+  selective media unblocking: \`src/core/conversation_cycle_repository.py\`,
+  with compatibility exports retained by \`src/core/db.py\`.
+- Ticket-assignment history and assignment-name projection:
+  \`src/core/ticket_assignment_repository.py\`, with compatibility exports
+  retained by \`src/core/db.py\`.
+- Durable transcription and image-extraction persistence:
+  \`src/core/durable_media_repository.py\`, with compatibility exports retained
+  by \`src/core/db.py\`.
+- Classification persistence, ordered message association, protocol metadata,
+  and existence queries: \`src/core/classification_repository.py\`, with
+  compatibility exports retained by \`src/core/db.py\`.
+- IA model-facing classification contract: \`src/core/ia_classification.py\`;
+  provider invocation, retry/cooldown behavior, cycle orchestration, and
+  result enrichment remain in \`src/workers/ia_worker.py\`.
+- DigiSac directory cache persistence, sync state, and user-name lookup:
+  \`src/core/digisac_directory_repository.py\`, with compatibility exports
+  retained by \`src/core/db.py\`; provider synchronization remains in
+  \`src/core/digisac_directory.py\`.
+- PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through
-  \`0020_cycle_contact_provenance.py\`.
+  \`0021_identity_admin_commands.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
+- Authenticated identity triage, commands, and discovery: \`src/api/admin_routes.py\`,
+  \`src/core/identity_admin.py\`, \`src/core/identity_resolution.py\`,
+  Alembic \`0021_identity_admin_commands.py\` and
+  \`0022_identity_discovery_command.py\`, and SPEC-0012; it consumes
+  PostgreSQL as the sole authority and does not call providers or Redis.
 - DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
   and Alembic \`0018_department_mapping.py\`.
 - Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,
   \`src/core/acessorias_preparation.py\`, \`src/workers/ia_worker.py\`, and
   Alembic \`0019_acessorias_request_creation.py\` plus
   \`0020_cycle_contact_provenance.py\`.
+- Acessórias provider adapters and transient coordination:
+  \`src/core/acessorias_directory.py\`,
+  \`src/core/acessorias_request_provider.py\`, and
+  \`src/core/provider_coordination.py\`.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

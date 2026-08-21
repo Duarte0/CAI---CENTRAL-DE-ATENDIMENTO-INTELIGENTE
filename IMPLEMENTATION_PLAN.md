@@ -19,7 +19,8 @@ currently in progress._
 - **[completed] Durable audio media retry parity** (issue 0027). Audio provider,
   timeout, and connection failures remain pending with durable provider-aware
   backoff beyond the classification retry limit; transient audio dead-letters
-  are reconciled safely and removed only after successful transcription.
+  are reconciled safely, deduplicated by message ID, and removed only after
+  successful non-empty transcription. Persisted failure metadata is sanitized.
 - **[completed] Groq parser logging privacy** (SPEC-0001; issue 0024). Wrapped
   and invalid classification-response diagnostics retain only safe outcome
   categories and bounded structural metadata; raw/partial model output is not
@@ -35,7 +36,7 @@ currently in progress._
   API fallbacks, models, and legacy tests were removed. Targeted search finds
   no active legacy code or setting.
 - **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
-  owns schema through `0020_cycle_contact_provenance`; migrations, backfills,
+  owns schema through `0022_identity_discovery_command`; migrations, backfills,
   import, and audit utilities are versioned. Application code verifies rather
   than creates schema.
 - **[completed] Acessórias preparation and pre-POST recovery** (SPEC-0008–0011;
@@ -50,13 +51,126 @@ currently in progress._
   diagnostic routes/modules are removed and focused tests prove both historical
   paths return `404`.
 - **[completed] Reproducible local verification** (SPEC-0004; issues 0001,
-  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
+  0002, 0004, 0011, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021, 0022, 0026, 0027, 0028, 0029, 0030, 0031, 0032, 0033, 0036). `scripts/verify.py` owns an isolated PostgreSQL 16 Compose
   target, verifies process connectivity and Alembic head, then runs the
-  PostgreSQL-marked family. The latest recorded full execution (issue 0026,
-  2026-08-17) passed compileall, strict Pyright, offline pytest (**203 passed,
-  68 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
-  (**68 passed, 203 deselected**). The 68 offline skips are expected missing
+  PostgreSQL-marked family. The latest recorded full execution (issue 0036,
+  2026-08-20) passed compileall, strict Pyright, offline pytest (**224 passed,
+  69 skipped**), Alembic `0020_cycle_contact_provenance`, and PostgreSQL pytest
+  (**69 passed, 224 deselected**). The 69 offline skips are expected missing
   `CAI_TEST_DATABASE_URL` prerequisites, not database-runtime evidence.
+- **[completed] DigiSac contact persistence boundary** (issue 0028; SPEC-0008).
+  Contact upsert/source precedence, atomic full-backfill publication, hydration
+  claims/transitions, and contact/hydration reads now live in
+  `src/core/digisac_contact_repository.py`. `src/core/db.py` remains the pool,
+  schema-verification, and compatibility-facade owner; no schema, provider,
+  workflow, retry, locking, or persistence semantics changed. The canonical
+  local runner passed compileall, strict Pyright, offline pytest (**213 passed,
+  69 skipped**), Alembic head `0020_cycle_contact_provenance`, and PostgreSQL
+  pytest (**69 passed, 213 deselected**). This is local/disposable evidence and
+  does not prove provider, Redis, deployment, or production behavior.
+- **[completed] Conversation-cycle persistence boundary** (issue 0029;
+  SPEC-0003). Cycle open/close, reads, transitions, claims, publication
+  markers, membership, content-state projections, metrics, result projection,
+  and selective image unblocking now live in
+  `src/core/conversation_cycle_repository.py`. `src/core/db.py` remains the
+  single pool, schema-capability, and compatibility-facade owner; no schema,
+  queue, workflow, transaction, locking, retry, idempotency, provider, or
+  privacy semantics changed. The canonical runner passed compileall, strict
+  Pyright, offline pytest (**214 passed, 69 skipped**), Alembic head
+  `0020_cycle_contact_provenance`, and PostgreSQL pytest (**69 passed, 214
+  deselected**). This is local/disposable evidence and does not prove
+  provider, Redis, deployment, or production behavior.
+- **[completed] Ticket-assignment persistence boundary** (issue 0030;
+  SPEC-0002 and SPEC-0010). Assignment event-key persistence, chronological
+  history, and assignment-plus-directory name projection now live in
+  `src/core/ticket_assignment_repository.py`; `src/core/db.py` remains the
+  single pool, schema-capability, and compatibility-facade owner. The
+  canonical runner passed compileall, strict Pyright, offline pytest (**215
+  passed, 69 skipped**), Alembic head `0020_cycle_contact_provenance`, and
+  PostgreSQL pytest (**69 passed, 215 deselected**). This is local/disposable
+  evidence and does not prove provider, Redis, deployment, or production
+  behavior; assignment and mapping semantics were unchanged.
+- **[completed] Durable-media persistence boundary** (issue 0031; SPEC-0003).
+  Shared transcription and image-extraction reservation, guarded state
+  transitions, reads, due/stale recovery claims, publication release, and
+  pending-state projection now live in `src/core/durable_media_repository.py`.
+  `src/core/db.py` remains the single pool, schema-capability, and
+  compatibility-facade owner; no schema, queue, workflow, retry, locking,
+  provider, or privacy semantics changed. The canonical runner passed
+  compileall, strict Pyright, offline pytest (**216 passed, 69 skipped**),
+  Alembic head `0020_cycle_contact_provenance`, and PostgreSQL pytest (**69
+  passed, 216 deselected**). This is local/disposable evidence and does not
+  prove provider, Redis, deployment, or production behavior.
+- **[completed] Classification persistence boundary** (issue 0032; SPEC-0001).
+  Classification insertion, ordered message association, protocol updates, and
+  existence queries now live in `src/core/classification_repository.py`.
+  `src/core/db.py` remains the single pool, schema-capability, and
+  compatibility-facade owner; UUIDv7, conditional idempotency, transaction,
+  JSONB snapshot, protocol, and history semantics were unchanged. The
+  canonical runner passed compileall, strict Pyright, offline pytest (**218
+  passed, 69 skipped**), Alembic head `0020_cycle_contact_provenance`, and
+  PostgreSQL pytest (**69 passed, 218 deselected**). This is local/disposable
+  evidence and does not prove provider, Redis, deployment, or production
+  behavior.
+- **[completed] DigiSac directory persistence boundary** (issue 0033;
+  SPEC-0001 and SPEC-0002). Directory cache upsert, synchronization state,
+  refresh-due evaluation, and user-name lookup now live in
+  `src/core/digisac_directory_repository.py`. `src/core/db.py` remains the
+  single pool, schema-capability, shared-timestamp, and compatibility-facade
+  owner; provider authentication, pagination, retry, locking, and periodic
+  orchestration remain in `src/core/digisac_directory.py`. No schema,
+  provider, workflow, retry, transaction, assignment, mapping, or privacy
+  semantics changed. The canonical runner passed compileall, strict Pyright,
+  offline pytest (**220 passed, 69 skipped**), Alembic head
+  `0020_cycle_contact_provenance`, and PostgreSQL pytest (**69 passed, 220
+  deselected**). This is local/disposable evidence and does not prove provider,
+  Redis, deployment, or production behavior.
+- **[completed] Neutral provider-coordination boundary** (issue 0034;
+  SPEC-0007 and SPEC-0011). The generic process-local Sliding Window state and
+  admission operation now live in `src/core/provider_coordination.py`; the
+  Directory and Request adapters depend on it directly. Directory admission
+  remains instance-local while Request admission remains shared by sanitized
+  endpoint/configuration key. No provider, retry, payload, durable-operation,
+  privacy, configuration, or schema semantics changed.
+  Focused adapter/boundary tests passed **36 passed, 10 skipped**; the
+  canonical runner passed compileall, strict Pyright, offline pytest (**221
+  passed, 69 skipped**), Alembic head `0020_cycle_contact_provenance`, and
+  PostgreSQL pytest (**69 passed, 221 deselected**). This is local/disposable
+  evidence and does not prove provider, Redis, deployment, or production
+  behavior.
+- **[completed] IA classification-contract boundary** (issue 0035;
+  SPEC-0001, SPEC-0003 and SPEC-0004). Prompt construction, wrapped JSON
+  recovery, four-field validation, intent normalization, and sanitized parser
+  diagnostics now live in `src/core/ia_classification.py`; `IAWorker` retains
+  provider invocation, empty-context handling, error/cooldown behavior,
+  enrichment, persistence, and cycle orchestration. No taxonomy, prompt,
+  privacy, retry, persistence, API, schema, or provider semantics changed.
+  Focused boundary/worker tests passed **27 passed**; the canonical runner
+  passed compileall, strict Pyright, offline pytest (**222 passed, 69
+  skipped**), Alembic head `0020_cycle_contact_provenance`, and PostgreSQL
+  pytest (**69 passed, 222 deselected**). This is local/disposable evidence
+  and does not prove provider, Redis, deployment, or production behavior.
+- **[completed] Acessórias Request provider boundary** (issue 0036;
+  SPEC-0011). The provider payload/outcome contract and HTTP adapter now live
+  in `src/core/acessorias_request_provider.py`; durable Request eligibility,
+  operation persistence, claims/leases, pre-POST validation, outcome recording,
+  reconciliation, and compatibility exports remain in
+  `src/core/acessorias_requests.py`. No Request, provider, rate-admission,
+  retry, persistence, schema, configuration, or public-contract semantics
+  changed. Focused provider/Request/preparation/Directory tests passed **41
+  passed, 12 skipped**; the canonical runner passed offline **224 passed, 69
+  skipped** and PostgreSQL **69 passed, 224 deselected**. This is
+  local/disposable evidence and does not prove provider, Redis, deployment, or
+  production behavior.
+- **[completed] Redis residue audit and bounded cleanup** (issue 0037;
+  SPEC-0001 and SPEC-0003). `scripts/redis_residue_cleanup.py` inventories
+  Redis key types, TTLs, queue/dead-letter metrics, ambiguous `ia_processing`,
+  and PostgreSQL cycle/media state before an explicit reviewed allowlist apply.
+  The 2026-08-21 local Compose run removed 857 keys from six orphaned legacy
+  buffer/debounce families, retained all active queues/dead-letters,
+  idempotency/status/result keys, `ia_processing`, and PostgreSQL state, and
+  passed post-cleanup health and inventory checks. This is local runtime
+  evidence only; no production target or provider was used.
 
 ### Implemented, with bounded verification only
 
@@ -73,8 +187,8 @@ currently in progress._
 
 ### Planning signals
 
-- The current canonical collection contains **271 tests**; the latest issue-0026
-  run passed **203 tests** and skipped the 68 PostgreSQL-dependent tests without
+- The current canonical collection contains **293 tests**; the latest issue-0036
+  run passed **224 tests** and skipped the 69 PostgreSQL-dependent tests without
   a configured database.
 - Targeted TODO/placeholder/stub searches found no implementation backlog.
   Remaining `pass` statements are migration or exception-control flow.
@@ -84,6 +198,8 @@ currently in progress._
   smoke request.
 - Issues 0001–0016 are `closed`. Earlier baseline delivery work is complete and
   must not be reopened.
+- Issue 0037 is closed after the reviewed local Redis cleanup; no current
+  source owner was found for the six removed legacy key families.
   Broader classification policy changes remain blocked on product decisions.
 
 ## Priority plan
@@ -228,12 +344,15 @@ currently in progress._
    pre-send failure can enter the bounded retry path; ordinary connection,
    timeout, and protocol failures require `manual_db` reconciliation. Issue
    0017 implements the operation, issue 0018 closes the ambiguous transport
-   gap, and issue 0019 makes Request adapter instances share the configured
+   gap, issue 0019 makes Request adapter instances share the configured
    in-process Sliding Window by provider endpoint/configuration, and issue 0021
    keeps persisted payload-load failures before `post_started_at` retryable
    without a provider call. Issue 0022 classifies an unproven `429` as
    `reconciliation_required`; status and `Retry-After` do not authorize a
    second POST because the provider contract has no non-creation proof signal.
+   Structural issue 0034 places the generic admission primitive in
+   `src/core/provider_coordination.py` without changing this policy or the
+   adapter-specific scopes.
    Milestones A–D supply the declared classification,
    company and department facts. Issue 0026 now executes those preparation
    contracts in order and provides a narrowly gated recovery for the historical
@@ -264,7 +383,27 @@ currently in progress._
    198 deselected**). No provider credential, Redis runtime, deployment, or
    production quota was used or claimed.
 
-6. **[P2 | pending | optional] Milestone F — Request lifecycle
+6. **[P1 | completed locally | implemented] Milestone C.1 — Authenticated
+   identity administration** (SPEC-0012; issues 0038, 0039 and 0040). The read slice
+   provides deterministic, opaque-cursor triage, canonical contact detail, and
+   present/active company search. Issue 0039 adds the protected confirmation and
+   rejection commands, source-derived `admin`/`admin_api` audit metadata,
+   contact serialization, additive Alembic `0021_identity_admin_commands`, and
+   PostgreSQL command-key idempotency. Issue 0040 adds the deterministic,
+   idempotent identity-discovery command and additive Alembic
+   `0022_identity_discovery_command`, reusing the same ledger with a nullable
+   company target. The boundary returns only stable external IDs and safe
+   state/timestamp metadata; it does not expose phone/email/evidence values,
+   invoke providers/Redis, mutate cycle resolutions, or create Requests.
+
+   Build evidence (2026-08-21): focused admin/OpenAPI/identity tests passed **15 passed,
+   7 skipped**; the canonical disposable runner with `APP_TIMEZONE=UTC`
+   passed compileall, strict Pyright, offline pytest (**238 passed, 76 skipped**),
+   Alembic head `0022_identity_discovery_command`, and PostgreSQL pytest (**76
+   passed, 238 deselected**). No production database, provider credential,
+   Redis runtime, deployment, or secret-manager/network rollout was used.
+
+7. **[P2 | pending | optional] Milestone F — Request lifecycle
    integration.** Outcome: future status, interactions, comments, attachments,
    responsible users, closure, and reopening work. Completion requires a new
    product decision and specification after Request creation is proven; do not
@@ -272,8 +411,8 @@ currently in progress._
 
 ### Specification boundary and next gate
 
-SPEC-0007–SPEC-0011 supply the independently verifiable contracts for
-Milestones A–E. Milestone A is implemented locally under issue 0012. Milestone
+SPEC-0007–SPEC-0012 supply the independently verifiable contracts for
+Milestones A–E and the C.1 administrative slice. Milestone A is implemented locally under issue 0012. Milestone
 B's incremental slice is implemented locally under issue 0013, and its
 full Contacts-backfill slice is implemented locally under issue 0014. Authorized
 provider evidence covers single-page execution and the `page=N` fallback; local
@@ -283,8 +422,11 @@ Milestone C has its testable Brazilian mobile-variant rule and controlled
 manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015 and the preparation integration under issue 0026. Milestone D is implemented under issues 0016, 0020 and 0026; Milestone E is
 implemented under issues 0017–0019, 0021–0022 and 0026 with its Request contract and A–D facts
-available. No specification in this sequence authorizes application changes
-until its own issues/build pass.
+available; structural provider/durable-operation ownership was completed by
+issue 0036. Milestone C.1's read, confirmation/rejection, and discovery
+administrative slices are implemented by issues 0038, 0039, and 0040; discovery
+does not authorize historical-cycle recovery. No specification in this sequence authorizes
+application changes until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
 was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019/0021/0022/0026
@@ -304,7 +446,8 @@ Redis, deployment, or production readiness.
 
 - **[P1 | completed locally | implementation] Restore `financial` taxonomy
   parity in the IA prompt** (PRD §6; SPEC-0001; `src/core/intents.py`;
-  `src/workers/ia_worker.py`; `tests/test_ia_worker_intent.py`). The prompt now
+  `src/core/ia_classification.py`; `src/workers/ia_worker.py`;
+  `tests/test_ia_worker_intent.py`). The prompt now
   names and guides every canonical intent while preserving the four-field
   output contract and current persistence/API semantics. Issue 0010 validation
   passed focused pytest (**16 passed**), offline pytest (**146 passed, 36
@@ -334,8 +477,10 @@ Redis, deployment, or production readiness.
   removal (0006), and persistent implementation documentation reconciliation
   (0007), generated OpenAPI HTTP contract publication (0008), active document
   traceability/evidence reconciliation (0009), financial taxonomy prompt
-  parity (0010), Groq parser logging privacy (0024), and webhook extraction
-  logging privacy (0025).
+  parity (0010), Groq parser logging privacy (0024), webhook extraction
+  logging privacy (0025), IA classification-contract boundary (0035), and
+  Acessórias Request provider boundary (0036), and the bounded Redis residue
+  audit/cleanup (0037).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database
@@ -364,11 +509,12 @@ Redis, deployment, or production readiness.
   PRD §6, `VALID_INTENT_TYPES`, validation, persistence, and OpenAPI, and is
   now present in the model prompt's allowed list and bounded guidance. The
   correction does not decide broader taxonomy semantics.
-- **Groq parser privacy defect (resolved by issue 0024):** `_parse_result()` no
-  longer logs raw or preview response content when recovering wrapped JSON or
-  rejecting invalid output. Tests assert that title, description, reasoning,
-  and unique malformed-response sentinels remain absent while safe outcome
-  metadata remains observable.
+- **Groq parser privacy defect (resolved by issue 0024 and structurally moved
+  by issue 0035):** `src/core/ia_classification.py::parse_result()` no longer
+  logs raw or preview response content when recovering wrapped JSON or rejecting
+  invalid output. Tests assert that title, description, reasoning, and unique
+  malformed-response sentinels remain absent while safe outcome metadata
+  remains observable.
 - **Webhook extraction privacy defect (resolved by issue 0025):**
   `WebhookPayload.extraction_debug()` now returns only bounded presence/type/
   source metadata, and adjacent parser logs sanitize event, origin, and
@@ -403,6 +549,6 @@ Redis, deployment, or production readiness.
 ## Recommended next pass
 
 Milestones C and D are complete under issues 0015, 0016, 0020, and 0026, and Milestone E is
-implemented under issues 0017–0019, 0021–0022, and 0026. Open corrective issue 0023 remains
-before Milestone F can be considered the next optional increment; that
-milestone still requires a new product decision and specification.
+implemented under issues 0017–0019, 0021–0022, 0026, and structural boundary
+issues 0034 and 0036. Milestone F still requires a new product decision and
+specification.

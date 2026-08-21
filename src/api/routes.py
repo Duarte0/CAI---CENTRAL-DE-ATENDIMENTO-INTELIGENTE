@@ -9,12 +9,16 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Mapping, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from src.api.middleware import verify_webhook_signature
+from src.api.admin_routes import admin_router
 from src.api.openapi import install_openapi_contract
 from src.api.webhook_adapter import DigisacMessage, DigisacWebhookAdapter
 from src.api.webhook_adapter import AUDIO_MESSAGE_TYPES, SUPPORTED_MESSAGE_TYPES
-from src.core.config import settings
+from src.core.config import require_admin_api_token, settings
 from src.core.analysis import normalize_protocol
 from src.core.db import (
     close_cycle,
@@ -361,6 +365,7 @@ async def enqueue_image_extraction(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    require_admin_api_token()
     await initialize_database()
     app.state.redis = create_redis_client()
     directory_task = asyncio.create_task(directory_sync_loop())
@@ -380,6 +385,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="Digisac Conversation Analyzer",
               version="1.0.0", lifespan=lifespan)
+app.include_router(admin_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> Response:
+    path = request.url.path
+    if (
+        path.startswith("/admin/acessorias/contacts/")
+        and "/identity-links/" in path
+        and (path.endswith("/confirm") or path.endswith("/reject"))
+    ) or (
+        path.startswith("/admin/acessorias/contacts/")
+        and path.endswith("/identity-discovery")
+    ):
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": "Invalid administrative command body"},
+        )
+    return await request_validation_exception_handler(request, exc)
 
 
 def get_redis(request: Request) -> AsyncRedis:

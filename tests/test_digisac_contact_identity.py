@@ -9,6 +9,8 @@ import requests
 from fastapi import Response
 
 from src.api import routes
+from src.core import db as db_module
+from src.core import digisac_contact_repository as contact_repository
 from src.core.digisac_client import (
     DigisacClient,
     DigisacClientError,
@@ -80,6 +82,42 @@ def contact_payload(**overrides: Any) -> dict[str, Any]:
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.mark.asyncio
+async def test_db_contact_facade_delegates_to_focused_repository(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    async def persist(
+        contact: DigisacContact,
+        *,
+        source: str,
+        observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        captured.update(
+            contact=contact,
+            source=source,
+            observed_at=observed_at,
+        )
+        return {"external_id": contact.external_id}
+
+    monkeypatch.setattr(contact_repository, "upsert_digisac_contact", persist)
+
+    contact = normalize_contact(contact_payload())
+    result = await db_module.upsert_digisac_contact(
+        contact,
+        source="test",
+        observed_at="2026-08-14T12:00:00Z",
+    )
+
+    assert result == {"external_id": "contact-1"}
+    assert captured == {
+        "contact": contact,
+        "source": "test",
+        "observed_at": "2026-08-14T12:00:00Z",
+    }
 
 
 def test_contact_normalization_preserves_raw_and_ascii_digits_without_identity_aliases():

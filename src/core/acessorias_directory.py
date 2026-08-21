@@ -12,10 +12,8 @@ import asyncio
 import hashlib
 import json
 import logging
-from threading import Lock
 import time
 import unicodedata
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -27,6 +25,7 @@ import requests
 
 from src.core.config import settings
 from src.core.db import get_database_pool
+from src.core.provider_coordination import SlidingWindowRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -226,53 +225,6 @@ def _contact_key(company_id: str, name: str, email: str | None, mobile: str | No
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-class _RateLimiter:
-    _shared_states: dict[str, "_RateLimiterState"] = {}
-    _shared_states_lock = Lock()
-
-    def __init__(
-        self,
-        limit_per_minute: int,
-        *,
-        sleep: Callable[[float], None],
-        clock: Callable[[], float],
-        shared_key: str | None = None,
-    ) -> None:
-        if not 1 <= limit_per_minute <= 100:
-            raise ValueError("Acessórias request rate must be between 1 and 100")
-        self.limit = limit_per_minute
-        self.sleep = sleep
-        self.clock = clock
-        if shared_key is None:
-            self._state = _RateLimiterState(limit_per_minute)
-        else:
-            with self._shared_states_lock:
-                state = self._shared_states.get(shared_key)
-                if state is None:
-                    state = _RateLimiterState(limit_per_minute)
-                    self._shared_states[shared_key] = state
-                self._state = state
-
-    def before_request(self) -> None:
-        with self._state.lock:
-            while True:
-                now = self.clock()
-                while self._state.requests and now - self._state.requests[0] >= 60:
-                    self._state.requests.popleft()
-                if len(self._state.requests) < self._state.limit:
-                    self._state.requests.append(now)
-                    return
-                delay = max(0.0, 60 - (now - self._state.requests[0]))
-                self.sleep(delay)
-
-
-class _RateLimiterState:
-    def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self.requests: deque[float] = deque()
-        self.lock = Lock()
-
-
 class AcessoriasDirectoryAdapter:
     """Read-only adapter for the observed Acessórias directory endpoints."""
 
@@ -336,7 +288,7 @@ class AcessoriasDirectoryAdapter:
         self.session = session or requests.Session()
         self.sleep = sleep
         self.clock = clock
-        self.rate_limiter = _RateLimiter(
+        self.rate_limiter = SlidingWindowRateLimiter(
             (
                 rate_limit_per_minute
                 if rate_limit_per_minute is not None

@@ -13,13 +13,45 @@ são rastreáveis, o `conftest.py` não seleciona um modo alternativo e
 `test_ticket_closure.py` cobre o contrato de ciclos persistentes. O
 runner `PYTHONPATH=/app python scripts/verify.py` cria PostgreSQL 16 descartável,
 comprova a conexão do próprio processo, aplica e verifica Alembic head e
-fornece a URL exata ao subprocesso PostgreSQL. A execução mais recente
-registrada (issue 0016, 2026-08-14) produziu **177 passed, 56 skipped** na
+fornece a URL exata ao subprocesso PostgreSQL. A execução histórica mais
+recente registrada nesta especificação (issue 0016, 2026-08-14) produziu **177 passed, 56 skipped** na
 etapa offline, **56 passed, 177 deselected** na etapa PostgreSQL e zero
 diagnósticos no Pyright. Os 48 skips pertencem apenas à etapa offline, onde o
 banco deliberadamente não é fornecido.
 Essa etapa offline não seleciona uma flag de finalização; o runner injeta a URL
 do banco descartável somente na etapa PostgreSQL.
+
+A execução canônica anterior, registrada no issue 0030 em 2026-08-20,
+passou compileall, Pyright estrito, **215 testes offline e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL, 215 desselecionados**.
+Os resultados continuam sendo evidência local/descartável e não comprovam
+Redis, fornecedores, réplicas, deployment ou produção.
+
+A execução canônica anterior, registrada no issue 0031 em 2026-08-20,
+passou compileall, Pyright estrito, **216 testes offline e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL, 216 desselecionados**.
+Os resultados continuam sendo evidência local/descartável e não comprovam
+Redis, fornecedores, réplicas, deployment ou produção.
+
+A execução canônica mais recente, registrada no issue 0032 em 2026-08-20,
+passou compileall, Pyright estrito, **218 testes offline e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL, 218 desselecionados**.
+Os resultados continuam sendo evidência local/descartável e não comprovam
+Redis, fornecedores, réplicas, deployment ou produção.
+
+O issue 0035 adicionou cobertura direta do módulo de contrato IA e preservou
+os testes de integração do worker para opções da chamada Groq, truncamento e
+resposta vazia. Sua verificação canônica passou compileall, Pyright estrito,
+**222 testes offline aprovados e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 222
+desselecionados**. Os resultados são locais/descartáveis e não afirmam
+disponibilidade de provider, Redis ou produção.
+
+A execução canônica mais recente, registrada no issue 0036 em 2026-08-20,
+passou compileall, Pyright estrito, **224 testes offline aprovados e 69 skips**,
+Alembic `0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 224
+desselecionados**. Os resultados são locais/descartáveis e não afirmam
+disponibilidade de provider, Redis, deployment ou produção.
 
 A verificação operacional foi adicionada ao mesmo contrato
 de seleção PostgreSQL. `tests/test_operational_recovery_db.py` usa transporte

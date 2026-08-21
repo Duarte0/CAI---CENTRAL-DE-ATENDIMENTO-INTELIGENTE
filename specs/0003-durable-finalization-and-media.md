@@ -1,9 +1,9 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020
-- **Versão:** 1.4
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037
+- **Versão:** 1.6
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002; issue 0037
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
@@ -20,6 +20,49 @@ o contrato nem afirma verificação de Redis, fornecedores ou produção.
 `cycle_started_at` e `ticket_closed_at` persistidos pelo ciclo. Quando esses
 limites não estão disponíveis, a avaliação dependente permanece bloqueada; não
 se infere uma fronteira a partir de atribuições posteriores.
+
+**Retry de áudio (2026-08-20):** falhas transitórias de provider, timeout e
+conexão permanecem `pending` com agenda durável além do limite de tentativas da
+classificação IA. Dead-letters legados só são reabertos com evidência
+persistida transitória; filas e dead-letters são deduplicados por mensagem, a
+cópia de segurança é mantida até uma transcrição não vazia ser persistida e
+erros armazenados/logados usam categorias sanitizadas. A evidência de execução
+local é registrada no issue 0027 e não afirma Redis, fornecedores ou produção.
+
+**Nota estrutural (2026-08-20):** o issue 0029 isolou a persistência de ciclos,
+membership de mensagens, projeções de resultado/métricas e recuperação seletiva
+de mídia em `src/core/conversation_cycle_repository.py`. A mudança preserva as
+assinaturas assíncronas, o pool único, a verificação do schema e os contratos de
+transação, idempotência, claims, leases, publicação e privacidade; `src/core/db.py`
+mantém o ciclo de vida do PostgreSQL e a fachada de compatibilidade. Não houve
+alteração de schema, filas, workflow, provider ou semântica durável.
+
+**Nota estrutural (2026-08-20):** o issue 0031 isolou a persistência compartilhada
+de transcrições e extrações de imagem em `src/core/durable_media_repository.py`.
+Reservas por mensagem, transições protegidas, leituras, recuperação due-only,
+liberação de publicação e projeção de mídia pendente mantêm as assinaturas da
+fachada, o pool único, as transações, `SKIP LOCKED`, leases e as regras de
+privacidade. Não houve alteração de schema, filas, retry, workflow, provider ou
+semântica durável.
+
+**Nota estrutural (2026-08-20):** o issue 0035 isolou o contrato model-facing
+de classificação em `src/core/ia_classification.py`. A finalização persistente
+continua responsável por contexto, claims, transições, chamada do worker e
+persistência; não houve alteração de ordenação do ciclo, mídia, retry,
+idempotência, filas ou recuperação.
+
+**Auditoria Redis (2026-08-21):** o issue 0037 reconciliou filas, dead-letters,
+marcadores de publicação, agendas, leases e estados PostgreSQL antes e depois
+de remover 857 chaves das seis famílias de buffer/debounce órfãs. A fila de
+imagem, sua dead-letter, `ia_processing` e todo o estado durável permaneceram
+intactos; a operação é manual, allowlisted e não altera o contrato de reserva,
+publicação, retry ou recuperação.
+
+A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
+**216 testes offline aprovados e 69 skips**, Alembic
+`0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 216
+desselecionados** no runner descartável. Os skips e resultados locais não
+comprovam Redis, fornecedores ou produção.
 
 ## Objetivo e não objetivos
 
@@ -63,4 +106,6 @@ Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúd
 
 O modo Redis-buffer, a flag, suas chaves, debounce, tratamento no worker e
 cobertura específica foram removidos. Somente o fluxo por histórico permanece;
-Redis é transporte e coordenação transitória do fluxo persistente.
+Redis é transporte e coordenação transitória do fluxo persistente. Resíduos
+históricos não ativos são tratados somente pela auditoria manual e bounded do
+issue 0037; `ia_processing` não é apagado por inferência.

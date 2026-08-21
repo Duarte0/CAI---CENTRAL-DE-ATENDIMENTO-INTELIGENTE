@@ -34,10 +34,11 @@ The implementation establishes these technical actors:
 | CAI workers | Process classification, audio, and image jobs reliably. | Redis queues, PostgreSQL, DigiSac, and Groq. |
 
 The system has one internal operator and is not exposed to external or
-third-party API consumers. Query endpoints do not require login, API keys,
-JWTs, or a separate authorization layer. The approved Acessórias integration
-is not an HTTP surface for those consumers; its provider credentials and
-access-control requirements will be specified before implementation.
+third-party API consumers. Existing public query endpoints do not require
+login, API keys, JWTs, or a separate authorization layer. The internal
+Acessórias identity-triage routes introduced by SPEC-0012 are a separate
+authenticated administrative surface using `ADMIN_API_TOKEN`; they are not
+public consumer endpoints.
 
 ## 3. Product goals
 
@@ -194,6 +195,16 @@ Raw and normalized phone/email values are both preserved.
 PostgreSQL is the local durable authority; Redis is never the identity or
 directory authority.
 
+Issue 0038 implements the read-only first slice of SPEC-0012. The three
+`/admin/acessorias` GET routes expose bounded PostgreSQL projections for
+identity-link triage, one canonical contact, and present/active companies. They
+use opaque scope-bound cursors and return only stable IDs, safe display names,
+states, availability, evidence categories/counts/timestamps, and transition
+metadata. They do not expose phone/email/evidence values and do not call
+providers, Redis, discovery, hydration, synchronization, or Request code.
+Confirmation, rejection, and discovery commands remain separate follow-up
+increments.
+
 Identity distinguishes technical match evidence, persisted contact-company
 links, audited link transitions, and the resolution used by a conversation/
 cycle. Issue 0015 implements candidate, confirmed, ambiguous, unresolved, and
@@ -227,7 +238,8 @@ and configuration before the POST; this transient coordination state contains
 no token, header, payload, classification content, or PII. The operation stores no
 raw title, description, payload, token, header, provider body, or PII and never
 changes the originating classification. There is no public or admin HTTP
-trigger, and Request lifecycle operations remain outside this increment.
+Request trigger; the administrative identity-triage GET routes do not invoke
+Request operations. Request lifecycle operations remain outside this increment.
 The persisted payload is loaded and validated before `post_started_at`; a
 pre-provider load or validation failure is sanitized as retryable and retains no
 false post-start evidence.
@@ -344,9 +356,10 @@ defined by the schema.
   metrics.
 - Persisted snapshots contain safe metadata and extracted text, not download
   credentials or media binaries.
-- The implemented Acessórias provider adapter centralizes bearer authentication,
-  timeout/retry/rate-limit handling, shared in-process Request admission,
-  parsing, sanitized logs, and test doubles;
+- The implemented Acessórias provider adapters centralize bearer authentication,
+  timeout/retry handling, parsing, sanitized logs, and test doubles; the
+  provider-neutral `src/core/provider_coordination.py` boundary owns transient
+  rate admission and shared in-process Request coordination;
   Authorization headers and real provider tokens must never be persisted or
   logged. No provider credential or production synchronization was used for
   the local implementation evidence.
@@ -361,7 +374,7 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`–`0022` and `0026` added the Acessórias directory, DigiSac contact identity
+issues `0012`–`0022`, `0026`, and `0038` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
 resolution, stable-ID department mapping, and conservative Request transport
 classification. The observed local runner evidence on 2026-08-17 is:
@@ -399,7 +412,7 @@ The product owner has decided the following policies:
 | Decision | Why it matters | Current status |
 | --- | --- | --- |
 | Retention, archival, deletion, and legal/privacy policy | Determines storage jobs, compliance behavior, and schema/lifecycle changes. | Decided — retain indefinitely; no automatic cleanup or archival; manual direct-PostgreSQL deletion only if needed. |
-| API consumer authentication and authorization | Determines whether query endpoints can be exposed beyond trusted internal services. | Decided — single internal operator; no query authentication/authorization; require production `WEBHOOK_SECRET`; specify Acessórias provider access controls before its implementation. |
+| API consumer authentication and authorization | Determines whether query endpoints can be exposed beyond trusted internal services. | Decided — existing public queries remain unauthenticated for the single internal operator; SPEC-0012 administrative identity routes require `ADMIN_API_TOKEN`; production secret/network provisioning remains operational. |
 | Rate limits and external compatibility guarantees | Determines production API protection and versioning commitments. | No rate limiting. The current query routes are unversioned in source; `/v1/` and `/v2/` compatibility remains a future versioning policy and is not claimed as mounted behavior. Webhooks/operations remain unversioned. |
 | SLA targets for webhook acceptance and classification completion | Determines capacity, alerting, and provider fallback design. | Decided — no SLA targets, alerting thresholds, or capacity commitments at this stage. |
 | Long-term Redis-buffer posture | Determines whether to retain, migrate, or deprecate the single-worker legacy path. | Completed — the legacy mode, flag, Redis keys, code paths, and legacy test coverage were removed; persistent history remains. |
@@ -420,6 +433,9 @@ The PRD is derived from:
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
   `0001_initial` through `0020_cycle_contact_provenance`;
+- Acessórias provider adapters and transient coordination:
+  `src/core/acessorias_directory.py`, `src/core/acessorias_requests.py`, and
+  `src/core/provider_coordination.py`;
 - worker behavior: `src/workers/ia_worker.py`, `src/workers/audio_worker.py`,
   and `src/workers/image_worker.py`;
 - configuration and deployment: `src/core/config.py`, `.env.example`,

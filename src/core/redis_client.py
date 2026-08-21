@@ -1,4 +1,3 @@
-from functools import lru_cache
 from typing import Protocol, cast
 
 import redis.asyncio as redis
@@ -10,7 +9,6 @@ class AsyncRedis(Protocol):
     """Subset of the decoded async Redis API used by this application."""
 
     async def aclose(self) -> None: ...
-    async def exists(self, name: str) -> int: ...
     async def get(self, name: str) -> str | None: ...
     async def llen(self, name: str) -> int: ...
     async def lpop(self, name: str) -> str | None: ...
@@ -26,18 +24,6 @@ class AsyncRedis(Protocol):
         ex: int | None = None,
         nx: bool = False,
     ) -> bool | None: ...
-    async def setex(self, name: str, time: int, value: str) -> bool: ...
-
-
-@lru_cache()
-def get_redis_client() -> AsyncRedis:
-    """Factory para obter cliente Redis configurado"""
-    return cast(AsyncRedis, redis.from_url(
-        settings.redis_url,
-        db=settings.redis_db,
-        decode_responses=True,
-        max_connections=settings.redis_max_connections,
-    ))
 
 
 def create_redis_client() -> AsyncRedis:
@@ -52,7 +38,3 @@ def create_redis_client() -> AsyncRedis:
         decode_responses=True,
         max_connections=settings.redis_max_connections,
     ))
-
-
-# Singleton para uso direto
-redis_client = get_redis_client()

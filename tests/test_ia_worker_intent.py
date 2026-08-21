@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.core.intents import VALID_INTENT_TYPES
+from src.core.ia_classification import build_prompt, parse_result
 from src.workers.ia_worker import IAWorker
 
 
@@ -22,7 +23,7 @@ class _FakeCompletions:
 
 
 def test_parse_result_accepts_valid_intent_type():
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         '{"intent_type":"problem","confidence":0.94,"title":"Erro",'
         '"description":"Cliente relata um erro."}'
     )
@@ -31,7 +32,7 @@ def test_parse_result_accepts_valid_intent_type():
 
 
 def test_parse_result_accepts_financial_intent_type():
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         '{"intent_type":"financial","confidence":0.94,"title":"Fluxo de caixa",'
         '"description":"Cliente solicita orientação financeira."}'
     )
@@ -40,7 +41,7 @@ def test_parse_result_accepts_financial_intent_type():
 
 
 def test_parse_result_normalizes_unknown_intent_type():
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         '{"intent_type":"urgent","confidence":0.8,"title":"Urgência",'
         '"description":"Cliente relata urgência."}'
     )
@@ -50,7 +51,7 @@ def test_parse_result_normalizes_unknown_intent_type():
 
 
 def test_parse_result_normalizes_portuguese_case_and_accents():
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         '{"intent_type":"  COBRANÇA ","confidence":0.82,"title":"Cobrança",'
         '"description":"Cliente questiona uma cobrança."}'
     )
@@ -61,7 +62,7 @@ def test_parse_result_normalizes_portuguese_case_and_accents():
 
 def test_parse_result_uses_other_for_invalid_json():
     with pytest.raises(ValueError, match="valid classification JSON"):
-        _worker_without_init()._parse_result("resposta sem JSON")
+        parse_result("resposta sem JSON")
 
 
 def test_parse_result_rejects_truncated_json_instead_of_persisting_it():
@@ -71,12 +72,12 @@ def test_parse_result_rejects_truncated_json_instead_of_persisting_it():
     )
 
     with pytest.raises(ValueError, match="valid classification JSON"):
-        _worker_without_init()._parse_result(response)
+        parse_result(response)
 
 
 def test_parse_result_requires_the_complete_contract():
     with pytest.raises(ValueError, match="campos obrigatórios"):
-        _worker_without_init()._parse_result(
+        parse_result(
             '{"intent_type":"question","confidence":0.9}'
         )
 
@@ -132,12 +133,33 @@ async def test_analyze_rejects_token_truncation():
         await worker._analyze_with_groq("Cliente: Qual a alíquota?", 1)
 
 
+@pytest.mark.asyncio
+async def test_analyze_rejects_empty_response():
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content=""),
+            )
+        ]
+    )
+    worker = _worker_without_init()
+    worker.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletions(response))
+    )
+    worker.model = "openai/gpt-oss-120b"
+    worker.max_tokens = 1000
+
+    with pytest.raises(RuntimeError, match="empty classification response"):
+        await worker._analyze_with_groq("Cliente: Qual a alíquota?", 1)
+
+
 def test_parse_result_extracts_json_after_reasoning_tags(caplog):
     reasoning = "PRIVATE_REASONING_SENTINEL_0024"
     title = "PRIVATE_TITLE_SENTINEL_0024"
     description = "PRIVATE_DESCRIPTION_SENTINEL_0024"
 
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         f'<reasoning>{reasoning}</reasoning>\n'
         f'{{"intent_type":"problem","confidence":0.91,"title":"{title}",'
         f'"description":"{description}"}}'
@@ -159,7 +181,7 @@ def test_parse_result_invalid_response_logs_only_safe_metadata(caplog):
     response = f"{sentinel}: output incompleto do cliente"
 
     with pytest.raises(ValueError, match="valid classification JSON"):
-        _worker_without_init()._parse_result(response)
+        parse_result(response)
 
     assert (
         "Groq response does not contain a complete classification JSON"
@@ -171,7 +193,7 @@ def test_parse_result_invalid_response_logs_only_safe_metadata(caplog):
 
 
 def test_parse_result_extracts_nested_json_from_markdown(caplog):
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         "Resposta final:\n```json\n"
         '{"result":{"intent_type":"billing","confidence":0.83,'
         '"title":"Cobrança","description":"Cliente questiona o valor."}}\n'
@@ -185,7 +207,7 @@ def test_parse_result_extracts_nested_json_from_markdown(caplog):
 
 
 def test_parse_result_handles_braces_inside_json_strings():
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         "<think>comparando campos</think>\n```json\n"
         '{"intent_type":"question","confidence":0.76,'
         '"title":"Uso de {código}","description":"Dúvida sobre o campo."}\n```'
@@ -196,7 +218,7 @@ def test_parse_result_handles_braces_inside_json_strings():
 
 
 def test_prompt_classifies_client_intent_with_both_authors_in_context():
-    prompt = _worker_without_init()._build_prompt("Cliente: Preciso de ajuda\nAtendente: Qual sistema?")
+    prompt = build_prompt("Cliente: Preciso de ajuda\nAtendente: Qual sistema?")
 
     assert 'prefixadas com "Cliente:" ou "Atendente:"' in prompt
     assert "exclusivamente" in prompt
@@ -206,7 +228,7 @@ def test_prompt_classifies_client_intent_with_both_authors_in_context():
 
 
 def test_prompt_intent_taxonomy_matches_shared_canonical_values():
-    prompt = _worker_without_init()._build_prompt("Cliente: Preciso de ajuda")
+    prompt = build_prompt("Cliente: Preciso de ajuda")
     match = re.search(r'"intent_type": "um de: ([^"]+)"', prompt)
 
     assert match is not None
@@ -214,7 +236,7 @@ def test_prompt_intent_taxonomy_matches_shared_canonical_values():
 
 
 def test_prompt_guides_financial_intent_without_changing_payment_precedence():
-    prompt = _worker_without_init()._build_prompt("Cliente: Preciso de orientação")
+    prompt = build_prompt("Cliente: Preciso de orientação")
 
     assert re.search(r'"financial"\s+para questões\s+financeiras gerais', prompt)
     assert '"payment" para pagamento' in prompt
@@ -227,7 +249,7 @@ def test_payment_and_protocol_example_is_not_instructed_as_other():
         "vou te enviar a taxa\nCliente: Boa\nCliente: Pagando\nCliente: Feito\n"
         "Atendente: Perfeito, dando baixa no sistema eu já protocolo"
     )
-    prompt = _worker_without_init()._build_prompt(context)
+    prompt = build_prompt(context)
 
     assert '"payment" para pagamento' in prompt
     assert '"protocol" para protocolo' in prompt
@@ -236,7 +258,7 @@ def test_payment_and_protocol_example_is_not_instructed_as_other():
 
     # Groq may answer with the Portuguese label; the boundary must preserve the
     # business meaning instead of silently collapsing it to ``other``.
-    result = _worker_without_init()._parse_result(
+    result = parse_result(
         '{"intent_type":"pagamento","confidence":0.87,'
         '"title":"Pagamento da taxa da Polo Climatização",'
         '"description":"Cliente confirmou o pagamento da taxa."}'

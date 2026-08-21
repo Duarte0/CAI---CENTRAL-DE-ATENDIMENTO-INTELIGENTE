@@ -264,6 +264,43 @@ async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
 
 
 @pytest.mark.asyncio
+async def test_audio_transient_dead_letter_recovery_keeps_postgres_pending_and_safety_copy():
+    message_id = "audio-transient-dead-letter-db"
+    assert await reserve_transcription(message_id, "safe-ticket", "test-model")
+    assert await set_transcription_status(
+        message_id,
+        "failed",
+        error_message="transient_audio_failure:http_429",
+        expected_statuses=("pending",),
+    )
+
+    dead_letter = json.dumps(
+        {
+            "message_id": message_id,
+            "conversation_id": "safe-ticket",
+            "attempt": 3,
+        }
+    )
+    queue = QueueTransport(
+        [{"message_id": message_id, "conversation_id": "safe-ticket", "attempt": 3}],
+        queued_queue="audio_transcription_dead_letter",
+    )
+    queue.queues["audio_transcription_dead_letter"] = [dead_letter]
+    worker = audio_worker.AudioTranscriptionWorker(queue)
+
+    assert await worker.recover_transient_dead_letters() == 1
+    row = await get_transcription(message_id)
+    assert row is not None
+    assert row["status"] == "pending"
+    assert row["next_attempt_at"] is not None
+    assert {
+        json.loads(raw)["message_id"]
+        for raw in await queue.lrange("audio_transcription_queue", 0, -1)
+    } == {message_id}
+    assert await queue.lrange("audio_transcription_dead_letter", 0, -1) == [dead_letter]
+
+
+@pytest.mark.asyncio
 async def test_successful_image_recovery_wakes_only_its_blocked_cycle(monkeypatch):
     target, _ = await close_cycle(
         conversation_id="recovery-image-target",

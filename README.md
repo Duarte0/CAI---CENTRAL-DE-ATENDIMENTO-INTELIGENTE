@@ -23,7 +23,9 @@ resultado por API.
 - classifica a intenção do cliente com a API da Groq;
 - persiste classificações, mensagens associadas, mídias, ciclos e snapshots no
   PostgreSQL;
-- expõe saúde, filas, status e resultados para operação e auditoria.
+- expõe saúde, filas, status e resultados para operação e auditoria;
+- expõe uma API administrativa interna, somente leitura e autenticada, para
+  triagem de vínculos de identidade Acessórias.
 
 O contrato produzido pela IA contém apenas:
 
@@ -82,6 +84,14 @@ ia_worker
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação.
 
+Falhas transitórias de áudio permanecem `pending` com `next_attempt_at` e
+backoff independente do limite `MAX_RETRY_ATTEMPTS` da classificação IA. O
+worker recupera dead-letters antigos somente quando o erro persistido é
+demonstravelmente transitório, deduplica filas por `message_id` e mantém uma
+cópia de segurança até a persistência de uma transcrição não vazia. Erros
+persistidos e logs usam apenas categorias seguras, sem corpo do provider ou
+URL assinada.
+
 ## Integração Acessórias aprovada
 
 Os issues 0012–0016 implementaram localmente a fundação do diretório durável
@@ -93,6 +103,33 @@ referências `contactId` de mensagens apenas registram hydration individual
 deduplicada para execução posterior. A resolução preserva evidência
 fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
 imutável por ciclo; confirmação continua exclusivamente manual.
+
+O issue 0038 implementa o primeiro slice administrativo da SPEC-0012: as rotas
+`GET /admin/acessorias/identity-links`,
+`GET /admin/acessorias/contacts/{digisac_contact_external_id}/identity` e
+`GET /admin/acessorias/companies` exigem `Authorization: Bearer` com o segredo
+`ADMIN_API_TOKEN`. Elas leem apenas projeções PostgreSQL paginadas, retornam IDs,
+estados, nomes de exibição e resumos de evidência sem valores de telefone/email,
+e nunca executam discovery, hydration, sync, Redis, Request ou providers. O
+serviço falha no startup se o segredo não estiver configurado; provisionamento
+em secret manager e restrição de rede continuam pré-requisitos de deploy.
+
+O issue 0039 acrescenta os comandos autenticados de confirmação e rejeição:
+`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm`
+e `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject`.
+Eles validam somente o par indicado, preservam evidências/transições, derivam
+`admin`/`admin_api` do contexto do servidor e usam a ledger PostgreSQL
+`identity_admin_commands` para replays idempotentes. Não executam discovery,
+providers, Redis, mapeamento, Request ou alterações de resolução histórica.
+
+O issue 0040 acrescenta `POST
+/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery`.
+Ele reutiliza a ledger PostgreSQL com o escopo `identity_discovery` e migration
+aditiva `0022_identity_discovery_command`, executa somente a descoberta
+determinística sobre fatos locais e retorna IDs externos, estado, links seguros,
+contagens e timestamp. Replays não executam discovery novamente; a operação não
+chama providers, Redis, hydration, sync, backfill, mapping, Request nem altera
+resoluções históricas.
 
 O issue 0026 completa a fronteira de preparação: cada ciclo carrega somente o
 `data.contact.id` canônico do snapshot de ticket, resolve a identidade, avalia
@@ -108,9 +145,14 @@ efeito externo é separado por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
 e reconciliação `manual_db`. O payload persistido é carregado e validado antes do
 marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
-provider. Os adapters de Request no mesmo processo compartilham
-o limite Sliding Window por endpoint/configuração antes do POST, sem persistir
-token, header ou payload. Uma `ConnectionError`, timeout ou falha de
+provider. A implementação separa o transporte externo em
+`src/core/acessorias_request_provider.py`; a operação PostgreSQL, os claims,
+reconciliação e a orquestração continuam em `src/core/acessorias_requests.py`,
+que reexporta os contratos do provider para manter os imports existentes. Os
+adapters de Request no mesmo processo usam a fronteira neutra
+`src/core/provider_coordination.py` para compartilhar o limite Sliding Window
+por endpoint/configuração antes do POST, sem persistir token, header ou
+payload. Uma `ConnectionError`, timeout ou falha de
 protocolo comum permanece ambígua e não inicia um segundo POST. Uma resposta
 `429` sem prova documentada de não criação também exige reconciliação e ignora
 `Retry-After` como autorização para novo POST. Telefone, nome,
@@ -165,7 +207,13 @@ binários de mídia não são persistidos no snapshot. Se o contexto ultrapassar
 `IA_CONTEXT_SAFE_INPUT_TOKENS`, ele é dividido sem cortar mensagens sempre que
 possível, resumido por blocos e só então enviado à classificação final.
 
-As categorias de `intent_type` são definidas em `src/core/intents.py`.
+As categorias de `intent_type` são definidas em `src/core/intents.py`. O contrato
+model-facing de classificação — prompts, recuperação/validação do JSON,
+normalização e diagnósticos sanitizados — vive em
+`src/core/ia_classification.py`, sem dependência de provider, Redis,
+PostgreSQL ou estado de ciclo. `src/workers/ia_worker.py` continua responsável
+pela chamada Groq, limites/erros do provider, enriquecimento do resultado,
+persistência e orquestração do ciclo.
 
 ## Persistência
 
@@ -189,6 +237,39 @@ de execução. As principais estruturas são:
   operação externa única por ciclo, payload fingerprintado sem conteúdo bruto,
   claims/leases, recuperação de preparação pré-POST, `SolID`, falhas
   sanitizadas e reconciliação administrativa.
+- `identity_match_evidence`, `identity_company_links` e
+  `identity_company_link_transitions`: fatos duráveis consumidos pela projeção
+  administrativa e pelos comandos de confirmação/rejeição.
+- `identity_admin_commands`: hashes de chaves, fingerprints e resultados
+  sanitizados da idempotência dos comandos administrativos; a chave bruta não é
+  persistida nem retornada.
+
+O ciclo de vida do pool e a verificação do schema permanecem em
+`src/core/db.py`. A persistência de contatos DigiSac e o estado durável de
+hydration ficam isolados em `src/core/digisac_contact_repository.py`, usando o
+mesmo pool e mantendo a fachada assíncrona compatível para os consumidores
+existentes. A persistência de ciclos, membership de mensagens, métricas,
+projeção de resultado e despertar seletivo de mídia ficam isolados em
+`src/core/conversation_cycle_repository.py`, também com exports compatíveis na
+fachada. O histórico idempotente de atribuições e a projeção de nomes de
+departamento/agente ficam isolados em
+`src/core/ticket_assignment_repository.py`, mantendo os exports compatíveis
+da fachada. A persistência durável compartilhada de transcrições e extrações de
+imagem fica isolada em `src/core/durable_media_repository.py`, com os exports
+de áudio/imagem preservados na fachada para API, workers, utilitários e testes.
+A persistência de classificações, vínculos ordenados de mensagens, protocolo e
+consultas de existência fica isolada em
+`src/core/classification_repository.py`, com os exports compatíveis preservados
+em `src/core/db.py`.
+O contrato puro de prompt e resposta da classificação fica isolado em
+`src/core/ia_classification.py`; o worker mantém somente a orquestração da
+chamada Groq e do ciclo.
+A persistência do cache de departamentos/usuários DigiSac, do estado de sync e
+da resolução de nomes fica isolada em
+`src/core/digisac_directory_repository.py`, usando o mesmo pool e preservando
+os exports compatíveis da fachada. O sincronizador
+`src/core/digisac_directory.py` continua dono da autenticação, paginação,
+retry, lock e loop periódico.
 
 Classificações recebem um `public_id` UUIDv7. Campos de listas e snapshots usam
 JSONB, e timestamps duráveis usam `TIMESTAMPTZ`. Não há exclusão automática:
@@ -434,9 +515,11 @@ npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
-depende de uma flag no `.env`. Na execução canônica observada em 2026-08-14, a
-etapa offline produziu **177 passed, 56 skipped**; os skips exigem
-`CAI_TEST_DATABASE_URL` e não comprovam o schema ou o runtime PostgreSQL.
+depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
+etapa offline produziu **224 passed, 69 skipped** e a etapa PostgreSQL
+descartável **69 passed, 224 deselected**; os skips offline exigem
+`CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
+produção.
 
 O smoke test live do webhook é opt-in e requer uma API local deliberadamente
 iniciada. Ele preserva o payload sintético e o endpoint local existentes:
@@ -463,7 +546,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0020_cycle_contact_provenance` e só então
+ao destino, aplica e verifica Alembic `0022_identity_discovery_command` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -475,8 +558,8 @@ temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
-Na execução observada do runner em 2026-08-17, a etapa offline produziu
-**203 passed, 68 skipped** e a etapa PostgreSQL produziu **68 passed, 203
+Na execução observada do runner em 2026-08-20, a etapa offline produziu
+**224 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 224
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
 liberação após falha, agenda futura, recuperação de áudio/imagem sem duplicar
@@ -491,6 +574,26 @@ preparação de identidade/mapping e a recuperação segura de operações
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.
+
+Na validação do issue 0038 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **236 passed, 70 skipped** offline
+e **70 passed, 236 deselected** no PostgreSQL 16 descartável. A execução sem
+esse override preservou um failure preexistente de timezone em
+`tests/test_department_mapping.py`; ele não envolve a API administrativa.
+
+Na validação do issue 0039 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **237 passed, 74 skipped** offline,
+Alembic `0021_identity_admin_commands` e **74 passed, 237 deselected** no
+PostgreSQL 16. A evidência é local e descartável; não comprova Redis, providers,
+secret manager, deployment ou produção.
+
+Na validação do issue 0040 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **238 passed, 76 skipped** offline,
+Alembic `0022_identity_discovery_command` e **76 passed, 238 deselected** no
+PostgreSQL 16. A execução sem o override manteve somente o failure preexistente
+de timezone em `tests/test_department_mapping.py`; a falha não envolve o slice
+administrativo. A evidência é local e descartável; não comprova Redis,
+providers, secret manager, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
@@ -514,6 +617,26 @@ docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 Dead-letters indicam trabalho que exige diagnóstico. Reprocessamentos devem ser
 restritos ao ID afetado: reserve um item, evite duplicá-lo na fila, confirme o
 estado `completed` persistido e só então remova a dead-letter correspondente.
+
+Resíduos das antigas chaves Redis de buffer/debounce podem ser auditados e
+removidos somente por uma operação manual, limitada e revisada. O dry-run
+registra famílias, tipos, TTLs, contagens duráveis e apenas digests de chaves;
+`ia_processing` permanece retido até haver prova de que não contém trabalho
+recuperável:
+
+```bash
+PYTHONPATH=/app python -m scripts.redis_residue_cleanup \
+  --dry-run --report reports/redis-residue-dry-run-YYYY-MM-DD.json
+# revise o relatório antes de executar a allowlist aprovada
+PYTHONPATH=/app python -m scripts.redis_residue_cleanup \
+  --apply --confirm --report reports/redis-residue-dry-run-YYYY-MM-DD.json
+```
+
+O comando só pode apagar as seis famílias explicitamente allowlisted pelo
+issue 0037, uma chave por vez; nunca usa `FLUSHDB`, `FLUSHALL` ou um glob
+genérico. Ele revalida Redis, filas, PostgreSQL, leases, agendas e marcadores
+antes e depois, preservando filas/dead-letters ativos, `processed:*`,
+`ia_status:*`, `ia_result:*` e todo o estado durável PostgreSQL.
 
 Backup:
 

@@ -1,6 +1,6 @@
 # SPEC-0007 — Fundação do diretório externo Acessórias
 
-- **Status:** implementado localmente pelo issue 0012; evidência descartável, sem provider/produção
+- **Status:** implementado localmente pelo issue 0012; boundary estrutural pelo issue 0034; evidência descartável, sem provider/produção
 - **Versão:** 1.1
 - **Prioridade/Fase:** P0 / Milestone A — External Directory Foundation
 - **Rastreabilidade:** PRD §§3, 4, 5.5, 8 e 10; ARCHITECTURE §2.1 e §§8–9; `IMPLEMENTATION_PLAN.md` Milestone A; SPEC-0001 e SPEC-0004
@@ -12,6 +12,11 @@ transacional, CLI interno e doubles determinísticos. O runner descartável
 passou compileall, Pyright estrito, **143 passed, 36 skipped** offline e
 **36 passed, 143 deselected** em PostgreSQL 16; isso não comprova provider,
 Redis ou produção.
+
+**Manutenção estrutural (2026-08-20):** issue 0034 moveu o estado e a
+admissão genérica do Sliding Window para `src/core/provider_coordination.py`.
+O adaptador de Directory continua com escopo local por instância e nenhuma
+regra de limite, retry, autenticação, paginação ou publicação foi alterada.
 
 ## Objetivo e não objetivos
 

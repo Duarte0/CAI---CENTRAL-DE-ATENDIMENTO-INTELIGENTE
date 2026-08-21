@@ -20,6 +20,13 @@ O issue 0014 implementa a aquisição tipada, validação, deduplicação global
 publicação transacional e CLI interna do full backfill; a verificação continua
 local/sintética e descartável, sem credencial ou sincronização de produção.
 
+**Nota estrutural (2026-08-20):** o issue 0028 isolou a persistência de contatos
+e o estado de hydration em `src/core/digisac_contact_repository.py`. A mudança
+preserva as assinaturas assíncronas, o pool, os limites transacionais e os
+contratos de precedência, claims, retry e privacidade; `src/core/db.py` mantém a
+fachada de compatibilidade e o ciclo de vida do PostgreSQL. Não houve alteração
+de schema, identidade canônica, provider ou workflow.
+
 O issue 0015 acrescenta, de forma aditiva, `raw_email` e `normalized_email`
 para permitir a resolução exata prevista na SPEC-0009; esses campos não mudam
 a identidade canônica `contact.id`.
