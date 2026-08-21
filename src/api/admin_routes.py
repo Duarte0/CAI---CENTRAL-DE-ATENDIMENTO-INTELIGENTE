@@ -11,14 +11,21 @@ import re
 from datetime import datetime
 from typing import Any, Literal, NoReturn, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.core.config import require_admin_api_token, settings
 from src.core.identity_admin import (
     get_identity_contact_projection,
     list_active_company_projection,
     list_identity_link_projection,
+)
+from src.core.identity_resolution import (
+    IdentityCommandConflictError,
+    IdentityConflictError,
+    IdentityResolutionError,
+    confirm_identity_link_admin,
+    reject_identity_link_admin,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,6 +126,63 @@ class CompanyListResponse(BaseModel):
 
     items: list[CompanyProjection]
     next_cursor: str | None
+
+
+class IdentityCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=120)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9_:-]{1,120}", normalized):
+            raise ValueError("reason must be a safe nonblank category")
+        return normalized
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError("idempotency_key must be opaque and nonblank")
+        return value
+
+
+class IdentityLinkConfirmRequest(IdentityCommandRequest):
+    acessorias_company_external_id: str = Field(min_length=1, max_length=200)
+
+    @field_validator("acessorias_company_external_id")
+    @classmethod
+    def validate_company_external_id(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError("acessorias_company_external_id must be opaque and nonblank")
+        return value
+
+
+class IdentityLinkRejectRequest(IdentityCommandRequest):
+    pass
+
+
+class IdentityLinkCommandResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    digisac_contact_external_id: str
+    acessorias_company_external_id: str
+    state: LinkState
+    source: str
+    confirmation_source: str | None
+    confirmed_at: datetime | None
+    rejection_reason: str | None
+    created_at: datetime
+    updated_at: datetime
 
 
 def _safe_request_id(request: Request) -> str:
@@ -254,6 +318,22 @@ def _validated_query(value: str | None) -> str | None:
     return normalized or None
 
 
+def _raise_identity_command_http_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, IdentityCommandConflictError):
+        raise HTTPException(status_code=409, detail="Idempotency key conflict") from exc
+    if isinstance(exc, IdentityConflictError):
+        raise HTTPException(status_code=409, detail="Identity confirmation conflict") from exc
+    if isinstance(exc, IdentityResolutionError):
+        if exc.category == "directory_company_unavailable":
+            raise HTTPException(status_code=422, detail="Acessórias company unavailable") from exc
+        raise HTTPException(status_code=409, detail="Identity command could not be completed") from exc
+    if isinstance(exc, LookupError):
+        raise HTTPException(status_code=404, detail="Identity reference not found") from exc
+    if isinstance(exc, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid administrative command body") from exc
+    raise HTTPException(status_code=409, detail="Identity command could not be completed") from exc
+
+
 admin_router = APIRouter(
     prefix="/admin/acessorias",
     tags=["Administração"],
@@ -335,3 +415,52 @@ async def active_company_list(
         else None
     )
     return CompanyListResponse(items=projection["items"], next_cursor=next_cursor)
+
+
+@admin_router.post(
+    "/contacts/{digisac_contact_external_id}/identity-links/confirm",
+    response_model=IdentityLinkCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirm one identity link",
+)
+async def identity_link_confirm(
+    digisac_contact_external_id: str,
+    payload: IdentityLinkConfirmRequest,
+    response: Response,
+) -> IdentityLinkCommandResponse:
+    try:
+        command = await confirm_identity_link_admin(
+            digisac_contact_external_id,
+            payload.acessorias_company_external_id,
+            reason=payload.reason,
+            idempotency_key=payload.idempotency_key,
+        )
+    except Exception as exc:
+        _raise_identity_command_http_error(exc)
+    response.status_code = 200 if command["replayed"] else status.HTTP_201_CREATED
+    return IdentityLinkCommandResponse.model_validate(command["result"])
+
+
+@admin_router.post(
+    "/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+    response_model=IdentityLinkCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Reject one identity link",
+)
+async def identity_link_reject(
+    digisac_contact_external_id: str,
+    acessorias_company_external_id: str,
+    payload: IdentityLinkRejectRequest,
+    response: Response,
+) -> IdentityLinkCommandResponse:
+    try:
+        command = await reject_identity_link_admin(
+            digisac_contact_external_id,
+            acessorias_company_external_id,
+            reason=payload.reason,
+            idempotency_key=payload.idempotency_key,
+        )
+    except Exception as exc:
+        _raise_identity_command_http_error(exc)
+    response.status_code = 200 if command["replayed"] else status.HTTP_201_CREATED
+    return IdentityLinkCommandResponse.model_validate(command["result"])

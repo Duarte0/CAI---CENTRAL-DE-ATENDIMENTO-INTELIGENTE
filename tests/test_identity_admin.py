@@ -84,9 +84,16 @@ def test_all_admin_routes_use_one_generic_unauthorized_response(
         "/admin/acessorias/identity-links",
         "/admin/acessorias/contacts/missing-contact/identity",
         "/admin/acessorias/companies",
+        "/admin/acessorias/contacts/missing-contact/identity-links/confirm",
+        "/admin/acessorias/contacts/missing-contact/identity-links/company/reject",
     ]
-    responses = [admin_client.get(path, headers=headers or {}) for path in paths]
+    responses = [admin_client.get(path, headers=headers or {}) for path in paths[:3]]
+    responses.extend(
+        admin_client.post(path, headers=headers or {}, json={}) for path in paths[3:]
+    )
     assert [(response.status_code, response.json()) for response in responses] == [
+        (401, {"detail": "Invalid administrative credentials"}),
+        (401, {"detail": "Invalid administrative credentials"}),
         (401, {"detail": "Invalid administrative credentials"}),
         (401, {"detail": "Invalid administrative credentials"}),
         (401, {"detail": "Invalid administrative credentials"}),
@@ -107,6 +114,80 @@ def test_valid_admin_read_routes_and_safe_missing_contact(admin_client: TestClie
     )
     assert missing.status_code == 404
     assert missing.json() == {"detail": "DigiSac contact not found"}
+
+
+def test_admin_identity_commands_validate_and_return_new_or_replayed_results(
+    admin_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_result = {
+        "digisac_contact_external_id": "contact-external",
+        "acessorias_company_external_id": "company-external",
+        "state": "confirmed",
+        "source": "admin_api",
+        "confirmation_source": "admin_api",
+        "confirmed_at": "2026-08-21T12:00:00Z",
+        "rejection_reason": None,
+        "created_at": "2026-08-21T12:00:00Z",
+        "updated_at": "2026-08-21T12:00:00Z",
+    }
+    confirm_calls: list[tuple[str, str, str, str]] = []
+
+    async def fake_confirm(contact: str, company: str, *, reason: str, idempotency_key: str) -> dict[str, Any]:
+        confirm_calls.append((contact, company, reason, idempotency_key))
+        return {"replayed": len(confirm_calls) > 1, "result": command_result}
+
+    async def fake_reject(contact: str, company: str, *, reason: str, idempotency_key: str) -> dict[str, Any]:
+        assert (contact, company, reason, idempotency_key) == (
+            "contact-external",
+            "company-external",
+            "operator_correction",
+            "reject-key",
+        )
+        return {
+            "replayed": False,
+            "result": {**command_result, "state": "rejected", "source": "admin_api", "confirmation_source": None, "confirmed_at": None, "rejection_reason": "operator_correction"},
+        }
+
+    monkeypatch.setattr(admin_routes, "confirm_identity_link_admin", fake_confirm)
+    monkeypatch.setattr(admin_routes, "reject_identity_link_admin", fake_reject)
+    headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    body = {
+        "acessorias_company_external_id": "company-external",
+        "reason": "Operator_Verified",
+        "idempotency_key": "opaque-confirm-key",
+    }
+    created = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-links/confirm",
+        json=body,
+        headers=headers,
+    )
+    replay = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-links/confirm",
+        json=body,
+        headers=headers,
+    )
+    rejected = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-links/company-external/reject",
+        json={"reason": "operator_correction", "idempotency_key": "reject-key"},
+        headers=headers,
+    )
+    invalid = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-links/confirm",
+        json={"reason": "contains spaces", "idempotency_key": "opaque-confirm-key"},
+        headers=headers,
+    )
+
+    assert created.status_code == 201
+    assert replay.status_code == 200
+    assert rejected.status_code == 201
+    assert invalid.status_code == 400
+    assert invalid.json() == {"detail": "Invalid administrative command body"}
+    assert "opaque-confirm-key" not in created.text
+    assert confirm_calls == [
+        ("contact-external", "company-external", "operator_verified", "opaque-confirm-key"),
+        ("contact-external", "company-external", "operator_verified", "opaque-confirm-key"),
+    ]
 
 
 def test_cursor_is_signed_scope_bound_and_limit_errors_are_400(

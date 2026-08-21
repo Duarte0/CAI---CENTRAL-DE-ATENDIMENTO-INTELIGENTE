@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, and the authenticated read-only identity triage API. | Writes PostgreSQL and Redis for the existing pipeline; administrative triage reads PostgreSQL only. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, and authenticated identity triage/commands. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -109,7 +109,7 @@ flowchart LR
     DM --> FR[Durable Request operation]
     FC[Persisted CAI classification/cycle] --> IR
     FC --> FR
-    P --> ADM[Authenticated admin read projections]
+    P --> ADM[Authenticated admin reads and commands]
 \`\`\`
 
 \`contact.id\` is the canonical DigiSac-contact external identity.
@@ -129,16 +129,18 @@ DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
 uses sanitized fingerprints, while raw and normalized directory identifiers
 remain in their canonical foundation records.
 
-SPEC-0012 and issue 0038 add a separate administrative read boundary at
+SPEC-0012 and issues 0038/0039 add a separate administrative boundary at
 `/admin/acessorias`. Its bearer token is `ADMIN_API_TOKEN`, validated before
 application startup completes. `src/api/admin_routes.py` performs only HTTP
 authentication/validation and response projection; `src/core/identity_admin.py`
-performs bounded PostgreSQL reads with deterministic, signed cursors. The
-projection exposes stable external IDs, safe display metadata, state/count/time
-summaries, and current company availability, while excluding phone/email values,
-raw evidence, conversation content, provider calls, Redis, discovery, hydration,
-sync, identity writes, cycle updates, and Request operations. Mutation and
-discovery commands remain the follow-up issues 0039 and 0040.
+performs bounded PostgreSQL reads with deterministic, signed cursors, while
+`src/core/identity_resolution.py` owns contact-locked confirmation/rejection
+transactions. The projection and command responses expose stable external IDs,
+safe state/source/timestamp metadata, and no phone/email values, raw evidence,
+conversation content, provider calls, Redis, discovery, hydration, sync, cycle
+updates, or Request operations. Command keys are hashed in the PostgreSQL
+`identity_admin_commands` ledger and are never returned or written to audit
+metadata. Optional discovery remains issue 0040.
 
 Department mapping uses the cycle-applicable DigiSac department from assignment
 history, selected only within the persisted `cycle_started_at` through
@@ -378,7 +380,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0020_cycle_contact_provenance\`. The main data groups
+Alembic owns the schema through \`0021_identity_admin_commands\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -389,7 +391,7 @@ are:
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
 | DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
-| Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, and immutable per-cycle outcomes. |
+| Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\`, \`identity_admin_commands\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, immutable per-cycle outcomes, and PostgreSQL command idempotency. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, canonical ticket-contact provenance, and identity-resolution linkage. |
 | Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. |
@@ -415,6 +417,11 @@ Implemented routes include:
 | \`GET /conversations/{conversation_id}/cycles\` | Persistent cycle list. |
 | \`GET /cycles/{cycle_id}/status\` | Persistent cycle status. |
 | \`GET /cycles/{cycle_id}/result\` | Persistent cycle result. |
+| \`GET /admin/acessorias/identity-links\` | Authenticated identity-link triage projection. |
+| \`GET /admin/acessorias/contacts/{digisac_contact_external_id}/identity\` | Authenticated canonical-contact identity projection. |
+| \`GET /admin/acessorias/companies\` | Authenticated present/active company search. |
+| \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm\` | Authenticated, idempotent confirmation of one explicit contact/company pair. |
+| \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject\` | Authenticated, idempotent rejection with preserved audit history. |
 
 The webhook normally returns \`202\`; safely ignored events return \`200\` with an
 ignore reason. Missing persisted entities return \`404\`. There is no webhook
@@ -578,15 +585,16 @@ they limit release verification and future evolution decisions.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
   \`0019_acessorias_request_creation.py\` through
-  \`0020_cycle_contact_provenance.py\`.
+  \`0021_identity_admin_commands.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
-- Authenticated identity triage: \`src/api/admin_routes.py\`,
-  \`src/core/identity_admin.py\`, and SPEC-0012; it consumes the existing
-  identity schema without a migration.
+- Authenticated identity triage and commands: \`src/api/admin_routes.py\`,
+  \`src/core/identity_admin.py\`, \`src/core/identity_resolution.py\`,
+  Alembic \`0021_identity_admin_commands.py\`, and SPEC-0012; it consumes
+  PostgreSQL as the sole authority and does not call providers or Redis.
 - DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
   and Alembic \`0018_department_mapping.py\`.
 - Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,

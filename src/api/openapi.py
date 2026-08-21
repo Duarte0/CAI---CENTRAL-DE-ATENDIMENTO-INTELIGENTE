@@ -350,6 +350,115 @@ def _schemas() -> dict[str, JsonSchema]:
             },
             "additionalProperties": False,
         },
+        "IdentityCommandRequest": {
+            "title": "Administrative identity command request",
+            "description": (
+                "A bounded command reason and opaque idempotency key. The key is "
+                "never returned or included in administrative audit projections."
+            ),
+            "type": "object",
+            "required": ["reason", "idempotency_key"],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[a-z0-9_:-]{1,120}$",
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Opaque client command key; never echoed.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        "IdentityLinkConfirmRequest": {
+            "title": "Identity-link confirmation request",
+            "type": "object",
+            "required": [
+                "reason",
+                "idempotency_key",
+                "acessorias_company_external_id",
+            ],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[a-z0-9_:-]{1,120}$",
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Opaque client command key; never echoed.",
+                },
+                "acessorias_company_external_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Opaque Acessórias company external ID.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        "IdentityLinkRejectRequest": {
+            "title": "Identity-link rejection request",
+            "type": "object",
+            "required": ["reason", "idempotency_key"],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[a-z0-9_:-]{1,120}$",
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Opaque client command key; never echoed.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        "IdentityLinkCommandResponse": {
+            "title": "Administrative identity-link command result",
+            "description": (
+                "Sanitized stable external IDs, state, safe source metadata, and "
+                "server timestamps. It does not contain local database IDs, evidence, "
+                "contact data, command keys, or provider payloads."
+            ),
+            "type": "object",
+            "required": [
+                "digisac_contact_external_id",
+                "acessorias_company_external_id",
+                "state",
+                "source",
+                "confirmation_source",
+                "confirmed_at",
+                "rejection_reason",
+                "created_at",
+                "updated_at",
+            ],
+            "properties": {
+                "digisac_contact_external_id": {"type": "string"},
+                "acessorias_company_external_id": {"type": "string"},
+                "state": {
+                    "type": "string",
+                    "enum": ["candidate", "confirmed", "rejected"],
+                },
+                "source": {"type": "string"},
+                "confirmation_source": {"type": ["string", "null"]},
+                "confirmed_at": {"type": ["string", "null"], "format": "date-time"},
+                "rejection_reason": {"type": ["string", "null"]},
+                "created_at": {"type": "string", "format": "date-time"},
+                "updated_at": {"type": "string", "format": "date-time"},
+            },
+            "additionalProperties": False,
+        },
     }
 
 
@@ -755,7 +864,7 @@ def _decorate_operations(document: dict[str, Any]) -> None:
             },
         },
     )
-    admin_security = [{"AdminBearer": []}]
+    admin_security: list[JsonSchema] = [{"AdminBearer": []}]
     operation(
         "/admin/acessorias/identity-links",
         "get",
@@ -827,6 +936,89 @@ def _decorate_operations(document: dict[str, Any]) -> None:
             ),
         },
     )
+    command_responses = {
+        "200": _response(
+            "The stored result of an idempotent administrative replay.",
+            _ref("IdentityLinkCommandResponse"),
+        ),
+        "201": _response(
+            "A newly applied administrative identity-link command.",
+            _ref("IdentityLinkCommandResponse"),
+        ),
+        "400": _detail_response(
+            "The command body, reason, or idempotency key is invalid.",
+            "Invalid administrative command body",
+        ),
+        "401": _detail_response(
+            "The administrative bearer token is missing or invalid.",
+            "Invalid administrative credentials",
+        ),
+        "404": _detail_response(
+            "The canonical contact, company, or identity link does not exist.",
+            "Identity reference not found",
+        ),
+        "409": _detail_response(
+            "The command conflicts with an existing confirmation or key use.",
+            "Idempotency key conflict",
+        ),
+    }
+    operation(
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm",
+        "post",
+        tag="Administração",
+        summary="Confirm one identity link",
+        description=(
+            "Confirms only the requested canonical contact/company pair. The "
+            "operation is PostgreSQL-authoritative, serialized by contact, and "
+            "idempotent; it does not run discovery, call providers, use Redis, "
+            "or change historical cycle resolutions."
+        ),
+        security=admin_security,
+        responses={
+            **command_responses,
+            "422": _detail_response(
+                "The requested company is absent or unavailable in the current directory.",
+                "Acessórias company unavailable",
+            ),
+        },
+    )
+    operation(
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+        "post",
+        tag="Administração",
+        summary="Reject one identity link",
+        description=(
+            "Rejects only the requested existing pair and appends an auditable "
+            "administrative transition while preserving prior evidence and history. "
+            "It never promotes another company or changes cycle resolution."
+        ),
+        security=admin_security,
+        responses=command_responses,
+    )
+    confirm_operation = paths[
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm"
+    ]["post"]
+    confirm_operation["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": _ref("IdentityLinkConfirmRequest"),
+                "description": "Reason category, opaque command key, and target company ID.",
+            }
+        },
+    }
+    reject_operation = paths[
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject"
+    ]["post"]
+    reject_operation["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": _ref("IdentityLinkRejectRequest"),
+                "description": "Reason category and opaque command key; neither is echoed.",
+            }
+        },
+    }
     for path in (
         "/admin/acessorias/identity-links",
         "/admin/acessorias/companies",
@@ -958,7 +1150,7 @@ def build_openapi_contract(app: FastAPI) -> dict[str, Any]:
             "CAI's supported HTTP surface is intentionally unversioned. /v1/ and "
             "/v2/ are future compatibility policy only, not mounted routes. Existing "
             "public query operations have no authentication scheme; administrative "
-            "identity projections use the AdminBearer scheme."
+            "identity projections and identity-link commands use the AdminBearer scheme."
         ),
         routes=app.routes,
     )
@@ -975,7 +1167,7 @@ def build_openapi_contract(app: FastAPI) -> dict[str, Any]:
         {"name": "Ciclos", "description": "Persisted cycle status and results."},
         {
             "name": "Administração",
-            "description": "Authenticated, read-only identity triage projections.",
+            "description": "Authenticated identity triage projections and commands.",
         },
     ]
     components = cast(dict[str, Any], document.setdefault("components", {}))
@@ -1004,8 +1196,8 @@ def install_openapi_contract(app: FastAPI) -> None:
 
     def custom_openapi() -> dict[str, Any]:
         if app.openapi_schema:
-            return cast(dict[str, Any], app.openapi_schema)
+            return app.openapi_schema
         app.openapi_schema = build_openapi_contract(app)
-        return cast(dict[str, Any], app.openapi_schema)
+        return app.openapi_schema
 
     app.openapi = custom_openapi

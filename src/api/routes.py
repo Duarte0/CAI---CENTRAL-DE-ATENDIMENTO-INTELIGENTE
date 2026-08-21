@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Mapping, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from src.api.middleware import verify_webhook_signature
 from src.api.admin_routes import admin_router
@@ -383,6 +386,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(title="Digisac Conversation Analyzer",
               version="1.0.0", lifespan=lifespan)
 app.include_router(admin_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> Response:
+    path = request.url.path
+    if (
+        path.startswith("/admin/acessorias/contacts/")
+        and "/identity-links/" in path
+        and (path.endswith("/confirm") or path.endswith("/reject"))
+    ):
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": "Invalid administrative command body"},
+        )
+    return await request_validation_exception_handler(request, exc)
 
 
 def get_redis(request: Request) -> AsyncRedis:

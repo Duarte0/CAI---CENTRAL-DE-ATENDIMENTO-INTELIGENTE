@@ -114,6 +114,15 @@ e nunca executam discovery, hydration, sync, Redis, Request ou providers. O
 serviço falha no startup se o segredo não estiver configurado; provisionamento
 em secret manager e restrição de rede continuam pré-requisitos de deploy.
 
+O issue 0039 acrescenta os comandos autenticados de confirmação e rejeição:
+`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm`
+e `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject`.
+Eles validam somente o par indicado, preservam evidências/transições, derivam
+`admin`/`admin_api` do contexto do servidor e usam a ledger PostgreSQL
+`identity_admin_commands` para replays idempotentes. Não executam discovery,
+providers, Redis, mapeamento, Request ou alterações de resolução histórica; a
+redescoberta opcional permanece no issue 0040.
+
 O issue 0026 completa a fronteira de preparação: cada ciclo carrega somente o
 `data.contact.id` canônico do snapshot de ticket, resolve a identidade, avalia
 o mapping dentro dos limites persistidos e só então avalia a operação Request.
@@ -222,7 +231,10 @@ de execução. As principais estruturas são:
   sanitizadas e reconciliação administrativa.
 - `identity_match_evidence`, `identity_company_links` e
   `identity_company_link_transitions`: fatos duráveis consumidos pela projeção
-  administrativa de triagem; a API não grava essas tabelas.
+  administrativa e pelos comandos de confirmação/rejeição.
+- `identity_admin_commands`: hashes de chaves, fingerprints e resultados
+  sanitizados da idempotência dos comandos administrativos; a chave bruta não é
+  persistida nem retornada.
 
 O ciclo de vida do pool e a verificação do schema permanecem em
 `src/core/db.py`. A persistência de contatos DigiSac e o estado durável de
@@ -526,7 +538,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0020_cycle_contact_provenance` e só então
+ao destino, aplica e verifica Alembic `0021_identity_admin_commands` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -560,6 +572,12 @@ Na validação do issue 0038 em 2026-08-21, o runner descartável com
 e **70 passed, 236 deselected** no PostgreSQL 16 descartável. A execução sem
 esse override preservou um failure preexistente de timezone em
 `tests/test_department_mapping.py`; ele não envolve a API administrativa.
+
+Na validação do issue 0039 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **237 passed, 74 skipped** offline,
+Alembic `0021_identity_admin_commands` e **74 passed, 237 deselected** no
+PostgreSQL 16. A evidência é local e descartável; não comprova Redis, providers,
+secret manager, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

@@ -21,11 +21,16 @@ BUSINESS_PATHS = {
     "/cycles/{cycle_id}/status",
     "/cycles/{cycle_id}/result",
 }
-ADMIN_PATHS = {
+ADMIN_GET_PATHS = {
     "/admin/acessorias/identity-links",
     "/admin/acessorias/contacts/{digisac_contact_external_id}/identity",
     "/admin/acessorias/companies",
 }
+ADMIN_POST_PATHS = {
+    "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm",
+    "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+}
+ADMIN_PATHS = ADMIN_GET_PATHS | ADMIN_POST_PATHS
 TAGS = {"Webhook DigiSac", "Operações", "Conversas", "Ciclos", "Administração"}
 
 
@@ -129,7 +134,11 @@ def test_openapi_security_and_webhook_contract() -> None:
     }
     assert all(
         document["paths"][path]["get"]["security"] == [{"AdminBearer": []}]
-        for path in ADMIN_PATHS
+        for path in ADMIN_GET_PATHS
+    )
+    assert all(
+        document["paths"][path]["post"]["security"] == [{"AdminBearer": []}]
+        for path in ADMIN_POST_PATHS
     )
     assert all(
         "security" not in document["paths"][path]["get"]
@@ -153,6 +162,10 @@ def test_openapi_describes_admin_projection_contract() -> None:
         "IdentityLinkListResponse",
         "IdentityContactDetail",
         "CompanyListResponse",
+        "IdentityCommandRequest",
+        "IdentityLinkConfirmRequest",
+        "IdentityLinkRejectRequest",
+        "IdentityLinkCommandResponse",
     }.issubset(schemas)
     links = document["paths"]["/admin/acessorias/identity-links"]["get"]
     state = next(parameter for parameter in links["parameters"] if parameter["name"] == "state")
@@ -180,6 +193,31 @@ def test_openapi_describes_admin_projection_contract() -> None:
         "400",
         "401",
     }
+    confirm_operation = document["paths"][
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm"
+    ]["post"]
+    reject_operation = document["paths"][
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject"
+    ]["post"]
+    assert set(confirm_operation["responses"]) == {
+        "200",
+        "201",
+        "400",
+        "401",
+        "404",
+        "409",
+        "422",
+    }
+    assert set(reject_operation["responses"]) == {
+        "200",
+        "201",
+        "400",
+        "401",
+        "404",
+        "409",
+    }
+    assert confirm_operation["requestBody"]["required"] is True
+    assert reject_operation["requestBody"]["required"] is True
 
 
 def test_openapi_projects_queries_and_operational_errors() -> None:

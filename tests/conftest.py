@@ -74,6 +74,7 @@ async def postgres_state(request):
                 acessorias_request_operations,
                 department_mapping_transitions,
                 department_mapping_rules,
+                identity_admin_commands,
                 identity_company_link_transitions,
                 identity_match_evidence,
                 identity_company_links,

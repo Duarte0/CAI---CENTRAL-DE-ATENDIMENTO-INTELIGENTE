@@ -1,6 +1,6 @@
 # SPEC-0012 — Administração de vínculos contato DigiSac–empresa Acessórias
 
-- **Status:** slice de leitura implementado localmente no issue 0038; mutações e redescoberta pendentes
+- **Status:** leitura e confirmação/rejeição implementadas localmente nos issues 0038 e 0039; redescoberta pendente no issue 0040
 - **Versão:** 1.1
 - **Prioridade/Fase:** P1 / Milestone C.1 — operação administrativa de identidade
 - **Rastreabilidade:** PRD §§4, 5.2, 5.5, 8 e 10; ARCHITECTURE §§2.1, 3 e 13; `IMPLEMENTATION_PLAN.md`; SPEC-0001, SPEC-0006–0011
@@ -19,8 +19,22 @@ contêm apenas IDs externos, estados, nomes de exibição, disponibilidade,
 categorias/contagens/horários de evidência e transições sanitizadas; valores de
 telefone, email e evidência não fazem parte da projeção.
 
-O restante desta SPEC — confirmação, rejeição e redescoberta — permanece
-explicitamente fora deste slice e é coberto pelos issues 0039 e 0040.
+O restante desta SPEC — redescoberta — permanece explicitamente fora deste slice
+e é coberto pelo issue 0040.
+
+**Evidência da fatia de confirmação/rejeição (2026-08-21):** o issue 0039
+adiciona os comandos autenticados `POST /admin/acessorias/contacts/{id}/identity-links/confirm`
+e `POST /admin/acessorias/contacts/{id}/identity-links/{company_id}/reject`.
+O domínio mantém a confirmação/rejeição sob lock do contato, registra `admin`/
+`admin_api`, conserva transições e evidências e usa a migration Alembic
+`0021_identity_admin_commands` para persistir hashes de chaves, fingerprint de
+comando e resultado sanitizado. Replays com a mesma chave retornam o resultado
+armazenado sem nova transição; reutilização incompatível retorna `409`, e falhas
+transacionais não deixam reserva parcial. A validação descartável passou
+compileall, Pyright, **237 passed, 74 skipped** offline, Alembic `0021` e
+**74 passed, 237 deselected** em PostgreSQL 16. Isso é evidência local
+descartável e não comprova secret manager, provider, Redis, deployment ou
+produção. O issue 0040 continua responsável pela redescoberta opcional.
 
 ## Objetivo e não objetivos
 
