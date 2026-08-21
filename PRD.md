@@ -38,9 +38,9 @@ third-party API consumers. Existing public query endpoints do not require
 login, API keys, JWTs, or a separate authorization layer. The six internal
 Acessórias identity-administration operations introduced by SPEC-0012 are a
 separate authenticated administrative surface using `ADMIN_API_TOKEN`; they
-are not public consumer endpoints. Issue 0042 mounts only the local
-authenticated UI shell/session boundary; the triage queue, detail, search, and
-actions remain in follow-up issues.
+are not public consumer endpoints. Issues 0042–0043 mount the local
+authenticated UI shell/session boundary and the read-only triage queue, detail,
+and company search; command actions remain in the follow-up issue 0044.
 
 ## 3. Product goals
 

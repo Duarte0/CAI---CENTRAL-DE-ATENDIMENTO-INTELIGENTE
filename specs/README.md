@@ -18,11 +18,13 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.4; issues 0017–0019, 0021–0022 e 0026; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
 | SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Implementado localmente v1.1; issues 0038, 0039 e 0040 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir vínculos auditáveis; não cria Request nem reavalia ciclos históricos. |
-| SPEC-0013 | [Interface web administrativa para conciliação de identidade](0013-administrative-identity-link-review-ui.md) | Shell, sessão e BFF implementados localmente v1.3; issue 0042; issues 0043–0044 restantes | P1 / Milestone C.2 | SPEC-0012; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` em ambiente protegido | Fundação FastAPI com login/logout, sessão assinada e shell local; fila, detalhe, busca e ações permanecem nos incrementos seguintes, sem matching no frontend ou acesso direto ao banco. |
+| SPEC-0013 | [Interface web administrativa para conciliação de identidade](0013-administrative-identity-link-review-ui.md) | Shell, sessão e leitura implementados localmente v1.4; issues 0042–0043; issue 0044 restante | P1 / Milestone C.2 | SPEC-0012; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` em ambiente protegido | Fundação FastAPI com login/logout, sessão assinada, fila, detalhe e busca via BFF local; ações permanecem no incremento seguinte, sem matching no frontend ou acesso direto ao banco. |
 
-A evidência mais recente registrada para o runner de SPEC-0004 é **238 passed,
-76 skipped** na etapa offline e **76 passed, 238 deselected** na etapa
-PostgreSQL descartável (issue 0040, migration `0022_identity_discovery_command`).
+A evidência mais recente registrada para o runner de SPEC-0004 é **249 passed,
+76 skipped** na etapa offline e **76 passed, 249 deselected** na etapa
+PostgreSQL descartável (issue 0043, sem nova migration; head
+`0022_identity_discovery_command`). A evidência anterior de issue 0040 foi **238 passed,
+76 skipped** na etapa offline e **76 passed, 238 deselected** no PostgreSQL.
 A evidência anterior de issue 0036 foi **224 passed, 69 skipped** na etapa
 offline e **69 passed, 224 deselected** no PostgreSQL. A evidência anterior de
 issue 0033 foi **220 passed,
@@ -109,8 +111,9 @@ O delta documental v1.4 da SPEC-0005 foi implementado pelo issue 0041. Ele
 alcançou somente a reconciliação de PRD, arquitetura e rastreabilidade com o
 baseline implementado `0022`/`238+76` e a superfície administrativa da
 SPEC-0012; o issue 0041 não alterou código, migration, UI ou alegação de
-produção. O issue 0042 implementa somente o shell/sessão/BFF da SPEC-0013;
-seus incrementos de leitura e ações continuam separados.
+produção. O issue 0042 implementa o shell/sessão/BFF e o issue 0043 implementa
+o incremento de leitura da SPEC-0013; as ações de confirmação, rejeição e
+discovery continuam separadas no issue 0044.
 
 Milestone F continua fora do conjunto: exige decisão de produto após a criação
 de Request ser comprovada. Não alterar as SPEC-0001–0006 concluídas para
@@ -129,4 +132,4 @@ canônico e sair da tabela de ativos sem apagar seu histórico.
 
 1. Planejamento referencia a especificação aplicável e registra dependências/decisões abertas.
 2. A passagem de issues decompõe somente especificações prontas, sem redefinir seus contratos.
-3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. O isolamento da suíte (issue 0001), o runner descartável (0002), a verificação operacional (0004), a remoção das superfícies de diagnóstico (0006), a reconciliação documental v1.3 (0007 e 0009), a publicação de SPEC-0006 (0008), o Milestone A de SPEC-0007 (0012), o Milestone B de SPEC-0008 (0013, 0014 e 0026), o Milestone C de SPEC-0009 (0015 e 0026), o Milestone D de SPEC-0010 (0016, 0020 e 0026) e a preparação/recuperação do Milestone E (0026) estão implementados. O delta v1.4 da SPEC-0005 foi concluído pelo issue 0041; o shell, sessão e BFF da SPEC-0013 foram implementados pelo issue 0042, enquanto a fila, detalhe e ações seguem nos issues 0043–0044.
+3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. O isolamento da suíte (issue 0001), o runner descartável (0002), a verificação operacional (0004), a remoção das superfícies de diagnóstico (0006), a reconciliação documental v1.3 (0007 e 0009), a publicação de SPEC-0006 (0008), o Milestone A de SPEC-0007 (0012), o Milestone B de SPEC-0008 (0013, 0014 e 0026), o Milestone C de SPEC-0009 (0015 e 0026), o Milestone D de SPEC-0010 (0016, 0020 e 0026) e a preparação/recuperação do Milestone E (0026) estão implementados. O delta v1.4 da SPEC-0005 foi concluído pelo issue 0041; o shell/sessão/BFF da SPEC-0013 foi implementado pelo issue 0042 e a fila/detalhe/busca pelo issue 0043, enquanto as ações seguem no issue 0044.

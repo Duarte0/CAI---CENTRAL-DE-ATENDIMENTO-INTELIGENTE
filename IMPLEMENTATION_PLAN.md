@@ -100,13 +100,15 @@ progress; production acceptance remains separate._
 
 ### Phase 2 — Decompose the approved administrative UI
 
-2. **[P1 | in progress | shell/session increment completed]
+2. **[P1 | in progress | shell/session/read increment completed]
    Identity-review UI** (`SPEC-0013`, Milestone C.2).
 
    Outcome: product authorization adopted SPEC-0013 for decomposition. Issue
    0042 implements the local shell, login/logout, fixed signed session, and
-   same-process FastAPI BFF boundary; the queue/read model and command actions
-   remain separate increments and never become a second identity authority.
+   same-process FastAPI BFF boundary. Issue 0043 implements the queue, detail,
+   company-search read model, and session-authenticated read bridge; command
+   actions remain a separate increment and never become a second identity
+   authority.
 
    The approved contract is:
 
@@ -126,9 +128,11 @@ progress; production acceptance remains separate._
      `ADMIN_UI_PASSWORD`, with no user registration, RBAC, or IdP.
 
    Issue 0042 delivered login/logout, no-store responses, the protected local
-   shell, API-only data flow, and the reusable session/BFF context. Issues 0043
-   and 0044 remain responsible for the read model, command actions, and their
-   browser/accessibility coverage.
+   shell, API-only data flow, and the reusable session/BFF context. Issue 0043
+   delivered the local responsive read view, opaque queue pagination, sanitized
+   contact detail, active-company search, guarded stale responses, and safe
+   read error states. Issue 0044 remains responsible for command actions and
+   their browser/accessibility coverage.
 
    Dependencies and risks: SPEC-0012 is implemented. Secure provisioning of the
    three administrative credentials remains an operational prerequisite, and
@@ -166,7 +170,7 @@ progress; production acceptance remains separate._
 | --- | --- | --- |
 | completed | SPEC-0007–0012 and issues 0012–0022, 0026, and 0038–0040 have matching source, migrations, and focused test families. | Do not reopen as feature work without a concrete defect. |
 | completed | Issue 0041 reconciled PRD §9/source traceability and ARCHITECTURE §13/source map with Alembic `0022`, `238/76`, and the six-operation SPEC-0012 surface. | Keep older counts dated as history and retain the external-runtime boundary. |
-| in progress | SPEC-0013 adoption and its login/session/security policy are product-approved; issue 0042 completed the shell/session/BFF increment. | Issues 0043–0044 remain for the read model and actions; keep production credential provisioning separate. |
+| in progress | SPEC-0013 adoption and its login/session/security policy are product-approved; issues 0042–0043 completed the shell/session/BFF/read increments. | Issue 0044 remains for command actions; keep production credential provisioning separate. |
 | blocked | Production evidence requires environment, credentials, rollout ownership, and acceptance criteria. | Keep local verification and production acceptance separate. |
 | blocked | Milestone F and broader IA-policy changes lack product decisions. | Do not create implementation work from inference. |
 
@@ -185,6 +189,7 @@ progress; production acceptance remains separate._
 
 ## Recommended next pass
 
-SPEC-0013 is approved for decomposition and issue 0042 completed only its
-shell/session/BFF increment; issues 0043–0044 remain. Request lifecycle, broader
-IA policy, and production acceptance remain separate blocked plan items.
+SPEC-0013 is approved for decomposition; issues 0042–0043 completed its
+shell/session/BFF/read increments and issue 0044 remains for command actions.
+Request lifecycle, broader IA policy, and production acceptance remain separate
+blocked plan items.

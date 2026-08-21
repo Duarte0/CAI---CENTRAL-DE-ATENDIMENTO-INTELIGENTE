@@ -444,10 +444,16 @@ e timestamps seguros. PostgreSQL é a autoridade dos comandos: o replay da
 mesma chave converge para o mesmo resultado, a reutilização incompatível da
 chave retorna conflito e locks por contato impedem transições duplicadas sob
 concorrência. Elas não chamam providers ou Redis, não alteram resolução
-histórica de ciclos e não criam Requests. O issue 0042 adiciona o shell local
-em `/admin/acessorias/ui`, login/logout e sessão `HttpOnly` assinada, com
-`ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` mantidos no servidor; a fila,
-detalhe, busca e ações da SPEC-0013 permanecem nos issues 0043–0044.
+histórica de ciclos e não criam Requests. Os issues 0042 e 0043 adicionam o
+shell local em `/admin/acessorias/ui`, login/logout, sessão `HttpOnly` assinada
+e a fila/detalhe/busca read-only da SPEC-0013. Os paths BFF
+`/admin/acessorias/ui/api/identity-links`,
+`/admin/acessorias/ui/api/contacts/{id}/identity` e
+`/admin/acessorias/ui/api/companies` usam somente o cookie de sessão, chamam
+as projeções sanitizadas existentes e mantêm o `ADMIN_API_TOKEN` no servidor.
+Filtros de fila limitados a `candidate`, `ambiguous` e `unresolved`, cursores
+opacos, estados de erro/retry e busca somente de empresas presentes e ativas
+ficam no cliente local; as ações da SPEC-0013 permanecem no issue 0044.
 
 As consultas estão montadas sem prefixo de versão. `/v1/` e `/v2/` permanecem
 somente como política de compatibilidade futura; não são aliases nem rotas
@@ -621,6 +627,13 @@ PostgreSQL 16. A execução sem o override manteve somente o failure preexistent
 de timezone em `tests/test_department_mapping.py`; a falha não envolve o slice
 administrativo. A evidência é local e descartável; não comprova Redis,
 providers, secret manager, deployment ou produção.
+
+Na validação do issue 0043 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **249 passed, 76 skipped** offline,
+Alembic `0022_identity_discovery_command` e **76 passed, 249 deselected** no
+PostgreSQL 16 descartável. A evidência inclui os testes HTTP/BFF e de contrato
+da UI; não houve migration nova. A validação é local e descartável e não
+comprova Redis, providers, secret manager, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

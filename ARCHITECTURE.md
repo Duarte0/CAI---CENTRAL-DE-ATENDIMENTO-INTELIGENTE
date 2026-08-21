@@ -530,8 +530,9 @@ records these delivery limitations:
   duplicate concurrent transitions. They do not call providers or Redis, create
   Requests, or mutate historical cycle resolution. SPEC-0013 is authorized for
   adoption and issue decomposition; issue 0042 implements its local shell,
-  login/logout, signed session, and in-process BFF boundary, while the read
-  model and command actions remain in issues 0043–0044.
+  login/logout, signed session, and in-process BFF boundary, while issue 0043
+  implements the queue/detail/company-search read model through session-only
+  BFF paths. Issue 0044 remains responsible for command actions.
 
   The approved SPEC-0013 architecture is a FastAPI-served HTML page with local
   CSS and modular JavaScript, without a required bundler; it consumes SPEC-0012

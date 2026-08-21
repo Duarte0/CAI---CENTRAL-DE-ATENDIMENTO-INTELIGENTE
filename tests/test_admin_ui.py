@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
+from src.api import admin_ui
 from src.core.config import Settings, settings
 
 
@@ -30,6 +31,15 @@ def _session_cookie(response) -> SimpleCookie[str]:
     cookies = SimpleCookie()
     cookies.load(response.headers["set-cookie"])
     return cookies
+
+
+def _login(ui_client: TestClient) -> None:
+    response = ui_client.post(
+        "/admin/acessorias/login",
+        data={"password": UI_PASSWORD},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
 
 
 def test_ui_settings_reject_blank_values() -> None:
@@ -92,6 +102,153 @@ def test_login_protects_shell_with_fixed_signed_cookie(ui_client: TestClient) ->
     assert "ADMIN_API_TOKEN" not in shell.text
     assert "https://" not in shell.text
     assert "http://" not in shell.text
+
+
+def test_ui_read_workspace_has_local_accessible_contract(
+    ui_client: TestClient,
+) -> None:
+    _login(ui_client)
+
+    shell = ui_client.get("/admin/acessorias/ui")
+
+    assert shell.status_code == 200
+    assert 'id="identity-queue"' in shell.text
+    assert 'value="candidate"' in shell.text
+    assert 'value="ambiguous"' in shell.text
+    assert 'value="unresolved"' in shell.text
+    assert 'id="company-search"' in shell.text
+    assert 'aria-live="polite"' in shell.text
+    assert "/admin/acessorias/ui/api/identity-links" in shell.text
+    assert "/admin/acessorias/ui/api/companies" in shell.text
+    assert "localStorage" not in shell.text
+    assert "sessionStorage" not in shell.text
+    assert "ADMIN_API_TOKEN" not in shell.text
+    assert "https://" not in shell.text
+
+
+def test_ui_read_bridge_requires_session_and_preserves_opaque_cursor(
+    ui_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_list(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {
+            "items": [
+                {
+                    "digisac_contact_external_id": "contact-1",
+                    "display_name": "Safe display name",
+                    "is_group": False,
+                    "state": "candidate",
+                    "candidate_company_count": 1,
+                    "links": [],
+                    "evidence": [],
+                }
+            ],
+            "next_after": ("contact-1", 1) if kwargs["after"] is None else None,
+        }
+
+    monkeypatch.setattr(admin_ui, "list_identity_link_projection", fake_list)
+
+    unauthenticated = TestClient(app).get(
+        "/admin/acessorias/ui/api/identity-links?state=candidate&limit=1"
+    )
+    assert unauthenticated.status_code == 401
+    assert unauthenticated.headers["cache-control"] == "no-store"
+
+    _login(ui_client)
+    first = ui_client.get(
+        "/admin/acessorias/ui/api/identity-links",
+        params={"state": "candidate", "limit": "1"},
+    )
+    assert first.status_code == 200
+    cursor = first.json()["next_cursor"]
+    assert isinstance(cursor, str)
+    assert calls == [{"state": "candidate", "after": None, "limit": 1}]
+
+    second = ui_client.get(
+        "/admin/acessorias/ui/api/identity-links",
+        params={"state": "candidate", "limit": "1", "cursor": cursor},
+    )
+    assert second.status_code == 200
+    assert calls[1] == {"state": "candidate", "after": ("contact-1", 1), "limit": 1}
+    invalid = ui_client.get(
+        "/admin/acessorias/ui/api/identity-links",
+        params={"state": "confirmed", "limit": "1"},
+    )
+    assert invalid.status_code == 400
+    assert invalid.headers["cache-control"] == "no-store"
+
+
+def test_ui_read_bridge_returns_sanitized_detail_and_active_companies(
+    ui_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_contact(contact: str) -> dict[str, object] | None:
+        if contact == "missing":
+            return None
+        return {
+            "digisac_contact_external_id": "contact-1",
+            "display_name": "Safe display name",
+            "is_group": True,
+            "state": "unresolved",
+            "candidate_company_count": 0,
+            "links": [],
+            "evidence": [],
+            "transitions": [],
+            "candidate_companies": [],
+        }
+
+    async def fake_companies(**kwargs: object) -> dict[str, object]:
+        assert kwargs == {"query": "visible", "after": None, "limit": 25}
+        return {
+            "items": [
+                {
+                    "acessorias_company_external_id": "company-1",
+                    "display_name": "Visible Active",
+                    "is_present": True,
+                    "is_active": True,
+                    "available": True,
+                }
+            ],
+            "next_after": None,
+        }
+
+    monkeypatch.setattr(admin_ui, "get_identity_contact_projection", fake_contact)
+    monkeypatch.setattr(admin_ui, "list_active_company_projection", fake_companies)
+    _login(ui_client)
+
+    detail = ui_client.get("/admin/acessorias/ui/api/contacts/contact-1/identity")
+    companies = ui_client.get(
+        "/admin/acessorias/ui/api/companies",
+        params={"query": "visible", "limit": "25"},
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["is_group"] is True
+    assert companies.status_code == 200
+    assert companies.json() == {
+        "items": [
+            {
+                "acessorias_company_external_id": "company-1",
+                "display_name": "Visible Active",
+                "is_present": True,
+                "is_active": True,
+                "available": True,
+            }
+        ],
+        "next_cursor": None,
+    }
+    assert (
+        detail.headers["cache-control"]
+        == companies.headers["cache-control"]
+        == "no-store"
+    )
+
+    missing = ui_client.get("/admin/acessorias/ui/api/contacts/missing/identity")
+    assert missing.status_code == 404
+    assert missing.headers["cache-control"] == "no-store"
 
 
 def test_production_login_marks_session_cookie_secure(

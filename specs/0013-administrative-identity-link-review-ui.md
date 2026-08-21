@@ -1,9 +1,9 @@
 # SPEC-0013 — Interface web administrativa para conciliação de identidade
 
-- **Status:** shell, sessão e boundary BFF implementados localmente no issue 0042; fila, detalhe e ações permanecem nos issues 0043–0044
-- **Versão:** 1.3
+- **Status:** shell, sessão e leitura da fila/detalhe/busca implementados localmente nos issues 0042–0043; ações permanecem no issue 0044
+- **Versão:** 1.4
 - **Prioridade/Fase:** P1 / Milestone C.2 — operação administrativa de identidade
-- **Rastreabilidade:** SPEC-0008, SPEC-0009, SPEC-0012, issue 0042 e `IMPLEMENTATION_PLAN.md`
+- **Rastreabilidade:** SPEC-0008, SPEC-0009, SPEC-0012, issues 0042–0043 e `IMPLEMENTATION_PLAN.md`
 - **Dependências:** SPEC-0012 implementada; API administrativa autenticada verificada; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` provisionados com segurança
 
 ## Evidência do slice implementado
@@ -20,8 +20,17 @@ O boundary `AdminUIContext` autentica a sessão no processo FastAPI e oferece o
 acesso server-side aos serviços já existentes da SPEC-0012, preservando as
 projeções sanitizadas sem proxy HTTP, acesso do navegador ao PostgreSQL/Redis
 ou exposição do `ADMIN_API_TOKEN`. Não há migration nem escrita em estado de
-identidade neste slice. Os issues 0043–0044 continuam responsáveis pela fila,
-detalhe, busca e ações da operação.
+identidade neste slice.
+
+O issue 0043 substitui o conteúdo provisório pelo primeiro viewport responsivo
+com fila filtrada por `candidate`, `ambiguous` e `unresolved`, paginação opaca,
+detalhe de contato e busca display-only de empresas presentes e ativas. Os
+paths BFF sob `/admin/acessorias/ui/api/` usam somente a sessão assinada,
+reutilizam as projeções e cursores da SPEC-0012, retornam `no-store` e não
+expõem o token Bearer, valores de contato, storage do navegador ou recursos
+externos. Loading, vazio, expiração, ausência, rate limit, timeout, rede e
+respostas fora de ordem têm estados seguros no cliente. O issue 0044 continua
+responsável pelas ações de confirmação, rejeição e discovery.
 
 ## Objetivo
 
