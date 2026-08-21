@@ -225,6 +225,14 @@ Important key families include:
 - \`processed:*\` for temporary webhook idempotency;
 - TTL-based \`ia_status:*\` and \`ia_result:*\` compatibility views.
 
+The former buffer/debounce families are not application paths. Issue 0037's
+manual \`scripts/redis_residue_cleanup.py\` command inventories those explicit
+families with Redis/PostgreSQL state before deletion, removes only reviewed
+orphaned keys one at a time, and retains the ambiguous \`ia_processing\` list.
+It does not alter durable PostgreSQL state or the active queue/dead-letter
+families above. The historical \`src/utils/backfill_redis_history.py\` utility
+remains available because migration/backfill code is not inferred to be dead.
+
 ## 5. Finalization modes
 
 Persistent DigiSac-history finalization is the only supported mode. Ticket

@@ -162,6 +162,15 @@ currently in progress._
   skipped** and PostgreSQL **69 passed, 224 deselected**. This is
   local/disposable evidence and does not prove provider, Redis, deployment, or
   production behavior.
+- **[completed] Redis residue audit and bounded cleanup** (issue 0037;
+  SPEC-0001 and SPEC-0003). `scripts/redis_residue_cleanup.py` inventories
+  Redis key types, TTLs, queue/dead-letter metrics, ambiguous `ia_processing`,
+  and PostgreSQL cycle/media state before an explicit reviewed allowlist apply.
+  The 2026-08-21 local Compose run removed 857 keys from six orphaned legacy
+  buffer/debounce families, retained all active queues/dead-letters,
+  idempotency/status/result keys, `ia_processing`, and PostgreSQL state, and
+  passed post-cleanup health and inventory checks. This is local runtime
+  evidence only; no production target or provider was used.
 
 ### Implemented, with bounded verification only
 
@@ -189,6 +198,8 @@ currently in progress._
   smoke request.
 - Issues 0001–0016 are `closed`. Earlier baseline delivery work is complete and
   must not be reopened.
+- Issue 0037 is closed after the reviewed local Redis cleanup; no current
+  source owner was found for the six removed legacy key families.
   Broader classification policy changes remain blocked on product decisions.
 
 ## Priority plan
@@ -446,7 +457,8 @@ Redis, deployment, or production readiness.
   traceability/evidence reconciliation (0009), financial taxonomy prompt
   parity (0010), Groq parser logging privacy (0024), webhook extraction
   logging privacy (0025), IA classification-contract boundary (0035), and
-  Acessórias Request provider boundary (0036).
+  Acessórias Request provider boundary (0036), and the bounded Redis residue
+  audit/cleanup (0037).
 - **[superseded]** Any prior plan item proposing PRD/architecture/spec work
   already completed by the existing artifacts, legacy-finalization removal,
   diagnostic-route removal, fixed-port test Compose work, or broader database

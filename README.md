@@ -563,6 +563,26 @@ Dead-letters indicam trabalho que exige diagnóstico. Reprocessamentos devem ser
 restritos ao ID afetado: reserve um item, evite duplicá-lo na fila, confirme o
 estado `completed` persistido e só então remova a dead-letter correspondente.
 
+Resíduos das antigas chaves Redis de buffer/debounce podem ser auditados e
+removidos somente por uma operação manual, limitada e revisada. O dry-run
+registra famílias, tipos, TTLs, contagens duráveis e apenas digests de chaves;
+`ia_processing` permanece retido até haver prova de que não contém trabalho
+recuperável:
+
+```bash
+PYTHONPATH=/app python -m scripts.redis_residue_cleanup \
+  --dry-run --report reports/redis-residue-dry-run-YYYY-MM-DD.json
+# revise o relatório antes de executar a allowlist aprovada
+PYTHONPATH=/app python -m scripts.redis_residue_cleanup \
+  --apply --confirm --report reports/redis-residue-dry-run-YYYY-MM-DD.json
+```
+
+O comando só pode apagar as seis famílias explicitamente allowlisted pelo
+issue 0037, uma chave por vez; nunca usa `FLUSHDB`, `FLUSHALL` ou um glob
+genérico. Ele revalida Redis, filas, PostgreSQL, leases, agendas e marcadores
+antes e depois, preservando filas/dead-letters ativos, `processed:*`,
+`ia_status:*`, `ia_result:*` e todo o estado durável PostgreSQL.
+
 Backup:
 
 ```bash

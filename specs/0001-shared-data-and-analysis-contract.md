@@ -1,16 +1,16 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; decisões de produto registradas abaixo
-- **Versão:** 1.4
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; decisões de produto registradas abaixo
+- **Versão:** 1.5
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032 e 0035
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035 e 0037
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
 
 Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte e coordenação transitória.
 
-Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados.
+Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados. O issue 0037 adiciona somente uma auditoria manual, bounded e repetível para famílias Redis órfãs, sem apagar dados duráveis nem transformar a operação em job de retenção.
 
 ## Estado de referência
 
@@ -47,6 +47,14 @@ PostgreSQL ou estado de ciclo. `src/workers/ia_worker.py` continua dono da
 chamada Groq, erros/cooldown, enriquecimento, persistência e orquestração. Não
 houve alteração da taxonomia, contrato de quatro campos, privacidade ou
 semântica de retry.
+
+**Auditoria Redis (2026-08-21):** o issue 0037 confirmou que PostgreSQL continua
+sendo a autoridade durável e que Redis contém somente transporte, idempotência
+temporária e visões TTL. O comando manual `scripts/redis_residue_cleanup.py`
+produz dry-run com tipos, TTLs, donos, classificação, estado de filas e
+reconciliação PostgreSQL; sua allowlist remove apenas famílias órfãs revisadas,
+retém `ia_processing` inconclusivo e não toca `processed:*`, resultados
+transitórios, filas, dead-letters ou registros PostgreSQL.
 
 ## Contrato de dados e integridade
 

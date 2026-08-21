@@ -1,9 +1,9 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; boundaries estruturais nos issues 0029, 0031 e 0035
-- **Versão:** 1.5
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037
+- **Versão:** 1.6
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002; issue 0037
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
@@ -50,6 +50,13 @@ de classificação em `src/core/ia_classification.py`. A finalização persisten
 continua responsável por contexto, claims, transições, chamada do worker e
 persistência; não houve alteração de ordenação do ciclo, mídia, retry,
 idempotência, filas ou recuperação.
+
+**Auditoria Redis (2026-08-21):** o issue 0037 reconciliou filas, dead-letters,
+marcadores de publicação, agendas, leases e estados PostgreSQL antes e depois
+de remover 857 chaves das seis famílias de buffer/debounce órfãs. A fila de
+imagem, sua dead-letter, `ia_processing` e todo o estado durável permaneceram
+intactos; a operação é manual, allowlisted e não altera o contrato de reserva,
+publicação, retry ou recuperação.
 
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
 **216 testes offline aprovados e 69 skips**, Alembic
@@ -99,4 +106,6 @@ Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúd
 
 O modo Redis-buffer, a flag, suas chaves, debounce, tratamento no worker e
 cobertura específica foram removidos. Somente o fluxo por histórico permanece;
-Redis é transporte e coordenação transitória do fluxo persistente.
+Redis é transporte e coordenação transitória do fluxo persistente. Resíduos
+históricos não ativos são tratados somente pela auditoria manual e bounded do
+issue 0037; `ia_processing` não é apagado por inferência.

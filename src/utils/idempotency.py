@@ -11,16 +11,6 @@ class IdempotencyService:
         self.redis = redis_client
         self.ttl = 3600  # 1 hora
 
-    async def is_processed(self, event_id: str) -> bool:
-        """Verifica se evento já foi processado"""
-        key = f"processed:{event_id}"
-        return await self.redis.exists(key) > 0
-
-    async def mark_processed(self, event_id: str) -> None:
-        """Marca evento como processado"""
-        key = f"processed:{event_id}"
-        await self.redis.setex(key, self.ttl, "1")
-
     async def try_mark_processed(self, event_id: str) -> bool:
         """Atomically reserve an event; False means it was already received."""
         return bool(
