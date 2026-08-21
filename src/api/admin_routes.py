@@ -25,6 +25,7 @@ from src.core.identity_resolution import (
     IdentityConflictError,
     IdentityResolutionError,
     confirm_identity_link_admin,
+    discover_identity_admin,
     reject_identity_link_admin,
 )
 
@@ -169,6 +170,47 @@ class IdentityLinkConfirmRequest(IdentityCommandRequest):
 
 class IdentityLinkRejectRequest(IdentityCommandRequest):
     pass
+
+
+class IdentityDiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        if (
+            value != value.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError("idempotency_key must be opaque and nonblank")
+        return value
+
+
+class IdentityDiscoveryLinkProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    acessorias_company_external_id: str
+    state: LinkState
+    source: str
+    confirmation_source: str | None
+    confirmed_at: datetime | None
+    rejection_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IdentityDiscoveryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    digisac_contact_external_id: str
+    state: IdentityState
+    matched_company_external_ids: list[str]
+    links: list[IdentityDiscoveryLinkProjection]
+    matched_company_count: int = Field(ge=0)
+    evidence_count: int = Field(ge=0)
+    observed_at: datetime
 
 
 class IdentityLinkCommandResponse(BaseModel):
@@ -464,3 +506,23 @@ async def identity_link_reject(
         _raise_identity_command_http_error(exc)
     response.status_code = 200 if command["replayed"] else status.HTTP_201_CREATED
     return IdentityLinkCommandResponse.model_validate(command["result"])
+
+
+@admin_router.post(
+    "/contacts/{digisac_contact_external_id}/identity-discovery",
+    response_model=IdentityDiscoveryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Run deterministic identity discovery",
+)
+async def identity_discovery(
+    digisac_contact_external_id: str,
+    payload: IdentityDiscoveryRequest,
+) -> IdentityDiscoveryResponse:
+    try:
+        command = await discover_identity_admin(
+            digisac_contact_external_id,
+            idempotency_key=payload.idempotency_key,
+        )
+    except Exception as exc:
+        _raise_identity_command_http_error(exc)
+    return IdentityDiscoveryResponse.model_validate(command["result"])

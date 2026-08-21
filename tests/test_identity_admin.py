@@ -84,6 +84,7 @@ def test_all_admin_routes_use_one_generic_unauthorized_response(
         "/admin/acessorias/identity-links",
         "/admin/acessorias/contacts/missing-contact/identity",
         "/admin/acessorias/companies",
+        "/admin/acessorias/contacts/missing-contact/identity-discovery",
         "/admin/acessorias/contacts/missing-contact/identity-links/confirm",
         "/admin/acessorias/contacts/missing-contact/identity-links/company/reject",
     ]
@@ -92,6 +93,7 @@ def test_all_admin_routes_use_one_generic_unauthorized_response(
         admin_client.post(path, headers=headers or {}, json={}) for path in paths[3:]
     )
     assert [(response.status_code, response.json()) for response in responses] == [
+        (401, {"detail": "Invalid administrative credentials"}),
         (401, {"detail": "Invalid administrative credentials"}),
         (401, {"detail": "Invalid administrative credentials"}),
         (401, {"detail": "Invalid administrative credentials"}),
@@ -188,6 +190,80 @@ def test_admin_identity_commands_validate_and_return_new_or_replayed_results(
         ("contact-external", "company-external", "operator_verified", "opaque-confirm-key"),
         ("contact-external", "company-external", "operator_verified", "opaque-confirm-key"),
     ]
+
+
+def test_admin_identity_discovery_is_authenticated_idempotent_and_sanitized(
+    admin_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    discovery_result = {
+        "digisac_contact_external_id": "contact-external",
+        "state": "ambiguous",
+        "matched_company_external_ids": ["company-one", "company-two"],
+        "links": [
+            {
+                "acessorias_company_external_id": "company-one",
+                "state": "candidate",
+                "source": "automatic",
+                "confirmation_source": None,
+                "confirmed_at": None,
+                "rejection_reason": None,
+                "created_at": "2026-08-21T12:00:00Z",
+                "updated_at": "2026-08-21T12:00:00Z",
+            },
+            {
+                "acessorias_company_external_id": "company-two",
+                "state": "candidate",
+                "source": "automatic",
+                "confirmation_source": None,
+                "confirmed_at": None,
+                "rejection_reason": None,
+                "created_at": "2026-08-21T12:00:00Z",
+                "updated_at": "2026-08-21T12:00:00Z",
+            },
+        ],
+        "matched_company_count": 2,
+        "evidence_count": 2,
+        "observed_at": "2026-08-21T12:00:00Z",
+    }
+    calls: list[tuple[str, str]] = []
+
+    async def fake_discovery(contact: str, *, idempotency_key: str) -> dict[str, Any]:
+        calls.append((contact, idempotency_key))
+        return {"replayed": len(calls) > 1, "result": discovery_result}
+
+    monkeypatch.setattr(
+        admin_routes, "discover_identity_admin", fake_discovery, raising=False
+    )
+    headers = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    body = {"idempotency_key": "opaque-discovery-key"}
+    created = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-discovery",
+        json=body,
+        headers=headers,
+    )
+    replay = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-discovery",
+        json=body,
+        headers=headers,
+    )
+    invalid = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-discovery",
+        json={"idempotency_key": ""},
+        headers=headers,
+    )
+
+    assert created.status_code == 200
+    assert replay.status_code == 200
+    assert invalid.status_code == 400
+    assert created.json() == replay.json() == discovery_result
+    assert calls == [
+        ("contact-external", "opaque-discovery-key"),
+        ("contact-external", "opaque-discovery-key"),
+    ]
+    assert "opaque-discovery-key" not in created.text
+    assert "digisac_contact_id" not in created.text
+    assert "value_fingerprint" not in created.text
 
 
 def test_cursor_is_signed_scope_bound_and_limit_errors_are_400(

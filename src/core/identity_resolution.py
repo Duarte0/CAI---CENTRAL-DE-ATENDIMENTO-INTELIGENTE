@@ -30,6 +30,7 @@ ADMIN_SOURCE = "admin_api"
 ADMIN_ACTOR = "admin"
 ADMIN_CONFIRM_OPERATION = "identity_link_confirmation"
 ADMIN_REJECT_OPERATION = "identity_link_rejection"
+ADMIN_DISCOVERY_OPERATION = "identity_discovery"
 
 _SAFE_VALUE = re.compile(r"^[a-z0-9_.:@-]{1,120}$")
 _SAFE_REASON = re.compile(r"^[a-z0-9_:-]{1,120}$")
@@ -355,7 +356,7 @@ def _admin_command_fingerprint(
     *,
     operation: str,
     digisac_contact_external_id: str,
-    acessorias_company_external_id: str,
+    acessorias_company_external_id: str | None,
     reason: str,
 ) -> str:
     payload = json.dumps(
@@ -391,6 +392,81 @@ def _admin_link_result(
         "rejection_reason": serialized["rejection_reason"],
         "created_at": serialized["created_at"],
         "updated_at": serialized["updated_at"],
+    }
+
+
+def _admin_discovery_result(
+    connection: psycopg.Connection[Any],
+    *,
+    digisac_contact_external_id: str,
+    discovery: IdentityDiscoveryResult,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    company_ids = list(discovery.company_ids)
+    link_ids = list(discovery.link_ids)
+    company_rows: list[Mapping[str, Any]] = []
+    link_rows: list[Mapping[str, Any]] = []
+    if company_ids:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            company_rows = cursor.execute(
+                """
+                SELECT id, external_id
+                FROM acessorias_companies
+                WHERE id = ANY(%s)
+                ORDER BY external_id, id
+                """,
+                (company_ids,),
+            ).fetchall()
+    if link_ids:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            link_rows = cursor.execute(
+                """
+                SELECT
+                    company.external_id AS company_external_id,
+                    link.state,
+                    link.source,
+                    link.confirmation_source,
+                    link.confirmed_at,
+                    link.rejection_reason,
+                    link.created_at,
+                    link.updated_at
+                FROM identity_company_links AS link
+                JOIN acessorias_companies AS company
+                  ON company.id = link.acessorias_company_id
+                WHERE link.id = ANY(%s)
+                ORDER BY company.external_id, link.id
+                """,
+                (link_ids,),
+            ).fetchall()
+    links: list[dict[str, Any]] = []
+    for row in link_rows:
+        serialized = _serialize_row(row)
+        if serialized is None:
+            continue
+        links.append(
+            {
+                "acessorias_company_external_id": str(
+                    serialized["company_external_id"]
+                ),
+                "state": str(serialized["state"]),
+                "source": str(serialized["source"]),
+                "confirmation_source": serialized["confirmation_source"],
+                "confirmed_at": serialized["confirmed_at"],
+                "rejection_reason": serialized["rejection_reason"],
+                "created_at": serialized["created_at"],
+                "updated_at": serialized["updated_at"],
+            }
+        )
+    return {
+        "digisac_contact_external_id": digisac_contact_external_id,
+        "state": discovery.state,
+        "matched_company_external_ids": [
+            str(row["external_id"]) for row in company_rows
+        ],
+        "links": links,
+        "matched_company_count": len(company_ids),
+        "evidence_count": discovery.evidence_count,
+        "observed_at": observed_at.isoformat(),
     }
 
 
@@ -1060,17 +1136,21 @@ def _execute_admin_identity_link_command_sync(
     *,
     operation: str,
     digisac_contact_external_id: str,
-    acessorias_company_external_id: str,
+    acessorias_company_external_id: str | None,
     reason: str,
     idempotency_key: str,
 ) -> dict[str, Any]:
     safe_contact_external_id = _safe_opaque_reference(
         digisac_contact_external_id, "digisac_contact_external_id"
     )
-    safe_company_external_id = _safe_opaque_reference(
-        acessorias_company_external_id, "acessorias_company_external_id"
+    safe_company_external_id = (
+        None
+        if acessorias_company_external_id is None
+        else _safe_opaque_reference(
+            acessorias_company_external_id, "acessorias_company_external_id"
+        )
     )
-    safe_reason = _safe_reason(reason)
+    safe_reason = "" if operation == ADMIN_DISCOVERY_OPERATION else _safe_reason(reason)
     safe_key = _safe_opaque_reference(idempotency_key, "idempotency_key")
     command_key_hash = _fingerprint(safe_key)
     request_fingerprint = _admin_command_fingerprint(
@@ -1108,16 +1188,20 @@ def _execute_admin_identity_link_command_sync(
                 ).fetchone()
                 if contact is None:
                     raise LookupError("DigiSac contact not found")
-                company = cursor.execute(
-                    """
-                    SELECT id
-                    FROM acessorias_companies
-                    WHERE external_id = %s
-                    """,
-                    (safe_company_external_id,),
-                ).fetchone()
-                if company is None:
-                    raise LookupError("Acessorias company not found")
+                company = None
+                if safe_company_external_id is not None:
+                    company = cursor.execute(
+                        """
+                        SELECT id
+                        FROM acessorias_companies
+                        WHERE external_id = %s
+                        """,
+                        (safe_company_external_id,),
+                    ).fetchone()
+                    if company is None:
+                        raise LookupError("Acessorias company not found")
+                if operation != ADMIN_DISCOVERY_OPERATION and company is None:
+                    raise RuntimeError("identity link command requires a company")
 
             with connection.cursor(row_factory=dict_row) as cursor:
                 command = cursor.execute(
@@ -1133,7 +1217,7 @@ def _execute_admin_identity_link_command_sync(
                         command_key_hash,
                         operation,
                         int(contact["id"]),
-                        int(company["id"]),
+                        None if company is None else int(company["id"]),
                         request_fingerprint,
                     ),
                 ).fetchone()
@@ -1155,8 +1239,22 @@ def _execute_admin_identity_link_command_sync(
                 )
 
             contact_id = int(contact["id"])
-            company_id = int(company["id"])
-            if operation == ADMIN_CONFIRM_OPERATION:
+            company_id = None if company is None else int(company["id"])
+            if operation == ADMIN_DISCOVERY_OPERATION:
+                observed_at = datetime.now(timezone.utc)
+                discovery = _discover_locked(
+                    connection,
+                    contact_id=contact_id,
+                    rule_version=DEFAULT_RULE_VERSION,
+                    observed_at=observed_at,
+                )
+                result = _admin_discovery_result(
+                    connection,
+                    digisac_contact_external_id=safe_contact_external_id,
+                    discovery=discovery,
+                    observed_at=observed_at,
+                )
+            elif operation == ADMIN_CONFIRM_OPERATION and company_id is not None:
                 row = _confirm_identity_link_locked(
                     connection,
                     contact_id=contact_id,
@@ -1167,7 +1265,7 @@ def _execute_admin_identity_link_command_sync(
                     confirmation_source=ADMIN_SOURCE,
                     transition_reason=safe_reason,
                 )
-            elif operation == ADMIN_REJECT_OPERATION:
+            elif operation == ADMIN_REJECT_OPERATION and company_id is not None:
                 row = _reject_identity_link_locked(
                     connection,
                     contact_id=contact_id,
@@ -1180,11 +1278,14 @@ def _execute_admin_identity_link_command_sync(
             else:
                 raise RuntimeError("unsupported administrative identity command")
 
-            result = _admin_link_result(
-                row,
-                digisac_contact_external_id=safe_contact_external_id,
-                acessorias_company_external_id=safe_company_external_id,
-            )
+            if operation != ADMIN_DISCOVERY_OPERATION:
+                if safe_company_external_id is None:
+                    raise RuntimeError("identity link command requires a company")
+                result = _admin_link_result(
+                    row,
+                    digisac_contact_external_id=safe_contact_external_id,
+                    acessorias_company_external_id=safe_company_external_id,
+                )
             connection.execute(
                 """
                 UPDATE identity_admin_commands
@@ -1228,6 +1329,22 @@ async def reject_identity_link_admin(
         digisac_contact_external_id=digisac_contact_external_id,
         acessorias_company_external_id=acessorias_company_external_id,
         reason=reason,
+        idempotency_key=idempotency_key,
+    )
+
+
+async def discover_identity_admin(
+    digisac_contact_external_id: str,
+    *,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Discover one external-ID contact with durable admin API idempotency."""
+    return await asyncio.to_thread(
+        _execute_admin_identity_link_command_sync,
+        operation=ADMIN_DISCOVERY_OPERATION,
+        digisac_contact_external_id=digisac_contact_external_id,
+        acessorias_company_external_id=None,
+        reason="",
         idempotency_key=idempotency_key,
     )
 

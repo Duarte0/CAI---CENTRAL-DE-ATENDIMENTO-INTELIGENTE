@@ -36,7 +36,7 @@ currently in progress._
   API fallbacks, models, and legacy tests were removed. Targeted search finds
   no active legacy code or setting.
 - **[completed] Durable schema and migration foundation** (SPEC-0001). Alembic
-  owns schema through `0021_identity_admin_commands`; migrations, backfills,
+  owns schema through `0022_identity_discovery_command`; migrations, backfills,
   import, and audit utilities are versioned. Application code verifies rather
   than creates schema.
 - **[completed] Acessórias preparation and pre-POST recovery** (SPEC-0008–0011;
@@ -384,21 +384,23 @@ currently in progress._
    production quota was used or claimed.
 
 6. **[P1 | completed locally | implemented] Milestone C.1 — Authenticated
-   identity administration** (SPEC-0012; issues 0038 and 0039). The read slice
+   identity administration** (SPEC-0012; issues 0038, 0039 and 0040). The read slice
    provides deterministic, opaque-cursor triage, canonical contact detail, and
    present/active company search. Issue 0039 adds the protected confirmation and
    rejection commands, source-derived `admin`/`admin_api` audit metadata,
    contact serialization, additive Alembic `0021_identity_admin_commands`, and
-   PostgreSQL command-key idempotency. The boundary returns only stable external
-   IDs and safe state/timestamp metadata; it does not expose phone/email/evidence
-   values, invoke providers/Redis/discovery, mutate cycle resolutions, or create
-   Requests. Optional identity discovery remains issue 0040.
+   PostgreSQL command-key idempotency. Issue 0040 adds the deterministic,
+   idempotent identity-discovery command and additive Alembic
+   `0022_identity_discovery_command`, reusing the same ledger with a nullable
+   company target. The boundary returns only stable external IDs and safe
+   state/timestamp metadata; it does not expose phone/email/evidence values,
+   invoke providers/Redis, mutate cycle resolutions, or create Requests.
 
-   Build evidence (2026-08-21): focused admin/OpenAPI tests passed **14 passed,
-   1 deselected**; the canonical disposable runner with `APP_TIMEZONE=UTC`
-   passed compileall, strict Pyright, offline pytest (**237 passed, 74 skipped**),
-   Alembic head `0021_identity_admin_commands`, and PostgreSQL pytest (**74
-   passed, 237 deselected**). No production database, provider credential,
+   Build evidence (2026-08-21): focused admin/OpenAPI/identity tests passed **15 passed,
+   7 skipped**; the canonical disposable runner with `APP_TIMEZONE=UTC`
+   passed compileall, strict Pyright, offline pytest (**238 passed, 76 skipped**),
+   Alembic head `0022_identity_discovery_command`, and PostgreSQL pytest (**76
+   passed, 238 deselected**). No production database, provider credential,
    Redis runtime, deployment, or secret-manager/network rollout was used.
 
 7. **[P2 | pending | optional] Milestone F — Request lifecycle
@@ -421,9 +423,9 @@ manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015 and the preparation integration under issue 0026. Milestone D is implemented under issues 0016, 0020 and 0026; Milestone E is
 implemented under issues 0017–0019, 0021–0022 and 0026 with its Request contract and A–D facts
 available; structural provider/durable-operation ownership was completed by
-issue 0036. Milestone C.1's read and confirmation/rejection administrative
-slices are implemented by issues 0038 and 0039; optional discovery remains
-issue 0040 and does not authorize historical-cycle recovery. No specification in this sequence authorizes
+issue 0036. Milestone C.1's read, confirmation/rejection, and discovery
+administrative slices are implemented by issues 0038, 0039, and 0040; discovery
+does not authorize historical-cycle recovery. No specification in this sequence authorizes
 application changes until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts

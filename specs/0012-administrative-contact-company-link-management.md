@@ -1,6 +1,6 @@
 # SPEC-0012 — Administração de vínculos contato DigiSac–empresa Acessórias
 
-- **Status:** leitura e confirmação/rejeição implementadas localmente nos issues 0038 e 0039; redescoberta pendente no issue 0040
+- **Status:** leitura, confirmação/rejeição e redescoberta implementadas localmente nos issues 0038, 0039 e 0040
 - **Versão:** 1.1
 - **Prioridade/Fase:** P1 / Milestone C.1 — operação administrativa de identidade
 - **Rastreabilidade:** PRD §§4, 5.2, 5.5, 8 e 10; ARCHITECTURE §§2.1, 3 e 13; `IMPLEMENTATION_PLAN.md`; SPEC-0001, SPEC-0006–0011
@@ -19,9 +19,6 @@ contêm apenas IDs externos, estados, nomes de exibição, disponibilidade,
 categorias/contagens/horários de evidência e transições sanitizadas; valores de
 telefone, email e evidência não fazem parte da projeção.
 
-O restante desta SPEC — redescoberta — permanece explicitamente fora deste slice
-e é coberto pelo issue 0040.
-
 **Evidência da fatia de confirmação/rejeição (2026-08-21):** o issue 0039
 adiciona os comandos autenticados `POST /admin/acessorias/contacts/{id}/identity-links/confirm`
 e `POST /admin/acessorias/contacts/{id}/identity-links/{company_id}/reject`.
@@ -34,7 +31,20 @@ transacionais não deixam reserva parcial. A validação descartável passou
 compileall, Pyright, **237 passed, 74 skipped** offline, Alembic `0021` e
 **74 passed, 237 deselected** em PostgreSQL 16. Isso é evidência local
 descartável e não comprova secret manager, provider, Redis, deployment ou
-produção. O issue 0040 continua responsável pela redescoberta opcional.
+produção. O issue 0040 implementa a redescoberta opcional, sem afirmar rollout
+de produção.
+
+**Evidência da fatia de redescoberta (2026-08-21):** o issue 0040 adiciona
+`POST /admin/acessorias/contacts/{id}/identity-discovery`, com chave opaca,
+resultado sanitizado por IDs externos e replay pelo mesmo ledger PostgreSQL.
+A migration aditiva `0022_identity_discovery_command` permite o escopo
+`identity_discovery` sem empresa-alvo; a transação mantém o lock do contato,
+evidências e candidatos da descoberta determinística, sem provider, Redis,
+hydration, sync, backfill, Request ou alteração de resolução histórica. A
+validação descartável passou compileall, Pyright, **238 passed, 76 skipped**
+offline, Alembic `0022` e **76 passed, 238 deselected** em PostgreSQL 16. Isso é
+evidência local descartável e não comprova secret manager, provider, Redis,
+deployment ou produção.
 
 ## Objetivo e não objetivos
 

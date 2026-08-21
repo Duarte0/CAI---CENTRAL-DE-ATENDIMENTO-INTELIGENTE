@@ -17,6 +17,7 @@ from src.core.identity_resolution import (
     discover_identity,
     reject_identity_link_admin,
 )
+from src.core import identity_resolution
 
 pytestmark = pytest.mark.postgres
 
@@ -222,3 +223,90 @@ async def test_concurrent_same_command_key_converges_to_one_transition() -> None
             "SELECT COUNT(*) FROM identity_company_link_transitions"
         ).fetchone() == (1,)
     assert contact_id > 0
+
+
+@pytest.mark.asyncio
+async def test_discovery_command_is_external_idempotent_and_preserves_conservative_state() -> None:
+    company_id = create_company("admin-discovery-company")
+    create_company_contact(company_id, "admin-discovery-directory-contact")
+    contact_id = await create_contact("admin-discovery-contact")
+
+    first = await identity_resolution.discover_identity_admin(
+        "admin-discovery-contact", idempotency_key="discovery-command-key"
+    )
+    replay = await identity_resolution.discover_identity_admin(
+        "admin-discovery-contact", idempotency_key="discovery-command-key"
+    )
+
+    assert first["replayed"] is False
+    assert replay == {"replayed": True, "result": first["result"]}
+    assert first["result"]["digisac_contact_external_id"] == "admin-discovery-contact"
+    assert first["result"]["state"] == "candidate"
+    assert first["result"]["matched_company_external_ids"] == [
+        "admin-discovery-company"
+    ]
+    assert "digisac_contact_id" not in first["result"]
+    assert "link_ids" not in first["result"]
+
+    with psycopg.connect(settings.database_url) as connection:
+        assert connection.execute(
+            "SELECT operation, acessorias_company_id, state FROM identity_admin_commands"
+        ).fetchone() == ("identity_discovery", None, "completed")
+        assert connection.execute(
+            "SELECT COUNT(*) FROM identity_match_evidence"
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM identity_company_link_transitions"
+        ).fetchone() == (1,)
+
+    with pytest.raises(IdentityCommandConflictError):
+        await identity_resolution.discover_identity_admin(
+            "another-contact", idempotency_key="discovery-command-key"
+        )
+    assert contact_id > 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_discovery_converges_and_failure_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_id = create_company("admin-discovery-concurrent-company")
+    create_company_contact(company_id, "admin-discovery-concurrent-directory-contact")
+    await create_contact("admin-discovery-concurrent-contact")
+
+    results = await asyncio.gather(
+        *[
+            identity_resolution.discover_identity_admin(
+                "admin-discovery-concurrent-contact",
+                idempotency_key="discovery-concurrent-key",
+            )
+            for _ in range(5)
+        ]
+    )
+    assert sum(not result["replayed"] for result in results) == 1
+    assert {result["result"]["state"] for result in results} == {"candidate"}
+
+    failing_company = create_company("admin-discovery-rollback-company")
+    create_company_contact(failing_company, "admin-discovery-rollback-directory-contact")
+    await create_contact("admin-discovery-rollback-contact")
+
+    def fail_discovery(*_: object, **__: object) -> object:
+        raise RuntimeError("forced discovery failure")
+
+    monkeypatch.setattr(identity_resolution, "_discover_locked", fail_discovery)
+    with pytest.raises(RuntimeError, match="forced discovery failure"):
+        await identity_resolution.discover_identity_admin(
+            "admin-discovery-rollback-contact",
+            idempotency_key="discovery-rollback-key",
+        )
+
+    with psycopg.connect(settings.database_url) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM identity_admin_commands WHERE operation = 'identity_discovery'"
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM identity_match_evidence"
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM identity_company_links"
+        ).fetchone() == (1,)

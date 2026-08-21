@@ -129,18 +129,19 @@ DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
 uses sanitized fingerprints, while raw and normalized directory identifiers
 remain in their canonical foundation records.
 
-SPEC-0012 and issues 0038/0039 add a separate administrative boundary at
+SPEC-0012 and issues 0038–0040 add a separate administrative boundary at
 `/admin/acessorias`. Its bearer token is `ADMIN_API_TOKEN`, validated before
 application startup completes. `src/api/admin_routes.py` performs only HTTP
 authentication/validation and response projection; `src/core/identity_admin.py`
 performs bounded PostgreSQL reads with deterministic, signed cursors, while
-`src/core/identity_resolution.py` owns contact-locked confirmation/rejection
-transactions. The projection and command responses expose stable external IDs,
-safe state/source/timestamp metadata, and no phone/email values, raw evidence,
-conversation content, provider calls, Redis, discovery, hydration, sync, cycle
-updates, or Request operations. Command keys are hashed in the PostgreSQL
+`src/core/identity_resolution.py` owns contact-locked confirmation/rejection and
+discovery transactions. The projection and command responses expose stable
+external IDs, safe state/source/timestamp metadata, and no phone/email values,
+raw evidence, conversation content, provider calls, Redis, hydration, sync,
+cycle updates, or Request operations. Command keys are hashed in the PostgreSQL
 `identity_admin_commands` ledger and are never returned or written to audit
-metadata. Optional discovery remains issue 0040.
+metadata. Discovery reuses that ledger under `identity_discovery` and never
+mutates historical cycle resolution.
 
 Department mapping uses the cycle-applicable DigiSac department from assignment
 history, selected only within the persisted `cycle_started_at` through
@@ -380,7 +381,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0021_identity_admin_commands\`. The main data groups
+Alembic owns the schema through \`0022_identity_discovery_command\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -422,6 +423,7 @@ Implemented routes include:
 | \`GET /admin/acessorias/companies\` | Authenticated present/active company search. |
 | \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm\` | Authenticated, idempotent confirmation of one explicit contact/company pair. |
 | \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject\` | Authenticated, idempotent rejection with preserved audit history. |
+| \`POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery\` | Authenticated, idempotent deterministic discovery over local PostgreSQL facts. |
 
 The webhook normally returns \`202\`; safely ignored events return \`200\` with an
 ignore reason. Missing persisted entities return \`404\`. There is no webhook
@@ -591,9 +593,10 @@ they limit release verification and future evolution decisions.
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
-- Authenticated identity triage and commands: \`src/api/admin_routes.py\`,
+- Authenticated identity triage, commands, and discovery: \`src/api/admin_routes.py\`,
   \`src/core/identity_admin.py\`, \`src/core/identity_resolution.py\`,
-  Alembic \`0021_identity_admin_commands.py\`, and SPEC-0012; it consumes
+  Alembic \`0021_identity_admin_commands.py\` and
+  \`0022_identity_discovery_command.py\`, and SPEC-0012; it consumes
   PostgreSQL as the sole authority and does not call providers or Redis.
 - DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
   and Alembic \`0018_department_mapping.py\`.

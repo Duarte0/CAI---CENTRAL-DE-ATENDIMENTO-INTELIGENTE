@@ -17,11 +17,11 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.2; issues 0015 e 0026 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência e candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e gate de preparação; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.4; issues 0017–0019, 0021–0022 e 0026; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
-| SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Leitura e confirmação/rejeição implementadas localmente nos issues 0038/0039; redescoberta pendente no issue 0040 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir vínculos auditáveis; não cria Request nem reavalia ciclos históricos. |
+| SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Implementado localmente v1.1; issues 0038, 0039 e 0040 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir vínculos auditáveis; não cria Request nem reavalia ciclos históricos. |
 
-A evidência mais recente registrada para o runner de SPEC-0004 é **237 passed,
-74 skipped** na etapa offline e **74 passed, 237 deselected** na etapa
-PostgreSQL descartável (issue 0039, migration `0021_identity_admin_commands`).
+A evidência mais recente registrada para o runner de SPEC-0004 é **238 passed,
+76 skipped** na etapa offline e **76 passed, 238 deselected** na etapa
+PostgreSQL descartável (issue 0040, migration `0022_identity_discovery_command`).
 A evidência anterior de issue 0036 foi **224 passed, 69 skipped** na etapa
 offline e **69 passed, 224 deselected** no PostgreSQL. A evidência anterior de
 issue 0033 foi **220 passed,
@@ -90,8 +90,9 @@ autenticada por `ADMIN_API_TOKEN`, com lista/detalhe, busca de empresas,
 confirmação, rejeição e redescoberta de um contato. Os issues 0038 e 0039
 implementam localmente as três leituras e os comandos de confirmação/rejeição,
 com PostgreSQL como autoridade, paginação determinística, idempotência durável
-e projeções sem valores de telefone/email/evidência; o issue 0040 permanece como
-slice de redescoberta. O cenário
+e projeções sem valores de telefone/email/evidência. O issue 0040 completa o
+slice de redescoberta com o mesmo ledger e sem provider, Redis ou recuperação de
+ciclos. O cenário
 inicial possui um único operador e não exige cadastro de usuários, IdP, JWT ou
 RBAC. O token deve ficar em secret manager/ambiente protegido, e um frontend
 futuro é cliente fino dessa API, não autoridade de domínio. A SPEC não altera

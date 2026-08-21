@@ -995,6 +995,42 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         security=admin_security,
         responses=command_responses,
     )
+    discovery_operation = operation(
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery",
+        "post",
+        tag="Administração",
+        summary="Run deterministic identity discovery",
+        description=(
+            "Re-runs the existing conservative identity discovery rules for one "
+            "canonical local DigiSac contact. The PostgreSQL-authoritative command "
+            "is idempotent, exposes only external IDs and safe metadata, and never "
+            "calls providers, Redis, hydration, synchronization, or historical "
+            "cycle/Request operations."
+        ),
+        security=admin_security,
+        responses={
+            "200": _response(
+                "The deterministic discovery result, including an idempotent replay.",
+                _ref("IdentityDiscoveryResponse"),
+            ),
+            "400": _detail_response(
+                "The command body or idempotency key is invalid.",
+                "Invalid administrative command body",
+            ),
+            "401": _detail_response(
+                "The administrative bearer token is missing or invalid.",
+                "Invalid administrative credentials",
+            ),
+            "404": _detail_response(
+                "The canonical DigiSac contact does not exist.",
+                "Identity reference not found",
+            ),
+            "409": _detail_response(
+                "The idempotency key conflicts with another command or execution.",
+                "Idempotency key conflict",
+            ),
+        },
+    )
     confirm_operation = paths[
         "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm"
     ]["post"]
@@ -1016,6 +1052,15 @@ def _decorate_operations(document: dict[str, Any]) -> None:
             "application/json": {
                 "schema": _ref("IdentityLinkRejectRequest"),
                 "description": "Reason category and opaque command key; neither is echoed.",
+            }
+        },
+    }
+    discovery_operation["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": _ref("IdentityDiscoveryRequest"),
+                "description": "Opaque command key; it is never echoed.",
             }
         },
     }
@@ -1150,7 +1195,8 @@ def build_openapi_contract(app: FastAPI) -> dict[str, Any]:
             "CAI's supported HTTP surface is intentionally unversioned. /v1/ and "
             "/v2/ are future compatibility policy only, not mounted routes. Existing "
             "public query operations have no authentication scheme; administrative "
-            "identity projections and identity-link commands use the AdminBearer scheme."
+            "identity projections, identity-link commands, and identity discovery "
+            "use the AdminBearer scheme."
         ),
         routes=app.routes,
     )

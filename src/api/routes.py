@@ -397,6 +397,9 @@ async def validation_error_handler(
         path.startswith("/admin/acessorias/contacts/")
         and "/identity-links/" in path
         and (path.endswith("/confirm") or path.endswith("/reject"))
+    ) or (
+        path.startswith("/admin/acessorias/contacts/")
+        and path.endswith("/identity-discovery")
     ):
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,

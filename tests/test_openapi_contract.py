@@ -29,6 +29,7 @@ ADMIN_GET_PATHS = {
 ADMIN_POST_PATHS = {
     "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm",
     "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+    "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery",
 }
 ADMIN_PATHS = ADMIN_GET_PATHS | ADMIN_POST_PATHS
 TAGS = {"Webhook DigiSac", "Operações", "Conversas", "Ciclos", "Administração"}
@@ -166,6 +167,9 @@ def test_openapi_describes_admin_projection_contract() -> None:
         "IdentityLinkConfirmRequest",
         "IdentityLinkRejectRequest",
         "IdentityLinkCommandResponse",
+        "IdentityDiscoveryRequest",
+        "IdentityDiscoveryLinkProjection",
+        "IdentityDiscoveryResponse",
     }.issubset(schemas)
     links = document["paths"]["/admin/acessorias/identity-links"]["get"]
     state = next(parameter for parameter in links["parameters"] if parameter["name"] == "state")
@@ -216,6 +220,11 @@ def test_openapi_describes_admin_projection_contract() -> None:
         "404",
         "409",
     }
+    discovery_operation = document["paths"][
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery"
+    ]["post"]
+    assert set(discovery_operation["responses"]) == {"200", "400", "401", "404", "409"}
+    assert discovery_operation["requestBody"]["required"] is True
     assert confirm_operation["requestBody"]["required"] is True
     assert reject_operation["requestBody"]["required"] is True
 

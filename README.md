@@ -120,8 +120,16 @@ e `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/
 Eles validam somente o par indicado, preservam evidências/transições, derivam
 `admin`/`admin_api` do contexto do servidor e usam a ledger PostgreSQL
 `identity_admin_commands` para replays idempotentes. Não executam discovery,
-providers, Redis, mapeamento, Request ou alterações de resolução histórica; a
-redescoberta opcional permanece no issue 0040.
+providers, Redis, mapeamento, Request ou alterações de resolução histórica.
+
+O issue 0040 acrescenta `POST
+/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery`.
+Ele reutiliza a ledger PostgreSQL com o escopo `identity_discovery` e migration
+aditiva `0022_identity_discovery_command`, executa somente a descoberta
+determinística sobre fatos locais e retorna IDs externos, estado, links seguros,
+contagens e timestamp. Replays não executam discovery novamente; a operação não
+chama providers, Redis, hydration, sync, backfill, mapping, Request nem altera
+resoluções históricas.
 
 O issue 0026 completa a fronteira de preparação: cada ciclo carrega somente o
 `data.contact.id` canônico do snapshot de ticket, resolve a identidade, avalia
@@ -538,7 +546,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0021_identity_admin_commands` e só então
+ao destino, aplica e verifica Alembic `0022_identity_discovery_command` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -578,6 +586,14 @@ Na validação do issue 0039 em 2026-08-21, o runner descartável com
 Alembic `0021_identity_admin_commands` e **74 passed, 237 deselected** no
 PostgreSQL 16. A evidência é local e descartável; não comprova Redis, providers,
 secret manager, deployment ou produção.
+
+Na validação do issue 0040 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **238 passed, 76 skipped** offline,
+Alembic `0022_identity_discovery_command` e **76 passed, 238 deselected** no
+PostgreSQL 16. A execução sem o override manteve somente o failure preexistente
+de timezone em `tests/test_department_mapping.py`; a falha não envolve o slice
+administrativo. A evidência é local e descartável; não comprova Redis,
+providers, secret manager, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
