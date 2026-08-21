@@ -317,6 +317,9 @@ Variáveis principais:
 | `DIGISAC_API_KEY` | API da DigiSac. | vazio |
 | `DIGISAC_API_BASE_URL` | Base da API DigiSac. | `https://inov.digisac.chat/api/v1` |
 | `WEBHOOK_SECRET` | Habilita assinatura HMAC do webhook. | vazio |
+| `ADMIN_API_TOKEN` | Bearer da API administrativa interna. | vazio; obrigatório para iniciar a API administrativa |
+| `ADMIN_UI_PASSWORD` | Senha única de bootstrap da UI administrativa. | vazio; provisionar em ambiente protegido |
+| `ADMIN_SESSION_SECRET` | Chave de assinatura da sessão `HttpOnly` da UI. | vazio; provisionar em ambiente protegido |
 | `DATABASE_URL` | PostgreSQL da aplicação e Alembic. | obrigatório em execução |
 | `REDIS_URL` | Redis de filas e coordenação. | `redis://localhost:6379` |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
@@ -441,8 +444,10 @@ e timestamps seguros. PostgreSQL é a autoridade dos comandos: o replay da
 mesma chave converge para o mesmo resultado, a reutilização incompatível da
 chave retorna conflito e locks por contato impedem transições duplicadas sob
 concorrência. Elas não chamam providers ou Redis, não alteram resolução
-histórica de ciclos e não criam Requests. Nenhuma UI administrativa é montada;
-SPEC-0013 continua uma proposta não ativa, bloqueada por autorização de produto.
+histórica de ciclos e não criam Requests. O issue 0042 adiciona o shell local
+em `/admin/acessorias/ui`, login/logout e sessão `HttpOnly` assinada, com
+`ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` mantidos no servidor; a fila,
+detalhe, busca e ações da SPEC-0013 permanecem nos issues 0043–0044.
 
 As consultas estão montadas sem prefixo de versão. `/v1/` e `/v2/` permanecem
 somente como política de compatibilidade futura; não são aliases nem rotas

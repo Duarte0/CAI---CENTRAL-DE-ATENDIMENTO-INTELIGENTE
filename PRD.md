@@ -38,7 +38,9 @@ third-party API consumers. Existing public query endpoints do not require
 login, API keys, JWTs, or a separate authorization layer. The six internal
 Acessórias identity-administration operations introduced by SPEC-0012 are a
 separate authenticated administrative surface using `ADMIN_API_TOKEN`; they
-are not public consumer endpoints and no administrative UI is mounted.
+are not public consumer endpoints. Issue 0042 mounts only the local
+authenticated UI shell/session boundary; the triage queue, detail, search, and
+actions remain in follow-up issues.
 
 ## 3. Product goals
 
@@ -207,8 +209,10 @@ hydration, synchronization, or Request code. PostgreSQL is authoritative for
 command idempotency: same-key retries converge, incompatible key reuse is a
 conflict, and contact serialization prevents duplicate transitions under
 concurrency. Administrative discovery does not call providers or Redis, create
-Requests, or mutate historical cycle resolution. SPEC-0013 remains a
-non-active UI proposal pending product authorization.
+Requests, or mutate historical cycle resolution. Product authorization is
+granted for adoption and issue decomposition of SPEC-0013. Issue 0042
+implements only its local shell, login/logout, signed session, and in-process
+BFF boundary; the read and command UI increments remain unimplemented.
 
 Identity distinguishes technical match evidence, persisted contact-company
 links, audited link transitions, and the resolution used by a conversation/
@@ -434,6 +438,27 @@ The product owner has decided the following policies:
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
 | Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022 and 0026 with canonical preparation, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
+
+SPEC-0013 product authorization is also decided. The approved contract for its
+future issue decomposition is:
+
+- adoption of the administrative identity-link review UI is authorized;
+- the stack is HTML served by FastAPI, local CSS, modular JavaScript without a
+  required bundler, and `fetch` against SPEC-0012 routes; Jinja2 is optional
+  only when server rendering is needed, and React/Vite are not used at this
+  stage;
+- the UI uses an in-process BFF in the same FastAPI process, with a signed
+  `HttpOnly` cookie session, `Secure` in production, `SameSite=Strict`, and a
+  fixed 60-minute expiration without a sliding window; signing may use
+  Starlette `SessionMiddleware` or `itsdangerous`;
+- CSRF protection for this version is `SameSite=Strict`; no additional CSRF
+  token is required;
+- `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and `ADMIN_SESSION_SECRET` must all
+  be securely provisioned with the same level of care and never exposed to the
+  browser, logs, metrics, or cache;
+- session bootstrap is a single operator-password login compared securely
+  with `ADMIN_UI_PASSWORD`, with no user registration, RBAC, or IdP at this
+  stage.
 
 ## 11. Source traceability
 

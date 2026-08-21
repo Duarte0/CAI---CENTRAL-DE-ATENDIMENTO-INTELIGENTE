@@ -2,7 +2,8 @@
 
 _Planning baseline: 2026-08-21. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
-evidence, never production availability. No delivery item is in progress._
+evidence, never production availability. The SPEC-0013 Phase 2 delivery is in
+progress; production acceptance remains separate._
 
 ## Evidence-based current state
 
@@ -97,31 +98,41 @@ evidence, never production availability. No delivery item is in progress._
    Completed by issue 0041 on 2026-08-21. No application, test, migration,
    configuration, infrastructure, provider, Redis, or production state changed.
 
-### Phase 2 — Decide and prepare the administrative UI
+### Phase 2 — Decompose the approved administrative UI
 
-2. **[P1 | blocked | product authorization] Identity-review UI proposal**
-   (`SPEC-0013`, Milestone C.2).
+2. **[P1 | in progress | shell/session increment completed]
+   Identity-review UI** (`SPEC-0013`, Milestone C.2).
 
-   Outcome: SPEC-0013 is registered as a non-active proposal. It may become an
-   active specification only after explicit product authorization; if activated,
-   the UI is a same-process FastAPI BFF/session client of SPEC-0012, never a
-   second identity authority.
+   Outcome: product authorization adopted SPEC-0013 for decomposition. Issue
+   0042 implements the local shell, login/logout, fixed signed session, and
+   same-process FastAPI BFF boundary; the queue/read model and command actions
+   remain separate increments and never become a second identity authority.
 
-   Completion criteria: explicit product approval adopts the UI, session,
-   operator-credential and security choices; only then may an issues pass
-   create an approved decomposition for session/login/logout, no-store
-   responses, fixed 60-minute HttpOnly session, protected UI shell, API-only
-   data flow, idempotent command retry, security/privacy/accessibility/browser
-   coverage, and operational documentation. No build begins before those issues
-   are approved.
+   The approved contract is:
 
-   Dependencies and risks: SPEC-0012 is implemented; protected provisioning
-   of `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and `ADMIN_SESSION_SECRET` is an
-   operational prerequisite. The 2026-08-21 specs pass indexed SPEC-0013 as
-   quarantined; its status is not proof of authorization to implement. The
-   proposed `SameSite=Strict`-only CSRF choice, same-process BFF boundary, and
-   credential/session handling require product and security-focused issue
-   acceptance before build.
+   - HTML served by FastAPI, local CSS, modular JavaScript without a required
+     bundler, and `fetch` for SPEC-0012 routes; Jinja2 only if server rendering
+     is needed, with no React/Vite at this stage;
+   - an in-process BFF in the same FastAPI process with a signed `HttpOnly`
+     cookie session, `Secure` in production, `SameSite=Strict`, fixed expiry of
+     60 minutes, and no sliding window; signing via Starlette
+     `SessionMiddleware` or `itsdangerous`;
+   - `SameSite=Strict` as the complete CSRF protection for this version, with
+     no additional CSRF token;
+   - secure provisioning of `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and
+     `ADMIN_SESSION_SECRET` with the same level of care for all three, and no
+     exposure to the browser, logs, metrics, or cache;
+   - a single operator-password login compared securely with
+     `ADMIN_UI_PASSWORD`, with no user registration, RBAC, or IdP.
+
+   Issue 0042 delivered login/logout, no-store responses, the protected local
+   shell, API-only data flow, and the reusable session/BFF context. Issues 0043
+   and 0044 remain responsible for the read model, command actions, and their
+   browser/accessibility coverage.
+
+   Dependencies and risks: SPEC-0012 is implemented. Secure provisioning of the
+   three administrative credentials remains an operational prerequisite, and
+   production acceptance remains a separate blocked gate.
 
 ### Phase 3 — Product and release gates
 
@@ -155,7 +166,7 @@ evidence, never production availability. No delivery item is in progress._
 | --- | --- | --- |
 | completed | SPEC-0007–0012 and issues 0012–0022, 0026, and 0038–0040 have matching source, migrations, and focused test families. | Do not reopen as feature work without a concrete defect. |
 | completed | Issue 0041 reconciled PRD §9/source traceability and ARCHITECTURE §13/source map with Alembic `0022`, `238/76`, and the six-operation SPEC-0012 surface. | Keep older counts dated as history and retain the external-runtime boundary. |
-| blocked | SPEC-0013 is a quarantined UI proposal; PRD and architecture do not approve its login/session/security policy. | Do not create UI issues or build work until explicit product authorization. |
+| in progress | SPEC-0013 adoption and its login/session/security policy are product-approved; issue 0042 completed the shell/session/BFF increment. | Issues 0043–0044 remain for the read model and actions; keep production credential provisioning separate. |
 | blocked | Production evidence requires environment, credentials, rollout ownership, and acceptance criteria. | Keep local verification and production acceptance separate. |
 | blocked | Milestone F and broader IA-policy changes lack product decisions. | Do not create implementation work from inference. |
 
@@ -174,7 +185,6 @@ evidence, never production availability. No delivery item is in progress._
 
 ## Recommended next pass
 
-No eligible open build issue remains after issue 0041. SPEC-0013 remains blocked
-and must not receive implementation issues without explicit product
-authorization; Request lifecycle, broader IA policy, and production acceptance
-remain separate blocked plan items.
+SPEC-0013 is approved for decomposition and issue 0042 completed only its
+shell/session/BFF increment; issues 0043–0044 remain. Request lifecycle, broader
+IA policy, and production acceptance remain separate blocked plan items.

@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     acessorias_api_base_url: str = "https://api.acessorias.com"
     webhook_secret: Optional[str] = None
     admin_api_token: Optional[str] = None
+    admin_ui_password: Optional[str] = None
+    admin_session_secret: Optional[str] = None
 
     # Database & Cache
     redis_url: str = "redis://localhost:6379"
@@ -126,6 +128,17 @@ class Settings(BaseSettings):
             raise ValueError("ADMIN_API_TOKEN must not be empty")
         return normalized
 
+    @field_validator("admin_ui_password", "admin_session_secret")
+    @classmethod
+    def validate_admin_ui_secret(cls, value: str | None, info: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            field_name = str(info.field_name).upper()
+            raise ValueError(f"{field_name} must not be empty")
+        return normalized
+
     @field_validator(
         "digisac_history_initial_delay_seconds",
         "digisac_history_request_timeout_seconds",
@@ -212,3 +225,12 @@ def require_admin_api_token() -> str:
             "ADMIN_API_TOKEN is required to start the authenticated administrative API"
         )
     return token
+
+
+def require_admin_ui_configuration() -> tuple[str, str]:
+    """Return the UI secrets or fail closed without exposing their values."""
+    password = settings.admin_ui_password
+    session_secret = settings.admin_session_secret
+    if not password or not session_secret:
+        raise RuntimeError("Administrative UI configuration is unavailable")
+    return password, session_secret

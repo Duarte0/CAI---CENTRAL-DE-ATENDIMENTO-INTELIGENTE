@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, and authenticated identity triage/commands. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -528,8 +528,23 @@ records these delivery limitations:
   PostgreSQL-authoritative idempotent commands/discovery; same-key retries
   converge, incompatible key reuse conflicts, and contact locking prevents
   duplicate concurrent transitions. They do not call providers or Redis, create
-  Requests, or mutate historical cycle resolution. No SPEC-0013 administrative
-  UI is implemented or authorized.
+  Requests, or mutate historical cycle resolution. SPEC-0013 is authorized for
+  adoption and issue decomposition; issue 0042 implements its local shell,
+  login/logout, signed session, and in-process BFF boundary, while the read
+  model and command actions remain in issues 0043–0044.
+
+  The approved SPEC-0013 architecture is a FastAPI-served HTML page with local
+  CSS and modular JavaScript, without a required bundler; it consumes SPEC-0012
+  through `fetch`, with Jinja2 only if server rendering is needed and without
+  React/Vite at this stage. The page is an in-process BFF in the same FastAPI
+  process, using a signed `HttpOnly` cookie session (`Secure` in production,
+  `SameSite=Strict`) with fixed 60-minute expiry and no sliding window; signing
+  may use Starlette `SessionMiddleware` or `itsdangerous`. `SameSite=Strict` is
+  the complete CSRF protection for this version, with no additional token.
+  `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and `ADMIN_SESSION_SECRET` require
+  equally careful secure provisioning and never enter the browser, logs,
+  metrics, or cache. Bootstrap is one operator password compared securely with
+  `ADMIN_UI_PASSWORD`, with no registration, RBAC, or IdP.
 - DigiSac Contacts full backfill is implemented under issue `0014` as an
   internal, typed acquisition and transactional PostgreSQL publication. It
   supports a validated one-page response and `page=N` fallback with global
@@ -605,7 +620,8 @@ they limit release verification and future evolution decisions.
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
-- Authenticated identity triage, commands, and discovery: \`src/api/admin_routes.py\`,
+- Authenticated identity triage, commands, discovery, and UI shell/session: \`src/api/admin_routes.py\`,
+  \`src/api/admin_ui.py\`,
   \`src/core/identity_admin.py\`, \`src/core/identity_resolution.py\`,
   Alembic \`0021_identity_admin_commands.py\` and
   \`0022_identity_discovery_command.py\`, and SPEC-0012; it consumes
