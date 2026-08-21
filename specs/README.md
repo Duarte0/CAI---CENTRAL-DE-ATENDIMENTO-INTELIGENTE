@@ -17,6 +17,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.2; issues 0015 e 0026 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência e candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e gate de preparação; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.4; issues 0017–0019, 0021–0022 e 0026; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
+| SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Slice de leitura implementado localmente no issue 0038; mutações/redescoberta pendentes | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir vínculos auditáveis; não cria Request nem reavalia ciclos históricos. |
 
 A evidência mais recente registrada para SPEC-0004 é **224 passed, 69 skipped**
 na etapa offline e **69 passed, 224 deselected** na etapa PostgreSQL
@@ -55,9 +56,10 @@ minuto; tokens de exploração comprometidos não podem ser registrados. A
 implementação deve aplicar as salvaguardas de reconciliação completa da SPEC,
 sem inferir nomes de campos/parâmetros além dos observados.
 
-SPEC-0008–SPEC-0011 são os contratos canônicos dependentes para **DigiSac
+SPEC-0008–SPEC-0012 são os contratos canônicos dependentes para **DigiSac
 Contact Identity Foundation**, **DigiSac–Acessórias Identity Resolution**,
-**Department Mapping** e **Durable Request Creation**. SPEC-0008 e seu slice de
+**Department Mapping**, **Durable Request Creation** e **Administração de
+vínculos de identidade**. SPEC-0008 e seu slice de
 persistência/upsert de ticket/hydration individual foram implementados pelo
 issue 0013. O issue 0014 implementa o full backfill: `perPage` alto pode
 concluir uma página no tenant atual, e `page=N` com `currentPage`/`lastPage`
@@ -80,6 +82,17 @@ inicial implementada pelos issues 0015 e 0026: a variante
 móvel brasileira permanece evidência conservadora, a confirmação inicial é o
 procedimento controlado `manual_db`, e os resultados locais são persistidos
 somente no PostgreSQL.
+SPEC-0012 registra a evolução aprovada desse procedimento para uma API interna
+autenticada por `ADMIN_API_TOKEN`, com lista/detalhe, busca de empresas,
+confirmação, rejeição e redescoberta de um contato. O issue 0038 implementa
+localmente somente as três leituras, com PostgreSQL como autoridade, paginação
+determinística e projeções sem valores de telefone/email/evidência; os issues
+0039 e 0040 permanecem como os slices de mutação e redescoberta. O cenário
+inicial possui um único operador e não exige cadastro de usuários, IdP, JWT ou
+RBAC. O token deve ficar em secret manager/ambiente protegido, e um frontend
+futuro é cliente fino dessa API, não autoridade de domínio. A SPEC não altera
+matching conservador, não cria Request e não modifica resoluções históricas de
+ciclo.
 O issue 0034 moveu a coordenação transitória genérica para
 `src/core/provider_coordination.py`, preservando o contrato e os escopos dos
 adapters. O issue 0036 separou o transporte HTTP em

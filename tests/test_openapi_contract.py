@@ -21,7 +21,12 @@ BUSINESS_PATHS = {
     "/cycles/{cycle_id}/status",
     "/cycles/{cycle_id}/result",
 }
-TAGS = {"Webhook DigiSac", "Operações", "Conversas", "Ciclos"}
+ADMIN_PATHS = {
+    "/admin/acessorias/identity-links",
+    "/admin/acessorias/contacts/{digisac_contact_external_id}/identity",
+    "/admin/acessorias/companies",
+}
+TAGS = {"Webhook DigiSac", "Operações", "Conversas", "Ciclos", "Administração"}
 
 
 def _resolve(
@@ -94,7 +99,7 @@ def test_openapi_describes_only_the_mounted_business_surface() -> None:
         {"url": "http://localhost:8000", "description": "Desenvolvimento local"}
     ]
     assert {tag["name"] for tag in document["tags"]} == TAGS
-    assert set(document["paths"]) == BUSINESS_PATHS
+    assert set(document["paths"]) == BUSINESS_PATHS | ADMIN_PATHS
     assert all(
         len(methods) == 1 and next(iter(methods.values())).get("summary")
         for methods in document["paths"].values()
@@ -116,6 +121,16 @@ def test_openapi_security_and_webhook_contract() -> None:
         "description": webhook["description"].split("\n", 1)[0],
     }
     assert webhook["security"] == [{"DigisacWebhookHMAC": []}]
+    assert document["components"]["securitySchemes"]["AdminBearer"] == {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "Opaque ADMIN_API_TOKEN for internal administrative routes.",
+    }
+    assert all(
+        document["paths"][path]["get"]["security"] == [{"AdminBearer": []}]
+        for path in ADMIN_PATHS
+    )
     assert all(
         "security" not in document["paths"][path]["get"]
         for path in BUSINESS_PATHS - {"/webhook/digisac"}
@@ -129,6 +144,42 @@ def test_openapi_security_and_webhook_contract() -> None:
     assert {"200", "202", "400", "401"}.issubset(webhook["responses"])
     assert "WEBHOOK_SECRET" in webhook["description"]
     assert "sha256=" in webhook["description"]
+
+
+def test_openapi_describes_admin_projection_contract() -> None:
+    document = _document()
+    schemas = document["components"]["schemas"]
+    assert {
+        "IdentityLinkListResponse",
+        "IdentityContactDetail",
+        "CompanyListResponse",
+    }.issubset(schemas)
+    links = document["paths"]["/admin/acessorias/identity-links"]["get"]
+    state = next(parameter for parameter in links["parameters"] if parameter["name"] == "state")
+    limit = next(parameter for parameter in links["parameters"] if parameter["name"] == "limit")
+    assert state["schema"]["enum"] == [
+        "candidate",
+        "confirmed",
+        "rejected",
+        "ambiguous",
+        "unresolved",
+        "conflict",
+    ]
+    assert limit["schema"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 50,
+    }
+    assert set(links["responses"]) == {"200", "400", "401"}
+    assert set(
+        document["paths"]["/admin/acessorias/contacts/{digisac_contact_external_id}/identity"]["get"]["responses"]
+    ) == {"200", "401", "404"}
+    assert set(document["paths"]["/admin/acessorias/companies"]["get"]["responses"]) == {
+        "200",
+        "400",
+        "401",
+    }
 
 
 def test_openapi_projects_queries_and_operational_errors() -> None:

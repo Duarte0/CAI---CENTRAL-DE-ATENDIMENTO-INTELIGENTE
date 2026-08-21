@@ -383,7 +383,27 @@ currently in progress._
    198 deselected**). No provider credential, Redis runtime, deployment, or
    production quota was used or claimed.
 
-6. **[P2 | pending | optional] Milestone F — Request lifecycle
+6. **[P1 | completed locally | implemented read slice] Milestone C.1 —
+   Authenticated identity triage** (SPEC-0012; issue 0038). Outcome: provide
+   an internal `/admin/acessorias` router protected by `ADMIN_API_TOKEN` with
+   deterministic, opaque-cursor reads for identity-link triage, canonical
+   contact detail, and present/active company search. The projection boundary
+   is PostgreSQL-only and returns stable IDs, safe display metadata,
+   state/count/time summaries, transitions, and current company availability;
+   it does not expose phone/email/evidence values or invoke Redis, providers,
+   discovery, hydration, synchronization, Request, or cycle/identity writes.
+
+   Build evidence (2026-08-21): focused admin/OpenAPI tests passed **13 passed,
+   1 skipped**; the canonical disposable runner with `APP_TIMEZONE=UTC` passed
+   compileall, strict Pyright, offline pytest (**236 passed, 70 skipped**),
+   Alembic head `0020_cycle_contact_provenance`, and PostgreSQL pytest (**70
+   passed, 236 deselected**). The unqualified runner retains one pre-existing
+   timezone assertion failure in `tests/test_department_mapping.py` caused by
+   the worktree's unrelated `APP_TIMEZONE=America/Sao_Paulo` change. No
+   migration was required. Issues 0039 and 0040 remain responsible for
+   authenticated confirmation/rejection and identity-discovery commands.
+
+7. **[P2 | pending | optional] Milestone F — Request lifecycle
    integration.** Outcome: future status, interactions, comments, attachments,
    responsible users, closure, and reopening work. Completion requires a new
    product decision and specification after Request creation is proven; do not
@@ -391,8 +411,8 @@ currently in progress._
 
 ### Specification boundary and next gate
 
-SPEC-0007–SPEC-0011 supply the independently verifiable contracts for
-Milestones A–E. Milestone A is implemented locally under issue 0012. Milestone
+SPEC-0007–SPEC-0012 supply the independently verifiable contracts for
+Milestones A–E and the C.1 administrative slice. Milestone A is implemented locally under issue 0012. Milestone
 B's incremental slice is implemented locally under issue 0013, and its
 full Contacts-backfill slice is implemented locally under issue 0014. Authorized
 provider evidence covers single-page execution and the `page=N` fallback; local
@@ -403,8 +423,10 @@ manual-confirmation procedure recorded in SPEC-0009 and was implemented under
 issue 0015 and the preparation integration under issue 0026. Milestone D is implemented under issues 0016, 0020 and 0026; Milestone E is
 implemented under issues 0017–0019, 0021–0022 and 0026 with its Request contract and A–D facts
 available; structural provider/durable-operation ownership was completed by
-issue 0036. No specification in this sequence authorizes application changes
-until its own issues/build pass.
+issue 0036. Milestone C.1's read-only administrative slice is implemented by
+issue 0038; its write/discovery follow-ups remain open and do not authorize
+historical-cycle recovery. No specification in this sequence authorizes
+application changes until its own issues/build pass.
 
 The documentation drift around the issue-0014 backfill and verification counts
 was reconciled during the issue-0015 build sync, and the issue-0016/0017/0018/0019/0021/0022/0026

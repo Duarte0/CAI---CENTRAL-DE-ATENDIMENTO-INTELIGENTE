@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, and queries. | Writes PostgreSQL and Redis. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, and the authenticated read-only identity triage API. | Writes PostgreSQL and Redis for the existing pipeline; administrative triage reads PostgreSQL only. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -109,6 +109,7 @@ flowchart LR
     DM --> FR[Durable Request operation]
     FC[Persisted CAI classification/cycle] --> IR
     FC --> FR
+    P --> ADM[Authenticated admin read projections]
 \`\`\`
 
 \`contact.id\` is the canonical DigiSac-contact external identity.
@@ -127,6 +128,17 @@ Brazilian mobile variant create candidates but not automatic confirmation;
 DigiSac groups remain unresolved absent an explicit confirmed link. Evidence
 uses sanitized fingerprints, while raw and normalized directory identifiers
 remain in their canonical foundation records.
+
+SPEC-0012 and issue 0038 add a separate administrative read boundary at
+`/admin/acessorias`. Its bearer token is `ADMIN_API_TOKEN`, validated before
+application startup completes. `src/api/admin_routes.py` performs only HTTP
+authentication/validation and response projection; `src/core/identity_admin.py`
+performs bounded PostgreSQL reads with deterministic, signed cursors. The
+projection exposes stable external IDs, safe display metadata, state/count/time
+summaries, and current company availability, while excluding phone/email values,
+raw evidence, conversation content, provider calls, Redis, discovery, hydration,
+sync, identity writes, cycle updates, and Request operations. Mutation and
+discovery commands remain the follow-up issues 0039 and 0040.
 
 Department mapping uses the cycle-applicable DigiSac department from assignment
 history, selected only within the persisted `cycle_started_at` through
@@ -504,8 +516,9 @@ records these delivery limitations:
 - DigiSac–Acessórias identity resolution is implemented under issue `0015` as
   an internal PostgreSQL capability. It preserves sanitized evidence, audited
   many-to-many links, immutable cycle outcomes, and controlled `manual_db`
-  confirmation; it does not add an HTTP route, fuzzy matching, or provider
-  writes.
+  confirmation; the domain capability itself does not add a public or mutation
+  route, fuzzy matching, or provider writes. The separate SPEC-0012 read-only
+  administrative projection is implemented under issue `0038`.
 - DigiSac–Acessórias department mapping is implemented under issues `0016` and
   `0020` as an internal PostgreSQL capability. It preserves stable-ID rule
   versions and transitions, validates the current company-department relation
@@ -571,6 +584,9 @@ they limit release verification and future evolution decisions.
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
+- Authenticated identity triage: \`src/api/admin_routes.py\`,
+  \`src/core/identity_admin.py\`, and SPEC-0012; it consumes the existing
+  identity schema without a migration.
 - DigiSac–Acessórias department mapping: \`src/core/department_mapping.py\`
   and Alembic \`0018_department_mapping.py\`.
 - Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,

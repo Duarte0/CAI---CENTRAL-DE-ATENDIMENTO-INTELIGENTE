@@ -23,7 +23,9 @@ resultado por API.
 - classifica a intenção do cliente com a API da Groq;
 - persiste classificações, mensagens associadas, mídias, ciclos e snapshots no
   PostgreSQL;
-- expõe saúde, filas, status e resultados para operação e auditoria.
+- expõe saúde, filas, status e resultados para operação e auditoria;
+- expõe uma API administrativa interna, somente leitura e autenticada, para
+  triagem de vínculos de identidade Acessórias.
 
 O contrato produzido pela IA contém apenas:
 
@@ -101,6 +103,16 @@ referências `contactId` de mensagens apenas registram hydration individual
 deduplicada para execução posterior. A resolução preserva evidência
 fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
 imutável por ciclo; confirmação continua exclusivamente manual.
+
+O issue 0038 implementa o primeiro slice administrativo da SPEC-0012: as rotas
+`GET /admin/acessorias/identity-links`,
+`GET /admin/acessorias/contacts/{digisac_contact_external_id}/identity` e
+`GET /admin/acessorias/companies` exigem `Authorization: Bearer` com o segredo
+`ADMIN_API_TOKEN`. Elas leem apenas projeções PostgreSQL paginadas, retornam IDs,
+estados, nomes de exibição e resumos de evidência sem valores de telefone/email,
+e nunca executam discovery, hydration, sync, Redis, Request ou providers. O
+serviço falha no startup se o segredo não estiver configurado; provisionamento
+em secret manager e restrição de rede continuam pré-requisitos de deploy.
 
 O issue 0026 completa a fronteira de preparação: cada ciclo carrega somente o
 `data.contact.id` canônico do snapshot de ticket, resolve a identidade, avalia
@@ -208,6 +220,9 @@ de execução. As principais estruturas são:
   operação externa única por ciclo, payload fingerprintado sem conteúdo bruto,
   claims/leases, recuperação de preparação pré-POST, `SolID`, falhas
   sanitizadas e reconciliação administrativa.
+- `identity_match_evidence`, `identity_company_links` e
+  `identity_company_link_transitions`: fatos duráveis consumidos pela projeção
+  administrativa de triagem; a API não grava essas tabelas.
 
 O ciclo de vida do pool e a verificação do schema permanecem em
 `src/core/db.py`. A persistência de contatos DigiSac e o estado durável de
@@ -539,6 +554,12 @@ preparação de identidade/mapping e a recuperação segura de operações
 Os resultados offline e PostgreSQL são evidência local descartável; não
 comprovam disponibilidade de Redis, DigiSac, Groq, réplicas, deployment ou
 produção.
+
+Na validação do issue 0038 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **236 passed, 70 skipped** offline
+e **70 passed, 236 deselected** no PostgreSQL 16 descartável. A execução sem
+esse override preservou um failure preexistente de timezone em
+`tests/test_department_mapping.py`; ele não envolve a API administrativa.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

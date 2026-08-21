@@ -755,6 +755,119 @@ def _decorate_operations(document: dict[str, Any]) -> None:
             },
         },
     )
+    admin_security = [{"AdminBearer": []}]
+    operation(
+        "/admin/acessorias/identity-links",
+        "get",
+        tag="Administração",
+        summary="List identity-link triage projections",
+        description=(
+            "Returns PostgreSQL-authoritative identity and candidate projections. "
+            "The optional state filter accepts candidate, confirmed, rejected, "
+            "ambiguous, unresolved, or conflict. Cursors are opaque and bound to "
+            "their filter scope; no phone, email, or evidence value is returned."
+        ),
+        security=admin_security,
+        responses={
+            "200": _response(
+                "A bounded identity-link triage page.",
+                _ref("IdentityLinkListResponse"),
+            ),
+            "400": _detail_response("The filter, cursor, or limit is invalid.", "Invalid cursor"),
+            "401": _detail_response(
+                "The administrative bearer token is missing or invalid.",
+                "Invalid administrative credentials",
+            ),
+        },
+    )
+    operation(
+        "/admin/acessorias/contacts/{digisac_contact_external_id}/identity",
+        "get",
+        tag="Administração",
+        summary="Get one identity-link detail projection",
+        description=(
+            "Returns a safe projection for an existing canonical DigiSac contact, "
+            "including group/no-candidate contacts. The read does not run discovery "
+            "or hydration and does not expose evidence values."
+        ),
+        security=admin_security,
+        responses={
+            "200": _response(
+                "The contact identity projection.", _ref("IdentityContactDetail")
+            ),
+            "401": _detail_response(
+                "The administrative bearer token is missing or invalid.",
+                "Invalid administrative credentials",
+            ),
+            "404": _detail_response(
+                "The canonical DigiSac contact does not exist.",
+                "DigiSac contact not found",
+            ),
+        },
+    )
+    operation(
+        "/admin/acessorias/companies",
+        "get",
+        tag="Administração",
+        summary="List active Acessórias companies",
+        description=(
+            "Searches only present and active local directory companies. The query "
+            "is a display-only filter and cannot create identity evidence or links. "
+            "Cursors are opaque and bound to the query scope."
+        ),
+        security=admin_security,
+        responses={
+            "200": _response(
+                "A bounded active-company directory page.", _ref("CompanyListResponse")
+            ),
+            "400": _detail_response("The query, cursor, or limit is invalid.", "Invalid cursor"),
+            "401": _detail_response(
+                "The administrative bearer token is missing or invalid.",
+                "Invalid administrative credentials",
+            ),
+        },
+    )
+    for path in (
+        "/admin/acessorias/identity-links",
+        "/admin/acessorias/companies",
+    ):
+        for parameter in cast(
+            list[JsonSchema], paths[path]["get"].get("parameters", [])
+        ):
+            if parameter.get("name") == "limit":
+                parameter["description"] = "Page size from 1 through 100; invalid values return 400."
+                parameter["schema"] = {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 50,
+                }
+    for parameter in cast(
+        list[JsonSchema],
+        paths["/admin/acessorias/identity-links"]["get"].get("parameters", []),
+    ):
+        if parameter.get("name") == "state":
+            parameter["description"] = "Optional current/link state filter."
+            parameter["schema"] = {
+                "type": "string",
+                "enum": [
+                    "candidate",
+                    "confirmed",
+                    "rejected",
+                    "ambiguous",
+                    "unresolved",
+                    "conflict",
+                ],
+            }
+        elif parameter.get("name") == "cursor":
+            parameter["description"] = "Opaque cursor bound to the filter scope."
+    for parameter in cast(
+        list[JsonSchema], paths["/admin/acessorias/companies"]["get"].get("parameters", [])
+    ):
+        if parameter.get("name") == "query":
+            parameter["description"] = "Optional display-only company search filter."
+        elif parameter.get("name") == "cursor":
+            parameter["description"] = "Opaque cursor bound to the display filter."
     for path in (
         "/conversations/{conversation_id}/status",
         "/conversations/{conversation_id}/result",
@@ -843,8 +956,9 @@ def build_openapi_contract(app: FastAPI) -> dict[str, Any]:
         version=app.version,
         description=(
             "CAI's supported HTTP surface is intentionally unversioned. /v1/ and "
-            "/v2/ are future compatibility policy only, not mounted routes. Query "
-            "operations currently have no authentication scheme."
+            "/v2/ are future compatibility policy only, not mounted routes. Existing "
+            "public query operations have no authentication scheme; administrative "
+            "identity projections use the AdminBearer scheme."
         ),
         routes=app.routes,
     )
@@ -859,6 +973,10 @@ def build_openapi_contract(app: FastAPI) -> dict[str, Any]:
             "description": "Conversation status, results, and cycle history.",
         },
         {"name": "Ciclos", "description": "Persisted cycle status and results."},
+        {
+            "name": "Administração",
+            "description": "Authenticated, read-only identity triage projections.",
+        },
     ]
     components = cast(dict[str, Any], document.setdefault("components", {}))
     schemas = cast(dict[str, JsonSchema], components.setdefault("schemas", {}))
@@ -869,7 +987,13 @@ def build_openapi_contract(app: FastAPI) -> dict[str, Any]:
             "in": "header",
             "name": "X-Digisac-Signature",
             "description": "Conditional HMAC-SHA256 header; WEBHOOK_SECRET enables validation.",
-        }
+        },
+        "AdminBearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "opaque",
+            "description": "Opaque ADMIN_API_TOKEN for internal administrative routes.",
+        },
     }
     _decorate_operations(document)
     return document
