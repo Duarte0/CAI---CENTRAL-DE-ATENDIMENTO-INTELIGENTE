@@ -14,13 +14,17 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadData, URLSafeTimedSerializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.api.admin_routes import (
     CompanyListResponse,
     IdentityContactDetail,
+    IdentityDiscoveryResponse,
+    IdentityLinkCommandResponse,
     IdentityLinkListResponse,
     _decode_cursor,
     _encode_cursor,
+    _raise_identity_command_http_error,
     _validated_limit,
     _validated_query,
 )
@@ -44,6 +48,42 @@ _SESSION_VERSION = 1
 _MAX_SESSION_COOKIE_LENGTH = 4096
 _GENERIC_AUTH_ERROR = "Invalid credentials"
 _UI_IDENTITY_STATES = frozenset({"candidate", "ambiguous", "unresolved"})
+
+
+def _validate_ui_opaque_value(value: str, field_name: str) -> str:
+    if value != value.strip() or any(
+        ord(character) < 32 or ord(character) == 127 for character in value
+    ):
+        raise ValueError(f"{field_name} must be opaque and nonblank")
+    return value
+
+
+class UIIdentityCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        return _validate_ui_opaque_value(value, "idempotency_key")
+
+
+class UIIdentityLinkConfirmRequest(UIIdentityCommandRequest):
+    acessorias_company_external_id: str = Field(min_length=1, max_length=200)
+
+    @field_validator("acessorias_company_external_id")
+    @classmethod
+    def validate_company_external_id(cls, value: str) -> str:
+        return _validate_ui_opaque_value(value, "acessorias_company_external_id")
+
+
+class UIIdentityLinkRejectRequest(UIIdentityCommandRequest):
+    pass
+
+
+class UIIdentityDiscoveryRequest(UIIdentityCommandRequest):
+    pass
 
 
 @dataclass(frozen=True)
@@ -194,6 +234,14 @@ def _ui_wrap_http_error(exc: HTTPException) -> HTTPException:
     return _ui_http_error(exc.status_code, str(exc.detail))
 
 
+def _ui_raise_identity_command_http_error(exc: Exception) -> None:
+    try:
+        _raise_identity_command_http_error(exc)
+    except HTTPException as mapped:
+        raise _ui_wrap_http_error(mapped) from exc
+    raise _ui_http_error(409, "Identity command could not be completed") from exc
+
+
 def _login_page(error: str | None = None) -> str:
     message = f'<p class="error" role="alert">{html.escape(error)}</p>' if error else ""
     return f"""<!doctype html>
@@ -246,9 +294,11 @@ def _protected_shell() -> str:
     h2, h3 { margin-top: 0; }
     button, input, select { min-height: 2.5rem; padding: .5rem .7rem; font: inherit; border-radius: .35rem; border: 1px solid #8c98a4; }
     button { cursor: pointer; background: white; color: var(--ink); }
+    button:disabled { cursor: not-allowed; opacity: .55; }
     button:hover { border-color: var(--accent); }
     button:focus-visible, input:focus-visible, select:focus-visible { outline: .2rem solid #f3b61f; outline-offset: .15rem; }
     button.primary { background: var(--accent); border-color: var(--accent); color: white; font-weight: 700; }
+    button.danger { color: var(--danger); border-color: #d98b8b; }
     .toolbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
     .toolbar h2 { margin-bottom: .25rem; }
     .toolbar p { margin: 0; color: var(--muted); }
@@ -272,6 +322,14 @@ def _protected_shell() -> str:
     .subheading { margin: 1.25rem 0 .5rem; font-size: 1rem; }
     .detail-card, .company-result { padding: .65rem; border: 1px solid var(--line); border-radius: .35rem; }
     .detail-card p, .company-result p { margin: .15rem 0; }
+    .detail-card .action-button, .company-result .action-button { margin-top: .5rem; }
+    .action-panel { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+    .action-controls { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .action-target { min-height: 1.5rem; color: var(--muted); }
+    dialog { width: min(32rem, calc(100% - 2rem)); padding: 1.25rem; color: var(--ink); border: 1px solid var(--line); border-radius: .65rem; box-shadow: 0 1rem 3rem #17202a44; }
+    dialog::backdrop { background: #17202a99; }
+    dialog h3 { margin-top: 0; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
     .search-form { display: flex; gap: .5rem; align-items: end; }
     .search-form label { flex: 1; }
     .search-form input { width: 100%; margin-top: .3rem; }
@@ -312,6 +370,16 @@ def _protected_shell() -> str:
         <h3 id="detail-heading">Contact detail</h3>
         <p id="detail-status" class="status" role="status" aria-live="polite">Select a contact to inspect its projection.</p>
         <div id="detail-content"></div>
+        <div id="review-actions" class="action-panel" aria-labelledby="review-actions-heading">
+          <h4 id="review-actions-heading" class="subheading">Review actions</h4>
+          <p id="selected-target" class="action-target" role="status" aria-live="polite">Select a contact before choosing an action.</p>
+          <p id="action-status" class="status" role="status" aria-live="polite"></p>
+          <div class="action-controls">
+            <button id="confirm-action" class="primary" type="button" disabled>Confirm selected company</button>
+            <button id="reject-action" class="danger" type="button" disabled>Reject selected link</button>
+            <button id="discover-action" type="button" disabled>Run deterministic discovery</button>
+          </div>
+        </div>
       </section>
       <section id="company-search" aria-labelledby="company-heading">
         <h3 id="company-heading">Active company search</h3>
@@ -327,6 +395,14 @@ def _protected_shell() -> str:
       </section>
     </div>
   </main>
+  <dialog id="action-confirmation" aria-labelledby="action-confirmation-heading">
+    <h3 id="action-confirmation-heading">Confirm review action</h3>
+    <p id="action-confirmation-text"></p>
+    <div class="dialog-actions">
+      <button id="cancel-action" type="button">Cancel</button>
+      <button id="confirm-dialog-action" class="primary" type="button">Continue</button>
+    </div>
+  </dialog>
   <script>
     (() => {
       "use strict";
@@ -337,9 +413,16 @@ def _protected_shell() -> str:
         queueRequest: 0,
         selectedContact: null,
         detailRequest: 0,
+        detailProjection: null,
         companyQuery: "",
         companyProjection: null,
         companyRequest: 0,
+        selectedCompanyExternalId: null,
+        selectedLinkExternalId: null,
+        actionRequest: 0,
+        actionInFlight: false,
+        pendingAction: null,
+        confirmationAction: null,
       };
 
       const element = (id) => document.getElementById(id);
@@ -347,6 +430,10 @@ def _protected_shell() -> str:
       const detailStatus = element("detail-status");
       const companyStatus = element("company-status");
       const globalMessage = element("global-message");
+      const selectedTarget = element("selected-target");
+      const actionStatus = element("action-status");
+      const actionDialog = element("action-confirmation");
+      const actionDialogText = element("action-confirmation-text");
 
       function setStatus(target, message, kind = "") {
         target.textContent = message;
@@ -358,6 +445,15 @@ def _protected_shell() -> str:
         error.code = code;
         error.status = statusCode;
         return error;
+      }
+
+      function newIdempotencyKey() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+          return window.crypto.randomUUID();
+        }
+        const bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
       }
 
       async function readJSON(path) {
@@ -466,6 +562,7 @@ def _protected_shell() -> str:
       }
 
       function renderDetail(projection) {
+        state.detailProjection = projection;
         const content = element("detail-content");
         content.replaceChildren();
         const grid = document.createElement("dl");
@@ -495,14 +592,44 @@ def _protected_shell() -> str:
             const row = document.createElement("li");
             row.className = "detail-card";
             row.textContent = formatter(item);
+            if (heading === "Links") {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.className = "action-button danger";
+              button.textContent = "Select for rejection";
+              button.disabled = state.actionInFlight || state.pendingAction !== null;
+              button.addEventListener("click", () => selectLink(item));
+              row.append(button);
+            }
+            if (heading === "Candidate companies" && item.available === true) {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.className = "action-button";
+              button.textContent = "Select for confirmation";
+              button.disabled = state.actionInFlight || state.pendingAction !== null;
+              button.addEventListener("click", () => selectCompany(item));
+              row.append(button);
+            }
             list.append(row);
           });
           content.append(list);
         });
+        updateActionPanel();
       }
 
       async function selectContact(contactId) {
+        const changedContact = state.selectedContact !== contactId;
         state.selectedContact = contactId;
+        if (changedContact) {
+          state.selectedCompanyExternalId = null;
+          state.selectedLinkExternalId = null;
+          state.detailProjection = null;
+          state.actionRequest += 1;
+          state.actionInFlight = false;
+          state.pendingAction = null;
+          closeActionDialog();
+          setStatus(actionStatus, "");
+        }
         const request = ++state.detailRequest;
         setStatus(detailStatus, "Loading contact detail…");
         try {
@@ -536,10 +663,18 @@ def _protected_shell() -> str:
             row.className = "company-result";
             addText(row, item.display_name);
             addText(row, item.acessorias_company_external_id, "muted");
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "action-button";
+            button.textContent = state.selectedCompanyExternalId === item.acessorias_company_external_id ? "Selected for confirmation" : "Select for confirmation";
+            button.disabled = state.actionInFlight || state.pendingAction !== null;
+            button.addEventListener("click", () => selectCompany(item));
+            row.append(button);
             list.append(row);
           });
           setStatus(companyStatus, `${visible.length} active compan${visible.length === 1 ? "y" : "ies"} found.`);
         }
+        updateActionPanel();
         const next = element("company-next");
         next.hidden = !projection.next_cursor;
         next.onclick = () => loadCompanies(projection.next_cursor);
@@ -563,6 +698,273 @@ def _protected_shell() -> str:
         }
       }
 
+      function currentContactReady() {
+        return state.selectedContact !== null
+          && state.detailProjection !== null
+          && state.detailProjection.digisac_contact_external_id === state.selectedContact;
+      }
+
+      function selectedCompany() {
+        if (!state.selectedCompanyExternalId) return null;
+        const sources = [];
+        if (state.companyProjection) sources.push(...state.companyProjection.items);
+        if (state.detailProjection) sources.push(...state.detailProjection.candidate_companies);
+        return sources.find((item) =>
+          item.acessorias_company_external_id === state.selectedCompanyExternalId
+          && item.is_present === true
+          && item.is_active === true
+          && item.available === true
+        ) || null;
+      }
+
+      function selectedLink() {
+        if (!state.selectedLinkExternalId || !state.detailProjection) return null;
+        return state.detailProjection.links.find((item) =>
+          item.acessorias_company_external_id === state.selectedLinkExternalId
+        ) || null;
+      }
+
+      function updateActionPanel() {
+        const confirmButton = element("confirm-action");
+        const rejectButton = element("reject-action");
+        const discoverButton = element("discover-action");
+        const blocked = state.actionInFlight || state.pendingAction !== null || state.confirmationAction !== null;
+        const contactReady = currentContactReady();
+        const company = selectedCompany();
+        const link = selectedLink();
+        confirmButton.disabled = blocked || !contactReady || !company;
+        rejectButton.disabled = blocked || !contactReady || !link;
+        discoverButton.disabled = blocked || !contactReady;
+        if (!contactReady) {
+          selectedTarget.textContent = "Select a contact before choosing an action.";
+        } else if (company) {
+          selectedTarget.textContent = `Confirmation target: ${company.acessorias_company_external_id}`;
+        } else if (link) {
+          selectedTarget.textContent = `Rejection target: ${link.acessorias_company_external_id}`;
+        } else {
+          selectedTarget.textContent = "Choose an active company to confirm or a link to reject.";
+        }
+      }
+
+      function selectCompany(item) {
+        if (
+          state.actionInFlight
+          || state.pendingAction !== null
+          || item.is_present !== true
+          || item.is_active !== true
+          || item.available !== true
+        ) return;
+        state.selectedCompanyExternalId = item.acessorias_company_external_id;
+        state.selectedLinkExternalId = null;
+        setStatus(actionStatus, `Company ${item.acessorias_company_external_id} selected for confirmation.`);
+        updateActionPanel();
+        renderCompanies(state.companyProjection || { items: [], next_cursor: null });
+        if (state.detailProjection) renderDetail(state.detailProjection);
+      }
+
+      function selectLink(item) {
+        if (state.actionInFlight || state.pendingAction !== null || !currentContactReady()) return;
+        if (!state.detailProjection.links.some((link) =>
+          link.acessorias_company_external_id === item.acessorias_company_external_id
+        )) return;
+        state.selectedLinkExternalId = item.acessorias_company_external_id;
+        state.selectedCompanyExternalId = null;
+        setStatus(actionStatus, `Link ${item.acessorias_company_external_id} selected for rejection.`);
+        updateActionPanel();
+        renderDetail(state.detailProjection);
+      }
+
+      function closeActionDialog() {
+        state.confirmationAction = null;
+        if (actionDialog.open && typeof actionDialog.close === "function") actionDialog.close();
+        else actionDialog.removeAttribute("open");
+        updateActionPanel();
+      }
+
+      function openActionConfirmation(kind) {
+        if (!currentContactReady()) {
+          setStatus(actionStatus, "Select a current contact before submitting an action.", "error");
+          return;
+        }
+        const company = selectedCompany();
+        const link = selectedLink();
+        if (kind === "confirm" && !company) {
+          setStatus(actionStatus, "Select a present and active company before confirming.", "error");
+          return;
+        }
+        if (kind === "reject" && !link) {
+          setStatus(actionStatus, "Select an existing link before rejecting it.", "error");
+          return;
+        }
+        state.confirmationAction = {
+          kind,
+          contactId: state.selectedContact,
+          companyId: kind === "confirm" ? company.acessorias_company_external_id : kind === "reject" ? link.acessorias_company_external_id : null,
+        };
+        const target = kind === "discover"
+          ? `contact ${state.selectedContact}`
+          : `${kind === "confirm" ? "company" : "link"} ${kind === "confirm" ? company.acessorias_company_external_id : link.acessorias_company_external_id} for contact ${state.selectedContact}`;
+        actionDialogText.textContent = `Review this explicit action for ${target}.`;
+        if (typeof actionDialog.showModal === "function") actionDialog.showModal();
+        else actionDialog.setAttribute("open", "");
+        element("confirm-dialog-action").focus();
+        updateActionPanel();
+      }
+
+      async function commandJSON(path, payload) {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 8000);
+        try {
+          const response = await fetch(path, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Accept": "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+          if (response.status === 401) {
+            window.location.assign("/admin/acessorias/ui");
+            throw failure("session-expired", 401);
+          }
+          if (!response.ok) throw failure("http", response.status);
+          let result;
+          try {
+            result = await response.json();
+          } catch (_error) {
+            throw failure("empty");
+          }
+          return { status: response.status, result };
+        } catch (error) {
+          if (error && error.name === "AbortError") throw failure("timeout");
+          if (error && error.code) throw error;
+          throw failure("network");
+        } finally {
+          window.clearTimeout(timer);
+        }
+      }
+
+      function actionErrorText(error) {
+        if (error.code === "session-expired") return "Your session expired. Sign in again.";
+        if (error.code === "timeout") return "The action timed out. Retry with the same key if you want to check it again.";
+        if (error.code === "network") return "The action could not reach the server. Retry with the same key if you want to check it again.";
+        if (error.code === "empty") return "The action returned no safe result. Retry with the same key if you want to check it again.";
+        if (error.status === 404) return "The selected contact or link is stale. Refreshing its detail is required.";
+        if (error.status === 409) return "The action conflicts with a newer decision. Reload the contact detail before trying again.";
+        if (error.status === 422) return "The selected company is no longer available. Choose another active company.";
+        if (error.status === 429) return "The action is rate limited. Retry with the same key shortly.";
+        if (error.status >= 500) return "The server did not confirm the action. Retry with the same key if you want to check it again.";
+        return "The action could not be completed safely.";
+      }
+
+      function isUncertainActionError(error) {
+        return error.code === "timeout"
+          || error.code === "network"
+          || error.code === "empty"
+          || error.status === 408
+          || error.status === 429
+          || error.status >= 500;
+      }
+
+      function renderActionResult(action, outcome) {
+        const result = outcome.result || {};
+        const replayed = outcome.status === 200 && action.kind !== "discover";
+        if (action.kind === "discover") {
+          const count = Number.isSafeInteger(result.matched_company_count) ? result.matched_company_count : 0;
+          setStatus(actionStatus, `Discovery completed for contact ${action.contactId}; ${count} matching compan${count === 1 ? "y" : "ies"} reported.`, "success");
+        } else {
+          const companyId = result.acessorias_company_external_id || action.companyId;
+          const actionName = action.kind === "confirm" ? "Confirmation" : "Rejection";
+          setStatus(actionStatus, `${actionName} ${replayed ? "was already applied" : "completed"} for company ${companyId}${replayed ? " (replay)" : ""}.`, "success");
+        }
+      }
+
+      async function refreshAfterCommand(contactId) {
+        await loadQueue();
+        if (state.selectedContact === contactId) await selectContact(contactId);
+      }
+
+      function actionPathAndBody(action) {
+        const contact = encodeURIComponent(action.contactId);
+        if (action.kind === "confirm") {
+          return {
+            path: `/admin/acessorias/ui/api/contacts/${contact}/identity-links/confirm`,
+            body: { acessorias_company_external_id: action.companyId, idempotency_key: action.key },
+          };
+        }
+        if (action.kind === "reject") {
+          return {
+            path: `/admin/acessorias/ui/api/contacts/${contact}/identity-links/${encodeURIComponent(action.companyId)}/reject`,
+            body: { idempotency_key: action.key },
+          };
+        }
+        return {
+          path: `/admin/acessorias/ui/api/contacts/${contact}/identity-discovery`,
+          body: { idempotency_key: action.key },
+        };
+      }
+
+      async function runAction(action) {
+        if (state.actionInFlight) return;
+        const request = ++state.actionRequest;
+        state.actionInFlight = true;
+        updateActionPanel();
+        setStatus(actionStatus, "Submitting action…");
+        const requestDetails = actionPathAndBody(action);
+        try {
+          const outcome = await commandJSON(requestDetails.path, requestDetails.body);
+          if (request !== state.actionRequest || state.selectedContact !== action.contactId) return;
+          state.actionInFlight = false;
+          state.pendingAction = null;
+          state.selectedCompanyExternalId = null;
+          state.selectedLinkExternalId = null;
+          renderActionResult(action, outcome);
+          updateActionPanel();
+          await refreshAfterCommand(action.contactId);
+        } catch (error) {
+          if (request !== state.actionRequest) return;
+          state.actionInFlight = false;
+          if (isUncertainActionError(error)) {
+            state.pendingAction = action;
+            setStatus(actionStatus, actionErrorText(error), "error");
+            retryButton(actionStatus, () => {
+              if (state.pendingAction && state.pendingAction.key === action.key) runAction(state.pendingAction);
+            });
+          } else {
+            state.pendingAction = null;
+            setStatus(actionStatus, actionErrorText(error), "error");
+            if (error.status === 422) state.selectedCompanyExternalId = null;
+            if ((error.status === 404 || error.status === 409) && state.selectedContact === action.contactId) {
+              await selectContact(action.contactId);
+            }
+          }
+          updateActionPanel();
+        }
+      }
+
+      function startConfirmedAction() {
+        const selection = state.confirmationAction;
+        closeActionDialog();
+        if (!selection || state.selectedContact !== selection.contactId || !currentContactReady()) {
+          setStatus(actionStatus, "The selected contact changed before confirmation. Review it again.", "error");
+          return;
+        }
+        if (
+          (selection.kind === "confirm" && (!selectedCompany() || selectedCompany().acessorias_company_external_id !== selection.companyId))
+          || (selection.kind === "reject" && (!selectedLink() || selectedLink().acessorias_company_external_id !== selection.companyId))
+        ) {
+          setStatus(actionStatus, "The selected target changed before confirmation. Review it again.", "error");
+          return;
+        }
+        const action = {
+          kind: selection.kind,
+          contactId: selection.contactId,
+          companyId: selection.companyId,
+          key: newIdempotencyKey(),
+        };
+        state.pendingAction = action;
+        runAction(action);
+      }
+
       document.querySelectorAll("input[name=queue-state]").forEach((input) => {
         input.addEventListener("change", () => {
           state.queueState = input.value;
@@ -571,6 +973,11 @@ def _protected_shell() -> str:
         });
       });
       element("refresh-queue").addEventListener("click", () => loadQueue());
+      element("confirm-action").addEventListener("click", () => openActionConfirmation("confirm"));
+      element("reject-action").addEventListener("click", () => openActionConfirmation("reject"));
+      element("discover-action").addEventListener("click", () => openActionConfirmation("discover"));
+      element("cancel-action").addEventListener("click", closeActionDialog);
+      element("confirm-dialog-action").addEventListener("click", startConfirmedAction);
       element("company-search-form").addEventListener("submit", (event) => {
         event.preventDefault();
         state.companyQuery = element("company-query").value.trim();
@@ -578,6 +985,7 @@ def _protected_shell() -> str:
         loadCompanies();
       });
       setStatus(globalMessage, "Reads are session-protected and use server projections.");
+      updateActionPanel();
       loadQueue();
     })();
   </script>
@@ -742,6 +1150,81 @@ async def ui_active_company_list(
     )
     response.headers["Cache-Control"] = "no-store"
     return CompanyListResponse(items=projection["items"], next_cursor=next_cursor)
+
+
+@admin_ui_router.post(
+    "/ui/api/contacts/{digisac_contact_external_id}/identity-links/confirm",
+    include_in_schema=False,
+    response_model=IdentityLinkCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ui_identity_link_confirm(
+    digisac_contact_external_id: str,
+    payload: UIIdentityLinkConfirmRequest,
+    response: Response,
+    context: Annotated[AdminUIContext, Depends(require_admin_ui_context)],
+) -> IdentityLinkCommandResponse:
+    try:
+        command = await context.confirm_identity_link(
+            digisac_contact_external_id,
+            payload.acessorias_company_external_id,
+            reason="operator_verified",
+            idempotency_key=payload.idempotency_key,
+        )
+    except Exception as exc:
+        _ui_raise_identity_command_http_error(exc)
+    response.status_code = 200 if command["replayed"] else status.HTTP_201_CREATED
+    response.headers["Cache-Control"] = "no-store"
+    return IdentityLinkCommandResponse.model_validate(command["result"])
+
+
+@admin_ui_router.post(
+    "/ui/api/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+    include_in_schema=False,
+    response_model=IdentityLinkCommandResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def ui_identity_link_reject(
+    digisac_contact_external_id: str,
+    acessorias_company_external_id: str,
+    payload: UIIdentityLinkRejectRequest,
+    response: Response,
+    context: Annotated[AdminUIContext, Depends(require_admin_ui_context)],
+) -> IdentityLinkCommandResponse:
+    try:
+        command = await context.reject_identity_link(
+            digisac_contact_external_id,
+            acessorias_company_external_id,
+            reason="operator_rejected",
+            idempotency_key=payload.idempotency_key,
+        )
+    except Exception as exc:
+        _ui_raise_identity_command_http_error(exc)
+    response.status_code = 200 if command["replayed"] else status.HTTP_201_CREATED
+    response.headers["Cache-Control"] = "no-store"
+    return IdentityLinkCommandResponse.model_validate(command["result"])
+
+
+@admin_ui_router.post(
+    "/ui/api/contacts/{digisac_contact_external_id}/identity-discovery",
+    include_in_schema=False,
+    response_model=IdentityDiscoveryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def ui_identity_discovery(
+    digisac_contact_external_id: str,
+    payload: UIIdentityDiscoveryRequest,
+    response: Response,
+    context: Annotated[AdminUIContext, Depends(require_admin_ui_context)],
+) -> IdentityDiscoveryResponse:
+    try:
+        command = await context.discover_identity(
+            digisac_contact_external_id, idempotency_key=payload.idempotency_key
+        )
+    except Exception as exc:
+        _ui_raise_identity_command_http_error(exc)
+    response.headers["Cache-Control"] = "no-store"
+    return IdentityDiscoveryResponse.model_validate(command["result"])
 
 
 @admin_ui_router.post("/login", include_in_schema=False, response_class=HTMLResponse)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from http.cookies import SimpleCookie
+from typing import Any
 
 import httpx
 import pytest
@@ -124,6 +125,210 @@ def test_ui_read_workspace_has_local_accessible_contract(
     assert "sessionStorage" not in shell.text
     assert "ADMIN_API_TOKEN" not in shell.text
     assert "https://" not in shell.text
+
+
+def test_ui_action_bridge_uses_fixed_reasons_and_durable_replay(
+    ui_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+    link_result: dict[str, Any] = {
+        "digisac_contact_external_id": "contact-1",
+        "acessorias_company_external_id": "company-1",
+        "state": "confirmed",
+        "source": "admin_api",
+        "confirmation_source": "admin_api",
+        "confirmed_at": "2026-08-21T12:00:00Z",
+        "rejection_reason": None,
+        "created_at": "2026-08-21T11:00:00Z",
+        "updated_at": "2026-08-21T12:00:00Z",
+    }
+    discovery_result: dict[str, Any] = {
+        "digisac_contact_external_id": "contact-1",
+        "state": "candidate",
+        "matched_company_external_ids": ["company-1"],
+        "links": [],
+        "matched_company_count": 1,
+        "evidence_count": 1,
+        "observed_at": "2026-08-21T12:00:00Z",
+    }
+
+    async def fake_confirm(
+        contact: str,
+        company: str,
+        *,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        calls.append(("confirm", contact, company, reason, idempotency_key))
+        return {
+            "replayed": len([call for call in calls if call[0] == "confirm"]) > 1,
+            "result": link_result,
+        }
+
+    async def fake_reject(
+        contact: str,
+        company: str,
+        *,
+        reason: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        calls.append(("reject", contact, company, reason, idempotency_key))
+        return {
+            "replayed": False,
+            "result": {
+                **link_result,
+                "state": "rejected",
+                "confirmation_source": None,
+                "confirmed_at": None,
+                "rejection_reason": "operator_rejected",
+            },
+        }
+
+    async def fake_discovery(
+        contact: str,
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        calls.append(("discovery", contact, idempotency_key))
+        return {"replayed": False, "result": discovery_result}
+
+    monkeypatch.setattr(admin_ui, "confirm_identity_link_admin", fake_confirm)
+    monkeypatch.setattr(admin_ui, "reject_identity_link_admin", fake_reject)
+    monkeypatch.setattr(admin_ui, "discover_identity_admin", fake_discovery)
+
+    unauthenticated = TestClient(app).post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-links/confirm",
+        json={
+            "acessorias_company_external_id": "company-1",
+            "idempotency_key": "key-1",
+        },
+    )
+    assert unauthenticated.status_code == 401
+
+    _login(ui_client)
+    confirm_path = "/admin/acessorias/ui/api/contacts/contact-1/identity-links/confirm"
+    body = {"acessorias_company_external_id": "company-1", "idempotency_key": "key-1"}
+    created = ui_client.post(confirm_path, json=body)
+    replay = ui_client.post(confirm_path, json=body)
+    rejected = ui_client.post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-links/company-1/reject",
+        json={"idempotency_key": "key-2"},
+    )
+    discovered = ui_client.post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-discovery",
+        json={"idempotency_key": "key-3"},
+    )
+
+    assert created.status_code == 201
+    assert replay.status_code == 200
+    assert rejected.status_code == 201
+    assert discovered.status_code == 200
+    assert all(
+        response.headers["cache-control"] == "no-store"
+        for response in (created, replay, rejected, discovered)
+    )
+    assert calls == [
+        ("confirm", "contact-1", "company-1", "operator_verified", "key-1"),
+        ("confirm", "contact-1", "company-1", "operator_verified", "key-1"),
+        ("reject", "contact-1", "company-1", "operator_rejected", "key-2"),
+        ("discovery", "contact-1", "key-3"),
+    ]
+    assert "key-1" not in created.text
+    assert "operator_verified" not in created.text
+
+
+def test_ui_action_bridge_returns_safe_command_errors(
+    ui_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.core.identity_resolution import IdentityConflictError
+
+    async def fail_confirm(*_: object, **__: object) -> dict[str, Any]:
+        raise IdentityConflictError()
+
+    monkeypatch.setattr(admin_ui, "confirm_identity_link_admin", fail_confirm)
+    _login(ui_client)
+
+    response = ui_client.post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-links/confirm",
+        json={
+            "acessorias_company_external_id": "company-1",
+            "idempotency_key": "key-1",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"detail": "Identity confirmation conflict"}
+    assert "company-1" not in response.text
+
+
+def test_ui_action_bridge_maps_unavailable_company_without_echoing_target(
+    ui_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.core.identity_resolution import IdentityResolutionError
+
+    async def fail_confirm(*_: object, **__: object) -> dict[str, Any]:
+        raise IdentityResolutionError(
+            "directory_company_unavailable", "unsafe provider detail"
+        )
+
+    monkeypatch.setattr(admin_ui, "confirm_identity_link_admin", fail_confirm)
+    _login(ui_client)
+
+    response = ui_client.post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-links/confirm",
+        json={
+            "acessorias_company_external_id": "company-1",
+            "idempotency_key": "key-1",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"detail": "Acessórias company unavailable"}
+    assert "company-1" not in response.text
+
+
+def test_ui_action_bridge_rejects_invalid_body_without_cacheable_details(
+    ui_client: TestClient,
+) -> None:
+    _login(ui_client)
+
+    response = ui_client.post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-links/confirm",
+        json={"acessorias_company_external_id": "company-1"},
+    )
+
+    assert response.status_code == 400
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"detail": "Invalid administrative command body"}
+
+
+def test_ui_action_shell_exposes_explicit_local_action_contract(
+    ui_client: TestClient,
+) -> None:
+    _login(ui_client)
+
+    shell = ui_client.get("/admin/acessorias/ui")
+
+    assert shell.status_code == 200
+    assert 'id="action-confirmation"' in shell.text
+    assert 'id="confirm-action"' in shell.text
+    assert 'id="reject-action"' in shell.text
+    assert 'id="discover-action"' in shell.text
+    assert "/admin/acessorias/ui/api/contacts/" in shell.text
+    assert "/identity-links/confirm" in shell.text
+    assert "/identity-links/" in shell.text and "/reject" in shell.text
+    assert "/identity-discovery" in shell.text
+    assert "crypto.randomUUID" in shell.text
+    assert "isUncertainActionError" in shell.text
+    assert "Retry with the same key" in shell.text
+    assert "localStorage" not in shell.text
+    assert "sessionStorage" not in shell.text
+    assert "ADMIN_API_TOKEN" not in shell.text
 
 
 def test_ui_read_bridge_requires_session_and_preserves_opaque_cursor(

@@ -453,7 +453,10 @@ e a fila/detalhe/busca read-only da SPEC-0013. Os paths BFF
 as projeções sanitizadas existentes e mantêm o `ADMIN_API_TOKEN` no servidor.
 Filtros de fila limitados a `candidate`, `ambiguous` e `unresolved`, cursores
 opacos, estados de erro/retry e busca somente de empresas presentes e ativas
-ficam no cliente local; as ações da SPEC-0013 permanecem no issue 0044.
+ficam no cliente local. Os paths BFF de confirmação, rejeição e discovery usam
+o mesmo cookie, razões fixas (`operator_verified` e `operator_rejected`),
+chaves idempotentes transitórias e refresh de fila/detalhe após sucesso ou
+replay; não chamam providers, Redis ou o fluxo de Request.
 
 As consultas estão montadas sem prefixo de versão. `/v1/` e `/v2/` permanecem
 somente como política de compatibilidade futura; não são aliases nem rotas
@@ -634,6 +637,15 @@ Alembic `0022_identity_discovery_command` e **76 passed, 249 deselected** no
 PostgreSQL 16 descartável. A evidência inclui os testes HTTP/BFF e de contrato
 da UI; não houve migration nova. A validação é local e descartável e não
 comprova Redis, providers, secret manager, deployment ou produção.
+
+Na validação do issue 0044 em 2026-08-22, o runner descartável com
+`APP_TIMEZONE=UTC` passou JavaScript syntax check, compileall, Pyright,
+**253 passed, 76 skipped** offline, Alembic `0022_identity_discovery_command`
+e **76 passed, 253 deselected** no PostgreSQL 16 descartável. A cobertura
+focada validou os três paths BFF, razões fixas, replay `201`/`200`, erros
+sanitizados, chave transitória no cliente e contrato local sem storage ou
+recursos externos. Nenhum browser harness ou executável Playwright estava
+disponível neste ambiente; não houve QA renderizado nem aceitação de produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

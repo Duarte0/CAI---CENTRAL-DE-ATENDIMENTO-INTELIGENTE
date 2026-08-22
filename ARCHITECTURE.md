@@ -528,11 +528,14 @@ records these delivery limitations:
   PostgreSQL-authoritative idempotent commands/discovery; same-key retries
   converge, incompatible key reuse conflicts, and contact locking prevents
   duplicate concurrent transitions. They do not call providers or Redis, create
-  Requests, or mutate historical cycle resolution. SPEC-0013 is authorized for
-  adoption and issue decomposition; issue 0042 implements its local shell,
+  Requests, or mutate historical cycle resolution. SPEC-0013 is implemented
+  locally; issue 0042 implements its local shell,
   login/logout, signed session, and in-process BFF boundary, while issue 0043
   implements the queue/detail/company-search read model through session-only
-  BFF paths. Issue 0044 remains responsible for command actions.
+  BFF paths. Issue 0044 implements the session-only confirmation, rejection,
+  and deterministic-discovery action paths; the browser keeps idempotency keys
+  transient, requires explicit confirmation, and refreshes projections after
+  success or replay.
 
   The approved SPEC-0013 architecture is a FastAPI-served HTML page with local
   CSS and modular JavaScript, without a required bundler; it consumes SPEC-0012

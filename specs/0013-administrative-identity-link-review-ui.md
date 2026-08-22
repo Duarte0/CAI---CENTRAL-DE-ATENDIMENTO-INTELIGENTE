@@ -1,9 +1,9 @@
 # SPEC-0013 — Interface web administrativa para conciliação de identidade
 
-- **Status:** shell, sessão e leitura da fila/detalhe/busca implementados localmente nos issues 0042–0043; ações permanecem no issue 0044
-- **Versão:** 1.4
+- **Status:** implementado localmente nos issues 0042–0044; aceitação de produção permanece separada
+- **Versão:** 1.5
 - **Prioridade/Fase:** P1 / Milestone C.2 — operação administrativa de identidade
-- **Rastreabilidade:** SPEC-0008, SPEC-0009, SPEC-0012, issues 0042–0043 e `IMPLEMENTATION_PLAN.md`
+- **Rastreabilidade:** SPEC-0008, SPEC-0009, SPEC-0012, issues 0042–0044 e `IMPLEMENTATION_PLAN.md`
 - **Dependências:** SPEC-0012 implementada; API administrativa autenticada verificada; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` provisionados com segurança
 
 ## Evidência do slice implementado
@@ -29,8 +29,18 @@ paths BFF sob `/admin/acessorias/ui/api/` usam somente a sessão assinada,
 reutilizam as projeções e cursores da SPEC-0012, retornam `no-store` e não
 expõem o token Bearer, valores de contato, storage do navegador ou recursos
 externos. Loading, vazio, expiração, ausência, rate limit, timeout, rede e
-respostas fora de ordem têm estados seguros no cliente. O issue 0044 continua
-responsável pelas ações de confirmação, rejeição e discovery.
+respostas fora de ordem têm estados seguros no cliente.
+
+O issue 0044 adiciona os três paths BFF de ação sob
+`/admin/acessorias/ui/api/`, autenticados pela mesma sessão e sem expor o
+`ADMIN_API_TOKEN`: confirmação de um alvo presente/ativo com a razão fixa
+`operator_verified`, rejeição de um vínculo selecionado com a razão fixa
+`operator_rejected` e discovery determinístico do contato selecionado. O
+cliente gera a chave idempotente somente no estado transitório da ação, mantém
+a mesma chave quando o operador solicita retry após resultado incerto, bloqueia
+cliques concorrentes, exige confirmação explícita e recarrega fila/detalhe após
+sucesso ou replay. Os comandos continuam no boundary PostgreSQL da SPEC-0012;
+não há migration, provider, Redis ou alteração de resolução histórica.
 
 ## Objetivo
 

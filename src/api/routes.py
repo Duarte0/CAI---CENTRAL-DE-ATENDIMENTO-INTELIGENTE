@@ -395,17 +395,18 @@ async def validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> Response:
     path = request.url.path
-    if (
-        path.startswith("/admin/acessorias/contacts/")
-        and "/identity-links/" in path
-        and (path.endswith("/confirm") or path.endswith("/reject"))
-    ) or (
-        path.startswith("/admin/acessorias/contacts/")
-        and path.endswith("/identity-discovery")
+    is_admin_command = path.startswith("/admin/acessorias/contacts/")
+    is_ui_command = path.startswith("/admin/acessorias/ui/api/contacts/")
+    is_confirm_or_reject = "/identity-links/" in path and (
+        path.endswith("/confirm") or path.endswith("/reject")
+    )
+    if (is_admin_command or is_ui_command) and (
+        is_confirm_or_reject or path.endswith("/identity-discovery")
     ):
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"detail": "Invalid administrative command body"},
+            headers={"Cache-Control": "no-store"},
         )
     return await request_validation_exception_handler(request, exc)
 
