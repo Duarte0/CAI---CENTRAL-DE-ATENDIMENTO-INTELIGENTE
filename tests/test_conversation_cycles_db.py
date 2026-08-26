@@ -200,3 +200,56 @@ async def test_media_blocked_cycle_wakes_after_image_is_recovered():
     assert [str(item["public_id"]) for item in awakened] == [
         str(cycle["public_id"])
     ]
+
+
+@pytest.mark.asyncio
+async def test_media_blocked_cycle_wakes_after_audio_is_recovered():
+    cycle, _ = await close_cycle(
+        conversation_id="ticket-audio-blocked",
+        protocol="123",
+        closed_at="2026-07-28T12:00:00Z",
+        close_event_key="close-audio-blocked",
+    )
+    await save_cycle_messages(
+        str(cycle["public_id"]),
+        [
+            {
+                "message_id": "audio-blocked",
+                "type": "ptt",
+                "timestamp": "2026-07-28T11:00:00Z",
+            }
+        ],
+    )
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            INSERT INTO message_transcriptions (
+                message_id, conversation_id, model, status, attempt_count,
+                created_at, updated_at
+            ) VALUES (
+                'audio-blocked', 'ticket-audio-blocked', 'whisper', 'failed', 3,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            UPDATE conversation_processing_cycles
+            SET status = 'media_blocked', next_attempt_at = NULL
+            WHERE public_id = %s
+            """,
+            (cycle["public_id"],),
+        )
+    assert await wake_unblocked_media_cycles(max_attempts=3) == []
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE message_transcriptions
+            SET status = 'pending', next_attempt_at = CURRENT_TIMESTAMP
+            WHERE message_id = 'audio-blocked'
+            """
+        )
+    awakened = await wake_unblocked_media_cycles(max_attempts=3)
+    assert [str(item["public_id"]) for item in awakened] == [
+        str(cycle["public_id"])
+    ]

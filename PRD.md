@@ -134,9 +134,13 @@ Redis jobs are published.
   vision model, and persists extracted content.
 
 Transient provider failures honor retry timing, including `Retry-After`, local
-backoff, and configured attempt limits. A terminal audio failure may allow a
-classification with a warning marker. A terminal image failure blocks the
-dependent persistent cycle until the image is successfully recovered.
+backoff, and configured attempt limits. Audio transient retries keep their
+durable schedule independently of the IA classification attempt budget. Audio
+and image remain dependencies of the persistent cycle: pending/recoverable
+media keeps it waiting, and a
+terminal failure blocks the dependent cycle until the media is successfully
+recovered. Only a non-empty completed transcription or extraction is usable by
+classification; no synthetic media marker makes an incomplete cycle eligible.
 
 ### 5.4 Finalization mode
 
@@ -353,8 +357,9 @@ defined by the schema.
 - Leases and claims prevent concurrent workers from processing the same durable
   job.
 - Retry scheduling must not republish work before `next_attempt_at`.
-- A terminal image failure must prevent incomplete classification.
-- A terminal audio failure must remain visible as a safe warning/marker.
+- A terminal audio or image failure must prevent incomplete classification.
+- Only completed media with non-empty extracted text may enter context rendering
+  and classification.
 - Targeted recovery must not remove unrelated dead-letter entries.
 
 ### Security and privacy boundaries

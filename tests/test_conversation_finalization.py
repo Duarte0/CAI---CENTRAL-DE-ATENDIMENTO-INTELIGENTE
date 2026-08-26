@@ -71,7 +71,7 @@ def test_previous_cycle_boundary_prevents_overlap():
     assert [item["message_id"] for item in history.messages] == ["new"]
 
 
-def test_media_terminal_failure_adds_marker_and_warning():
+def test_media_terminal_audio_failure_blocks_without_marker_or_warning():
     messages = [
         {
             "message_id": "audio",
@@ -104,10 +104,32 @@ def test_media_terminal_failure_adds_marker_and_warning():
         max_attempts=3,
     )
     assert not pending
-    assert not blocked
-    assert "ÁUDIO NÃO DISPONÍVEL" in hydrated[0]["content"]
+    assert blocked == {"audio"}
+    assert hydrated[0]["content"] == ""
     assert hydrated[1]["content"] == "boleto"
-    assert warnings[0]["code"] == "media_failed"
+    assert warnings == []
+
+
+def test_completed_media_without_text_is_not_ready_for_finalization():
+    messages = [
+        {"message_id": "audio", "type": "ptt", "content": ""},
+    ]
+    hydrated, warnings, pending, blocked = apply_media_states(
+        messages,
+        {
+            "audio": {
+                "status": "completed",
+                "attempt_count": 1,
+                "text": "   ",
+                "kind": "audio",
+            },
+        },
+        max_attempts=3,
+    )
+    assert hydrated[0]["content"] == ""
+    assert pending == {"audio"}
+    assert blocked == set()
+    assert warnings == []
 
 
 def test_pending_and_recoverable_failed_media_wait():

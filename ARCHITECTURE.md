@@ -301,8 +301,8 @@ open
 
 Any recoverable processing failure -> retryable_failure -> pending
 Terminal processing failure -> failed
-Terminal image extraction failure -> media_blocked
-media_blocked + successful dependent image recovery -> waiting_media/pending
+Terminal audio/image extraction failure -> media_blocked
+media_blocked + successful dependent media recovery -> waiting_media/pending
 \`\`\`
 
 The exact transition is persisted in PostgreSQL and protected by expected
@@ -326,8 +326,9 @@ Queue and dead-letter entries are deduplicated by message ID; recovery retains
 one safety copy until a non-empty transcription is persisted. Failure logs and
 retry metadata use sanitized categories rather than provider bodies or signed
 URLs.
-Terminal audio failure leaves a safe marker in the context and can produce
-\`completed_with_warnings\`.
+Terminal audio failure places dependent cycles in \`media_blocked\`; it does not
+create a context marker or allow \`completed_with_warnings\` to bypass the
+media dependency.
 
 ### Image
 
@@ -336,9 +337,9 @@ content, calls the configured vision model, and updates
 \`message_image_extractions\`. Truncated or invalid vision output is not treated
 as a successful extraction.
 
-A terminal image failure places a dependent persistent cycle in \`media_blocked\`;
-the IA worker must not classify incomplete context. A later successful image
-recovery wakes only cycles that depend on that image.
+A terminal audio or image failure places a dependent persistent cycle in
+\`media_blocked\`; the IA worker must not classify incomplete context. A later
+successful media recovery wakes only cycles that depend on that media.
 
 \`next_attempt_at\` is the durable source of the next eligible attempt. Provider
 retry timing and local backoff use the later applicable time, preventing broad
@@ -481,8 +482,8 @@ application verifies that schema at startup and does not create or mutate it.
 - Cycle and classification identity prevent duplicate terminal analysis.
 - Retry scheduling respects provider timing and does not broadly republish
   future work.
-- Terminal image failures block classification; terminal audio failures preserve
-  a warning marker.
+- Terminal audio and image failures block classification until dependent media
+  is completed with non-empty extracted text.
 - Request adapters for the same provider endpoint/configuration share a
   concurrency-safe in-process Sliding Window before each POST; its transient
   state contains no credentials, headers, payload, classification content, or

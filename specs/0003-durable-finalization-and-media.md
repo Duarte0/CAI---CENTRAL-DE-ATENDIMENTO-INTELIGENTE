@@ -1,20 +1,21 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037
-- **Versão:** 1.6
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037
+- **Versão:** 1.7
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002; issue 0037
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002; issues 0037 e 0046
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
 
-Os contratos de ciclo persistente, reserva de mídia, agenda, publicação e
-recuperação estão implementados no código atual. A verificação operacional
-mais recente foi executada no runner PostgreSQL 16 descartável em 2026-08-14
-com **36 testes aprovados, 143 desselecionados**, incluindo concorrência de ciclos, liberação após
-falha de publicação, recuperação due-only de áudio/imagem e despertar seletivo
-de ciclos bloqueados por imagem. Esta nota registra evidência local; não altera
-o contrato nem afirma verificação de Redis, fornecedores ou produção.
+Os contratos de ciclo persistente, reserva de mídia, agenda, publicação,
+recuperação e gate compartilhado de áudio/imagem estão implementados no código
+atual. A verificação operacional mais recente foi executada no runner
+PostgreSQL 16 descartável em 2026-08-26 com **78 testes aprovados, 258
+desselecionados**, incluindo áudio terminal bloqueado, áudio pendente em espera,
+conteúdo concluído não vazio e despertar seletivo por áudio/imagem. Esta nota
+registra evidência local; não altera o contrato nem afirma verificação de Redis,
+fornecedores ou produção.
 
 **Integração de limite (2026-08-17):** o mapeamento departamental usa os
 `cycle_started_at` e `ticket_closed_at` persistidos pelo ciclo. Quando esses
@@ -90,16 +91,16 @@ Definir a finalização por histórico DigiSac e os contratos de mídia, context
 ## Mídia, falhas e recuperação
 
 1. Áudio/imagem **devem** possuir reserva PostgreSQL antes da fila Redis. Estado, tentativa, publicação, lease e transição **devem** impedir conclusão obsoleta após recuperação concorrente.
-2. Mídia pendente ou recuperável **deve** levar o ciclo a `waiting_media` até a tentativa elegível. Falha terminal de áudio **deve** renderizar marcador seguro e pode concluir com aviso.
-3. Falha terminal de imagem **deve** levar somente ciclos dependentes a `media_blocked`; tais ciclos **não podem** ser classificados sem recuperação da imagem. Extração bem-sucedida posterior **deve** acordar apenas os ciclos bloqueados que dependem dela.
+2. Mídia pendente ou recuperável **deve** levar o ciclo a `waiting_media` até a tentativa elegível. Somente estado `completed` com texto extraído não vazio **pode** satisfazer o gate de contexto.
+3. Falha terminal de áudio ou imagem **deve** levar somente ciclos dependentes a `media_blocked`; tais ciclos **não podem** ser classificados, receber marcador sintético ou gerar `completed_with_warnings` por mídia ausente. Recuperação bem-sucedida posterior **deve** acordar apenas os ciclos bloqueados que dependem dela.
 4. Falhas transitórias, incluindo 429, 503 e timeout, **devem** manter estado durável, respeitar `Retry-After` e não consumir indevidamente a tentativa terminal. Falha permanente **deve** registrar motivo sanitizado. Recuperação direcionada **não pode** remover dead-letter não relacionado.
 
 ## Remoção do legado, observabilidade e verificação
 
-Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúdo sensível. Testes de banco descartável **devem** cobrir paginação, fronteira, filtro/renderização, claim/lease concorrente, persistência antes da fila, agenda futura, reconciliação sem duplicação, aviso de áudio e imagem bloqueada/acordada no modo persistente.
+Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúdo sensível. Testes de banco descartável **devem** cobrir paginação, fronteira, filtro/renderização, claim/lease concorrente, persistência antes da fila, agenda futura, reconciliação sem duplicação, áudio/imagem bloqueados e acordados no modo persistente.
 
 - Uma queda entre persistência e publicação é recuperável sem duplicar classificação.
-- Imagem terminalmente falha nunca gera classificação do ciclo dependente.
+- Áudio ou imagem terminalmente falha nunca gera classificação do ciclo dependente.
 - Múltiplos recuperadores reclamam apenas um job devido.
 
 ## Decisão registrada

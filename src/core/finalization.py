@@ -238,34 +238,16 @@ def apply_media_states(
             message["media_status"] = status
             if status == "completed":
                 text = state.get("text")
-                message["content"] = text.strip() if isinstance(text, str) else ""
+                normalized_text = text.strip() if isinstance(text, str) else ""
+                message["content"] = normalized_text
+                if not normalized_text:
+                    pending.add(message_id)
             elif status in {"pending", "processing"}:
                 pending.add(message_id)
             elif status == "failed" and attempts < max_attempts:
                 pending.add(message_id)
-            elif (
-                status == "failed"
-                and is_image_message(message_type, message.get("file"))
-                and attempts >= max_attempts
-            ):
+            elif status == "failed" and attempts >= max_attempts:
                 blocked.add(message_id)
-            elif status == "failed":
-                kind = "audio" if message_type in AUDIO_TYPES else "image"
-                message["content"] = (
-                    "[ÁUDIO NÃO DISPONÍVEL — processamento falhou após "
-                    f"{attempts} tentativas]"
-                    if kind == "audio"
-                    else "[IMAGEM NÃO DISPONÍVEL — processamento falhou após "
-                    f"{attempts} tentativas]"
-                )
-                warnings.append(
-                    {
-                        "code": "media_failed",
-                        "message_id": message_id,
-                        "kind": kind,
-                        "attempt_count": attempts,
-                    }
-                )
         output.append(message)
     return output, warnings, pending, blocked
 

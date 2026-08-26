@@ -183,14 +183,14 @@ mensagens, filtra conteúdo fora do ciclo e salva o snapshot usado na análise.
 Esse `/api/v1` pertence à DigiSac e não é uma rota de consulta montada pelo CAI.
 
 Os estados do ciclo incluem, entre outros, espera por histórico, espera por
-mídia, bloqueio por imagem, classificação, conclusão, conclusão com avisos e
+mídia, bloqueio por mídia, classificação, conclusão, conclusão com avisos e
 falha. `next_attempt_at`, leases e claims no PostgreSQL permitem recuperar jobs
 mesmo se houver queda entre a persistência e a publicação no Redis.
 
 - mídia pendente mantém o ciclo em espera até o horário real de nova tentativa;
-- falha terminal de imagem bloqueia a classificação para não concluir sem a
-  imagem;
-- falha terminal de áudio preserva um marcador e pode concluir com avisos;
+- falha terminal de áudio ou imagem bloqueia a classificação para não concluir
+  sem o conteúdo de mídia;
+- somente mídia `completed` com texto não vazio torna o ciclo elegível;
 - uma extração reprocessada desperta automaticamente ciclos bloqueados;
 - uma mensagem só pode pertencer a um ciclo;
 - a identidade persistida do ciclo e da classificação torna a análise idempotente.

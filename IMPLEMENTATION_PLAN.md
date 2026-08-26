@@ -1,6 +1,6 @@
 # Implementation Plan
 
-_Planning baseline: 2026-08-21; synchronized 2026-08-25. Source, Alembic revisions, configuration, and
+_Planning baseline: 2026-08-21; synchronized 2026-08-26. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
 evidence, never production availability. The SPEC-0013 Phase 2 delivery is
 complete locally; production acceptance remains separate._
@@ -14,8 +14,9 @@ complete locally; production acceptance remains separate._
   history reconstruction, Groq classification, Redis coordination, and
   separate durable audio/image processing are implemented. PostgreSQL state is
   reserved before queue publication; lease, due-retry, reconciliation, and
-  idempotency paths recover interrupted work. Terminal image failure blocks
-  only dependent cycles; terminal audio failure becomes a warning.
+  idempotency paths recover interrupted work. Terminal audio or image failure
+  blocks only dependent cycles; classification requires non-empty completed
+  media content.
 - **[completed] Persistent-only finalization and privacy hardening**
   (SPEC-0001–0003; issues 0005, 0024, 0025). The legacy Redis
   buffer/debounce mode and raw-payload diagnostic routes are removed. Parser
@@ -77,6 +78,12 @@ complete locally; production acceptance remains separate._
   `0023_manual_reconciliation`, and PostgreSQL pytest **77 passed, 255
   deselected**. This proves the tracked contracts and disposable publication;
   it does not prove live provider availability or production acceptance.
+- **[completed | local/disposable evidence]** Issue 0046 aligns audio and image
+  finalization safety: pending/recoverable media waits, terminal media blocks
+  dependent cycles, and only non-empty completed media reaches classification.
+  The 2026-08-26 canonical run passed offline pytest **258 passed, 78 skipped**
+  and PostgreSQL pytest **78 passed, 258 deselected**, with compileall,
+  strict Pyright, and Alembic `0023_manual_reconciliation` clean.
 
 ### No current implementation backlog signal
 
@@ -86,7 +93,8 @@ complete locally; production acceptance remains separate._
   database prerequisite policy.
 - **[superseded/deprecated]** Issue 0023 is deprecated: its active/inactive
   directory concern was superseded by the later directory-contract alignment,
-  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0045 are closed.
+  not an open duplicate build item. Issues 0001–0022, 0024–0041, 0045 and 0046
+  are closed.
 
 ## Priority plan
 
@@ -217,7 +225,8 @@ complete locally; production acceptance remains separate._
   0026), audio retry parity (0027), persistence/provider boundary refactors
   (0028–0036), Redis residue audit/cleanup (0037), SPEC-0012 admin API
   slices (0038–0040), documentation reconciliation (0041), and manual
-  DigiSac–Acessórias reconciliation (0045).
+  DigiSac–Acessórias reconciliation (0045), and shared audio/image finalization
+  gate (0046).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -226,6 +235,6 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issue 0045 is also
-complete locally; Request lifecycle, broader IA policy, provider composition,
-and production acceptance remain separate blocked plan items.
+shell/session/BFF, read, and command-action increments. Issues 0045 and 0046
+are also complete locally; Request lifecycle, broader IA policy, provider
+composition, and production acceptance remain separate blocked plan items.
