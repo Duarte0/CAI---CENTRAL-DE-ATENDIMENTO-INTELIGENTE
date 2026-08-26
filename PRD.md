@@ -15,8 +15,9 @@ through an HTTP API.
 CAI is an analysis and operational-support system. The implemented system does
 not open DigiSac tickets, reply to customers, transfer tickets, or autonomously
 decide the department or agent responsible for a ticket. The approved
-Acessórias directory, identity, department mapping, and durable external
-Request increments are implemented locally behind their own contracts.
+Acessórias directory, identity, department mapping, and durable internal
+Request increments are implemented locally behind their own contracts. Every
+automatic Acessórias opening is internal (`tipo=I`), never external.
 
 The requirements in this document describe capabilities present in the current
 repository. Product policies approved by the product owner are recorded as
@@ -61,7 +62,8 @@ CAI must:
    interactions and conversation evolution.
 7. Integrate the approved DigiSac → CAI → Acessórias flow safely: maintain
    external directories, resolve identity conservatively, map departments, and
-   later create auditable, idempotent external Requests.
+   later create auditable, idempotent internal Requests only when classification
+   confidence reaches the approved threshold.
 
 ## 4. Non-goals and product boundaries
 
@@ -79,8 +81,9 @@ CAI does not currently:
 
 The directory foundation does not create or update Requests, synchronize Users,
 expose resolution/refresh endpoints or a UI, use fuzzy name matching, or change
-the IA contract. The implemented Request increment creates only external
-Requests of `tipo=E` from eligible durable facts. A unique phone match is a
+the IA contract. The implemented Request increment creates only internal
+Requests of `tipo=I` from eligible durable facts and a classification confidence
+of at least `0.50` (equivalent to `5.0` on the business `0..10` scale). A unique phone match is a
 candidate, not an automatic confirmation; DigiSac groups remain unresolved
 unless an explicit confirmed link exists.
 
@@ -174,7 +177,7 @@ duplicating terminal classifications.
 
 The approved product flow is DigiSac ticket/conversation and contact → CAI
 classification → Acessórias company resolution → Acessórias department mapping
-→ durable external Request → persisted CAI-to-Request link. The Acessórias
+→ confidence gate → durable internal Request (`tipo=I`) → persisted CAI-to-Request link. The Acessórias
 Directory Foundation (SPEC-0007; issue 0012) is implemented locally and
 establishes only the directories required for this flow.
 
@@ -189,11 +192,12 @@ opaque `contact.id`, and publishes only a complete snapshot.
 
 Before any Acessórias Request operation, the terminal cycle retains only the
 canonical ticket `data.contact.id` and the worker runs the durable sequence
-`contact.id` → identity resolution → department-mapping snapshot → Request
-operation → provider POST. A message sender `contactId`, group participant,
+`contact.id` → identity resolution → department-mapping snapshot → confidence
+gate → Request operation → provider POST. A message sender `contactId`, group participant,
 name, phone, or fallback metadata cannot replace the ticket contact. Missing,
-unconfirmed, ambiguous, conflicting, or invalid preparation facts fail closed
-without a provider POST.
+unconfirmed, ambiguous, conflicting, or invalid preparation facts, as well as
+confidence below `0.50` or invalid confidence, fail closed without a provider
+POST.
 
 The local Acessórias directory durably retains companies (active and inactive),
 company contacts, departments, and current company-department relationships.
@@ -238,9 +242,13 @@ Current company departments are directory state, not a constraint that
 invalidates historical external Requests; a later evaluation may record a new
 outcome without rewriting a terminal snapshot.
 
-Issues 0017–0019, 0021–0022 and 0026 implement the durable Request boundary. A terminal eligible cycle
+Issues 0017–0019, 0021–0022, 0026 and 0047 implement the durable Request boundary. A terminal eligible cycle
 with one confirmed company and a current valid mapped department creates at
-most one PostgreSQL operation and one multipart `POST /requests`. Only a
+most one PostgreSQL operation and one multipart `POST /requests`, and only when
+the persisted confidence normalized from `0..1` to `0..10` is at least `5.0`.
+Exactly `0.50` persisted is accepted; null, malformed, non-finite, out-of-range
+and lower values are blocked as a sanitized durable outcome. Every automatic
+POST uses `tipo=I`, so this is always an internal Request. Only a
 non-empty provider `id` becomes the persisted `SolID`; only an explicitly proven
 pre-send transport failure may retry, while ordinary connection, timeout, and
 protocol failures require `manual_db` reconciliation. A `429` without a
@@ -293,6 +301,12 @@ The application, not the model, adds `department`, `agent`, `protocol`,
 `display_title`, identifiers, message counts, and cycle metadata. When a
 protocol exists, `display_title` follows `[{protocol}] - {title}` without
 changing `title`.
+
+The IA `confidence` field remains persisted and exposed on the existing `0..1`
+scale. The Acessórias Request policy interprets it separately on a business
+`0..10` scale (`confidence * 10`) and requires `5.0`/`0.50` or higher before an
+automatic internal Request can be opened. This gate does not alter the model
+contract or trigger a reclassification.
 
 Incomplete or truncated model responses must not be persisted as valid
 classifications. Parser recovery diagnostics may expose only a safe outcome or
@@ -361,6 +375,10 @@ defined by the schema.
 - Only completed media with non-empty extracted text may enter context rendering
   and classification.
 - Targeted recovery must not remove unrelated dead-letter entries.
+- Automatic Acessórias Requests require the persisted classification confidence
+  gate (`0..1` normalized to `0..10`, minimum `5.0`/`0.50`) before provider
+  admission and use `tipo=I` exclusively; blocked confidence is recorded without
+  a provider side effect.
 
 ### Security and privacy boundaries
 
@@ -398,8 +416,9 @@ The source, migrations, configuration, Compose topology, checked-in tests, and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
 issues `0012`–`0022`, `0026`, and `0038`–`0040` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
-resolution, stable-ID department mapping, and conservative Request transport
-classification. The observed local runner evidence on 2026-08-21 is:
+resolution, stable-ID department mapping, conservative Request transport
+classification, and the issue 0047 confidence/internal-type gate. The earlier
+observed local runner evidence on 2026-08-21 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
@@ -427,6 +446,14 @@ response logging from parser diagnostics, and issue `0025` removes raw values
 from normal webhook extraction logs; local tests verify sanitized metadata
 without making a provider-backed quality or production logging claim.
 
+The current issue 0047 validation on 2026-08-26 passed compileall, strict
+Pyright, **269 passed, 82 skipped** offline, Alembic
+`0023_manual_reconciliation`, and **82 passed, 269 deselected** in disposable
+PostgreSQL 16. It covers the normalized confidence threshold, fail-closed
+blocked operations, final pre-POST protection, and the mandatory internal
+`tipo=I` payload. This remains local/disposable evidence and does not prove
+provider, Redis, credentials, deployment, or production readiness.
+
 ## 10. Product decisions
 
 The product owner has decided the following policies:
@@ -442,7 +469,7 @@ The product owner has decided the following policies:
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022 and 0026 with canonical preparation, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
+| Acessórias department and Request flow | Determines safe routing and provider side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022, 0026 and 0047 with canonical preparation, the persisted confidence gate (`0.50`/`5.0`), mandatory internal `tipo=I`, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
 
 SPEC-0013 product authorization is also decided. The approved contract for its
 future issue decomposition is:

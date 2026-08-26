@@ -16,21 +16,29 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.5; issues 0013, 0014, 0026 e 0045; boundary estrutural 0028 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, provenance canônica do contato no ciclo, hydration, full backfill e consumo pela reconciliação manual; sem deleção por ausência. |
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.3; issues 0015, 0026 e 0045 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência/candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e redescoberta manual em lote; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
-| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.4; issues 0017–0019, 0021–0022 e 0026; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
+| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.5; issues 0017–0019, 0021–0022, 0026 e 0047; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart interna (`tipo=I`) durável, gate de confidence `0..10`/mínimo `5.0` (`0..1`/`0.50` persistido), preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
 | SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Implementado localmente v1.2; issues 0038, 0039, 0040 e 0045 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir um contato; a reconciliação manual em lote é uma fronteira separada e não usa o ledger por contato. |
 | SPEC-0013 | [Interface web administrativa para conciliação de identidade](0013-administrative-identity-link-review-ui.md) | Implementado localmente v1.5; issues 0042–0044 | P1 / Milestone C.2 | SPEC-0012; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` em ambiente protegido | Fundação FastAPI com login/logout, sessão assinada, fila, detalhe, busca e ações de confirmação/rejeição/discovery via BFF local; sem matching no frontend ou acesso direto ao banco. |
 
-A evidência mais recente registrada para o runner de SPEC-0004 é **253 passed,
-76 skipped** na etapa offline e **76 passed, 253 deselected** na etapa
-PostgreSQL descartável (issue 0044, sem nova migration; head
-`0022_identity_discovery_command`). A evidência anterior de issue 0040 foi **238 passed,
-76 skipped** na etapa offline e **76 passed, 238 deselected** no PostgreSQL.
+A evidência mais recente registrada para o runner de SPEC-0004 é **269 passed,
+82 skipped** na etapa offline e **82 passed, 269 deselected** na etapa
+PostgreSQL descartável (issue 0047, sem nova migration; head
+`0023_manual_reconciliation`). As execuções anteriores permanecem registradas
+abaixo como evidência histórica datada.
 
 O issue 0045 acrescenta a migration `0023_manual_reconciliation`
 e a fronteira manual incremental. Em 2026-08-25, a execução canônica com
 `APP_TIMEZONE=UTC` passou **255 passed, 77 skipped** offline e **77 passed, 255
 deselected** no PostgreSQL descartável; seus testes não comprovam disponibilidade
 live do provider ou aceitação de produção.
+
+Em 2026-08-26, a execução canônica do issue 0047 passou compileall, Pyright
+estrito, **269 passed, 82 skipped** offline, Alembic
+`0023_manual_reconciliation` e **82 passed, 269 deselected** no PostgreSQL
+descartável. A cobertura inclui o gate `confidence * 10 >= 5.0`, aceitação da
+fronteira `0.50`, bloqueio fail-closed e payload interno `tipo=I`; a evidência
+continua local/descartável e não comprova provider, credenciais, deployment ou
+produção.
 A evidência anterior de issue 0036 foi **224 passed, 69 skipped** na etapa
 offline e **69 passed, 224 deselected** no PostgreSQL. A evidência anterior de
 issue 0033 foi **220 passed,

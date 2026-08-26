@@ -106,7 +106,8 @@ flowchart LR
     DC --> P
     P --> IR[Identity resolver]
     IR --> DM[Department mapping]
-    DM --> FR[Durable Request operation]
+    DM --> CG[Confidence gate]
+    CG --> FR[Durable internal Request operation]
     FC[Persisted CAI classification/cycle] --> IR
     FC --> FR
     P --> ADM[Authenticated admin reads and commands]
@@ -150,9 +151,9 @@ unresolved result when the boundary is insufficient. It then uses an explicitly
 administered PostgreSQL rule keyed by stable provider IDs and the confirmed
 company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
-Request operation runs only after a persisted valid
-classification, confirmed identity, and mapping; issues 0017–0019, 0021–0022,
-0026, and structural boundary issues 0034 and 0036 give it durable one-cycle
+Request operation runs only after a persisted valid classification with
+confidence accepted by the `0..1` to `0..10` business gate, confirmed identity,
+and mapping; issues 0017–0019, 0021–0022, 0026, 0036, and 0047 give it durable one-cycle
 uniqueness, claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start; the
@@ -277,8 +278,11 @@ The IA worker then:
     status/result data where applicable.
 12. resolves the canonical ticket contact identity and persists the cycle outcome;
 13. evaluates and persists the cycle-scoped department-mapping snapshot;
-14. claims or creates the durable Acessórias Request operation only when both
-    preparation stages are ready.
+14. evaluates the persisted classification confidence on the `0..10` business
+    scale (`confidence * 10`, minimum `5.0`/`0.50`) and fails closed when it is
+    below the threshold or invalid;
+15. claims or creates the durable internal Acessórias Request operation only
+    when both preparation stages and the confidence gate are ready.
 
 Persistent cycle publication is guarded by \`enqueued_at\`. Reconcilers only
 republish due work and recover jobs whose publication/lease has expired.
@@ -397,7 +401,7 @@ are:
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\`, \`identity_admin_commands\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, immutable per-cycle outcomes, and PostgreSQL command idempotency. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, canonical ticket-contact provenance, and identity-resolution linkage. |
-| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. |
+| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable internal Request operation per cycle, confidence-gate outcome, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. Automatic provider payloads use `tipo=I`. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
 JSONB where defined by the schema, and durable timestamps use \`TIMESTAMPTZ\`.
@@ -489,12 +493,18 @@ application verifies that schema at startup and does not create or mutate it.
   state contains no credentials, headers, payload, classification content, or
   PII.
 - A terminal cycle must pass canonical-contact identity and cycle-scoped mapping
-  preparation before a Request operation can reach the provider boundary.
+  preparation and the persisted confidence gate before a Request operation can
+  reach the provider boundary.
 - A Request operation is persisted before every provider POST; only a non-empty
   provider `id` confirms completion, and uncertain transport outcomes cannot
   auto-post a second Request. Only an explicit pre-send boundary marker may
   enter the bounded retry path; an unproven `429` is reconciliation-required
   even when `Retry-After` is present.
+- The confidence gate accepts exactly persisted `0.50` and higher after
+  normalization to `0..10`; null, malformed, non-finite, out-of-range, and
+  lower values become sanitized definitive failures without an attempt,
+  `post_started_at`, `SolID`, or provider call. Future automatic openings send
+  `tipo=I` only; post-start historical evidence is not rewritten.
 - Unrelated dead-letter entries are not removed during targeted recovery.
 - No retention, archival, or deletion policy is currently implemented.
 
@@ -504,9 +514,9 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-25
-  evidence is Alembic `0023_manual_reconciliation`, **255 passed, 77
-  skipped** offline, and **77 passed, 255 deselected** in PostgreSQL; static and
+  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-26
+  evidence is Alembic `0023_manual_reconciliation`, **269 passed, 82
+  skipped** offline, and **82 passed, 269 deselected** in PostgreSQL; static and
   disposable evidence does not prove Redis, DigiSac, Groq, secret-manager
   provisioning, replicas, deployment, or production availability or release
   readiness. The older `0020`/`203+68` result is historical evidence only.
@@ -644,7 +654,8 @@ they limit release verification and future evolution decisions.
 - Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,
   \`src/core/acessorias_preparation.py\`, \`src/workers/ia_worker.py\`, and
   Alembic \`0019_acessorias_request_creation.py\` plus
-  \`0020_cycle_contact_provenance.py\`.
+  \`0020_cycle_contact_provenance.py\`; issue 0047 owns the confidence gate
+  and the invariant that automatic openings use internal \`tipo=I\`.
 - Acessórias provider adapters and transient coordination:
   \`src/core/acessorias_directory.py\`,
   \`src/core/acessorias_request_provider.py\`, and

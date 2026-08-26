@@ -139,9 +139,10 @@ essa proveniência. Identidade ou mapping bloqueado permanece observável e não
 faz POST.
 
 Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
-etapa implementada pelos issues 0017–0019, 0021–0022 e 0026 cria Requests somente após fatos
-duráveis de ciclo, classificação, identidade confirmada e mapping válido; o
-efeito externo é separado por uma operação PostgreSQL única por ciclo, com
+etapa implementada pelos issues 0017–0019, 0021–0022, 0026 e 0047 cria Requests
+internos somente após fatos duráveis de ciclo, classificação, identidade
+confirmada, confidence aceita e mapping válido; o efeito no provider é separado
+por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
 e reconciliação `manual_db`. O payload persistido é carregado e validado antes do
 marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
@@ -162,6 +163,14 @@ confirmação automática. O full backfill interno de Contacts valida a resposta
 de página única ou o fallback `page=N`, deduplica por `contact.id` e publica
 somente um snapshot completo em uma transação PostgreSQL; não cria rota pública
 nem autoridade de diretório no Redis.
+
+A confidence persistida permanece na escala `0..1`; antes de qualquer POST ela é
+normalizada para `0..10` (`confidence * 10`) e exige no mínimo `5.0`, equivalente
+a `0.50`. O valor de fronteira é aceito; valor baixo ou inválido bloqueia de
+forma durável e sanitizada, sem tentativa, `post_started_at` ou `SolID`. Toda
+abertura automática no provider usa `tipo=I` e é sempre interna; não existe
+override ou fallback para `tipo=E`. Operações históricas que já iniciaram POST
+não são reescritas nem convertidas.
 
 ### Reconciliação manual de Request
 
@@ -677,6 +686,13 @@ PostgreSQL 16. A cobertura inclui dry-run não destrutivo, apply atômico, repla
 idempotente, retenção histórica e redescoberta após a publicação. O resultado
 é evidência local/descartável: não comprova disponibilidade live do provider
 Acessórias, Redis, credenciais, deployment ou produção.
+
+Na validação do issue 0047 em 2026-08-26, o runner descartável passou compileall,
+Pyright estrito, **269 passed, 82 skipped** offline, Alembic
+`0023_manual_reconciliation` e **82 passed, 269 deselected** no PostgreSQL 16.
+A cobertura valida o gate de confidence, a fronteira `0.50` e o payload interno
+`tipo=I`. O resultado é evidência local/descartável e não comprova provider live,
+Redis, credenciais, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

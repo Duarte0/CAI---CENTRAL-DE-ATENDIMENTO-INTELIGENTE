@@ -1,7 +1,7 @@
 # SPEC-0011 — Criação durável de Request Acessórias
 
-- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022 e 0026; boundaries estruturais pelos issues 0034 e 0036; evidência descartável, sem provider/produção
-- **Versão:** 1.4 (issue 0026 conecta preparação durável e recuperação pré-POST sem alterar o contrato do provider)
+- **Status:** implementada localmente pelos issues 0017–0019, 0021–0022, 0026 e 0047; boundaries estruturais pelos issues 0034 e 0036; evidência descartável, sem provider/produção
+- **Versão:** 1.5 (issue 0047 adiciona gate de confidence e fixa criação automática como Request interno)
 - **Prioridade/Fase:** P1 / Milestone E — Durable Acessórias Request Creation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone E; SPEC-0001, SPEC-0003 e SPEC-0007–0010; diretiva do Product Owner e documentação oficial atual da API Acessórias de 2026-08-14
 - **Dependências:** SPEC-0001, SPEC-0003, SPEC-0007 e SPEC-0008 implementadas; Milestones C (SPEC-0009) e D (SPEC-0010) concluídos para o ciclo elegível; credencial operacional segura disponível
@@ -99,9 +99,22 @@ descartável passou compileall, Pyright estrito, **203 passed, 68 skipped**
 offline e **68 passed, 203 deselected** em PostgreSQL 16, sem provider ou
 produção.
 
+**Gate de confidence e tipo interno (2026-08-26):** issue 0047 preserva o
+contrato de IA e do banco em `0..1`, mas aplica na fronteira durável de Request
+a regra de negócio `confidence * 10 >= 5.0`, equivalente a `confidence >= 0.50`.
+O valor de fronteira é aceito; `NULL`, valores inválidos/não finitos, fora de
+`0..1` e abaixo do limite bloqueiam antes do provider e novamente antes de
+`post_started_at`. O bloqueio é persistido como resultado sanitizado, sem
+chamada, tentativa, `SolID` ou marcador de POST. Todo POST automático futuro
+usa `tipo=I` (interno); operações antigas com evidência de POST não são
+reescritas nem convertidas. A execução canônica passou compileall, Pyright,
+**269 passed, 82 skipped** offline, Alembic `0023_manual_reconciliation` e
+**82 passed, 269 deselected** em PostgreSQL 16 descartável; isso não comprova
+provider, credenciais, deployment ou produção.
+
 ## Objetivo e não objetivos
 
-Definir o efeito externo durável que cria um Request Acessórias depois que uma classificação terminal elegível, uma empresa Acessórias inequivocamente resolvida e um departamento Acessórias válido já existirem. O contrato deve manter a ligação CAI–Request, incluindo o `SolID` retornado, e garantir que falha, reconciliação ou intervenção operacional no provider nunca desfaça, corrompa ou reescreva a classificação persistida.
+Definir o efeito durável que cria um Request Acessórias interno depois que uma classificação terminal elegível, com confidence suficiente, uma empresa Acessórias inequivocamente resolvida e um departamento Acessórias válido já existirem. O contrato deve manter a ligação CAI–Request, incluindo o `SolID` retornado, e garantir que falha, reconciliação ou intervenção operacional no provider nunca desfaça, corrompa ou reescreva a classificação persistida.
 
 Esta especificação não sincroniza diretórios, resolve identidade, mapeia departamento, altera IA, cria UI ou endpoint HTTP público, nem dispara a criação no webhook de fechamento. Também não cobre edição (`POST /requests/{id}`), comentários, `statusSol`, `descPrivate`, anexos, responsáveis, reabertura, finalização, mudança entre Request interno/externo ou qualquer sincronização de ciclo de vida. Esses comportamentos pertencem ao Milestone F e a uma SPEC posterior.
 
@@ -118,7 +131,7 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 ## Contrato Acessórias de criação
 
 1. O adaptador deve enviar `POST https://api.acessorias.com/requests` com `Authorization: Bearer <token>` e `multipart/form-data`. O token vem de configuração segura, nunca é persistido ou registrado em logs, headers, métricas, erros ou estado operacional.
-2. Cada POST deve conter somente os campos deste milestone: `assunto`, `empresa`, `departamento`, `prioridade`, `descricao` e `tipo=E`. Não deve enviar `arquivo`/`arquivo[]`, `data_prazo` ou qualquer campo de lifecycle. `tipo=I` não é autorizado para criação automática.
+2. Cada POST deve conter somente os campos deste milestone: `assunto`, `empresa`, `departamento`, `prioridade`, `descricao` e `tipo=I`. A abertura automática é sempre interna, nunca externa; não há override, configuração ou fallback para `tipo=E`. Não deve enviar `arquivo`/`arquivo[]`, `data_prazo` ou qualquer campo de lifecycle.
 3. Antes da tentativa HTTP, o adaptador deve validar localmente, sempre que possível: `assunto` string não vazia com no máximo 100 caracteres; `empresa` como ID externo ou CNPJ inequivocamente associado à empresa local; `departamento` como ID inteiro Acessórias vinculado à empresa no diretório atual; `prioridade` em `0`, `1`, `2`, `3`; e `descricao` string. A escolha entre ID externo e CNPJ para `empresa` pertence ao adapter, mas a identidade local persistida deve continuar inequívoca.
 4. `assunto` deve usar o protocolo persistido no ciclo quando disponível, no formato `[protocolo] - title`, seguido do `title` persistido na classificação. Se exceder 100 caracteres, o corte deve ser determinístico e resultar em valor não vazio. Sem protocolo, usa-se somente o `title`. `descricao` deve derivar exclusivamente da `description` persistida. Não se chama a IA novamente e não se altera a classificação para adequá-la ao provider.
 5. A prioridade inicial é política de domínio centralizada `2` (Média). Ela não pode ser inferida de `confidence` ou `intent_type`, espalhada como magic number, nem configurada por empresa/departamento neste milestone.
@@ -126,14 +139,26 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 7. O provider não documenta idempotency key para este endpoint. A implementação não deve inventar header ou parâmetro de idempotência; a prevenção de duplicidade é responsabilidade durável do CAI.
 8. O limite documentado é 100 requests/minute com Sliding Window. Os adapters de Request no mesmo processo devem aplicar limite conservador compartilhado por endpoint/configuração do provider, respeitar `Retry-After` quando presente e usar backoff limitado quando ausente. Não precisa consumir toda a capacidade; processos distintos continuam sujeitos à topologia operacional e à verificação externa do provider.
 
+9. O gate de negócio usa a confidence persistida da classificação: a escala de
+   decisão é `0..10`, calculada como `confidence * 10`, e o mínimo aceito é
+   `5.0` (`confidence >= 0.50`). Exatamente `0.50` é permitido. `NULL`, tipo
+   não numérico, valor não finito ou valor fora de `0..1` é inválido e deve
+   bloquear a abertura.
+
 ## Elegibilidade e operação durável
 
 1. A criação é etapa posterior da integração, iniciada somente após o ciclo CAI atingir estado terminal permitido pelo contrato de classificação. `completed` é elegível. `completed_with_warnings` é elegível somente quando as warnings não representarem ausência de dado necessário à criação. `failed`, `media_blocked`, estados não terminais e classificação inexistente não criam Request. Esta integração não pode alterar a máquina de estados para obter elegibilidade.
 2. A resolução de empresa do ciclo deve ser exatamente uma empresa válida do contrato de identity resolution, preferencialmente pela identidade externa Acessórias já persistida. `unresolved`, `ambiguous` e `conflict` bloqueiam a criação; candidato não é confirmação.
 3. O resultado do Milestone D deve fornecer departamento Acessórias mapeado do departamento DigiSac, válido para a empresa na relação corrente `company_departments`. Ausência de mapping, departamento inválido ou qualquer escolha por nome, `intent_type`, fallback ou first-match bloqueia a criação.
-4. Antes de todo POST, deve existir uma operação PostgreSQL durável com ao menos: ciclo de origem, classificação, identidade de conversa/ticket DigiSac quando útil, empresa e departamento Acessórias resolvidos, representação segura/fingerprint do payload, estado, metadados de tentativa, `SolID` quando conhecido, timestamps e erro/estado de reconciliação sanitizados. Campos e retenção finais seguem as convenções e o contrato de privacidade do repositório; logs não podem expor conteúdo sensível, PII, token ou payload bruto.
-5. Um ciclo pode originar no máximo um Request automático neste milestone. Uma constraint durável equivalente a `UNIQUE(source_cycle_id)` deve fazer replay convergir para a mesma operação e impedir que retries concorrentes criem duas operações ou dois POSTs.
-6. Claim, lease ou locking durável deve assegurar que dois workers/processos não executem a mesma operação ao mesmo tempo. Recuperação de claim abandonado não pode causar outro POST sem classificar conservadoramente o estado anterior.
+4. A confidence deve ser avaliada antes de a operação alcançar o provider e
+   reavaliada na fronteira final, depois da carga/validação do payload e
+   atomicamente antes de `post_started_at`. Um ciclo abaixo do limite ou com
+   confidence inválida fica em `definitive_failure`, com categoria sanitizada,
+   sem provider, tentativa, `SolID`, marcador de POST ou retry automático; a
+   classificação original não é alterada.
+5. Antes de todo POST, deve existir uma operação PostgreSQL durável com ao menos: ciclo de origem, classificação, identidade de conversa/ticket DigiSac quando útil, empresa e departamento Acessórias resolvidos, representação segura/fingerprint do payload, estado, metadados de tentativa, `SolID` quando conhecido, timestamps e erro/estado de reconciliação sanitizados. Campos e retenção finais seguem as convenções e o contrato de privacidade do repositório; logs não podem expor conteúdo sensível, PII, token ou payload bruto.
+6. Um ciclo pode originar no máximo um Request automático neste milestone. Uma constraint durável equivalente a `UNIQUE(source_cycle_id)` deve fazer replay convergir para a mesma operação e impedir que retries concorrentes criem duas operações ou dois POSTs.
+7. Claim, lease ou locking durável deve assegurar que dois workers/processos não executem a mesma operação ao mesmo tempo. Recuperação de claim abandonado não pode causar outro POST sem classificar conservadoramente o estado anterior.
 
 ## Estados, falhas, retry e reconciliação
 
@@ -149,13 +174,13 @@ A operação deve usar o provider boundary Acessórias já estabelecido pelos mi
 
 1. A criação não altera as oito rotas HTTP, webhook, finalização, contrato IA nem classificações existentes; não há endpoint público para dispará-la. A operação nasce do pipeline interno depois dos pré-requisitos.
 2. Logs, métricas e estado operacional podem expor IDs seguros, estado, tentativas, duração, categoria sanitizada, fingerprint e referência externa segura. Não podem conter token, header, payload bruto, telefone, email, conversa, `title`/`description` completos ou outros dados sensíveis.
-3. Doubles determinísticos e testes PostgreSQL descartáveis devem cobrir: ciclo `completed` elegível cria operação; replay usa a mesma operação sem segundo POST; empresa unresolved/ambiguous, mapping ausente e departamento não permitido não chamam provider; assunto acima de 100 tem corte determinístico; payload contém `prioridade=2` e `tipo=E`; e anexos/`data_prazo` não são enviados.
+3. Doubles determinísticos e testes PostgreSQL descartáveis devem cobrir: ciclo `completed` elegível com confidence aceita cria operação; replay usa a mesma operação sem segundo POST; confidence abaixo de `0.50` ou inválida, empresa unresolved/ambiguous, mapping ausente e departamento não permitido não chamam provider; assunto acima de 100 tem corte determinístico; payload contém `prioridade=2` e `tipo=I`; e anexos/`data_prazo` não são enviados.
 4. Devem cobrir sucesso com `id` (`completed` + `SolID`), sucesso sem `id` (não completed), `Erro` business definitivo, auth/permissão operacional, `429`, `5xx`, o marcador explícito de conexão pré-envio retryable e a conexão/protocolo ambíguos sem segundo POST, além de timeout/perda de conexão pós-envio como `reconciliation_required`.
 5. Devem provar claim concorrente, crash antes/durante/depois do POST, replay de `completed` como no-op, reconciliação manual com `SolID`, liberação manual explícita após prova de ausência remota e ausência de token/PII sensível em logs e estado. A implementação deve passar a suíte offline aplicável, Pyright estrito e o runner canônico de SPEC-0004; doubles não comprovam credenciais, provider real ou produção.
 
 ## Decisões registradas e evidência de implementação
 
-Endpoint, autenticação, formato multipart, campos, `tipo=E`, prioridade padrão,
+Endpoint, autenticação, formato multipart, campos, prioridade padrão,
 limite, confirmação por `id`, ausência de idempotency key, retry conservador,
 reconciliação manual e operação administrativa inicial estão aprovados e foram
 implementados pelos issues 0017–0019 e 0021–0022. A credencial operacional continua
@@ -168,3 +193,11 @@ reconciliação. Issue 0022 aplica essa mesma fronteira conservadora a `429`:
 sem prova documentada de não criação, o adapter não usa status ou
 `Retry-After` como autorização para novo POST.
 Isso não amplia o escopo ao lifecycle do Milestone F.
+
+Issue 0047 corrige a política ativa de abertura automática: a operação só
+alcança o provider quando a confidence persistida normalizada para `0..10` é
+maior ou igual a `5.0`, e o payload usa sempre `tipo=I`. O contrato de IA e a
+coluna persistida continuam em `0..1`; bloqueios são resultados duráveis
+sanitizados e não Requests abertos. A implementação mantém evidência de
+operações que já iniciaram POST imutável e usa `tipo=I` somente em tentativas
+futuras independentemente seguras.

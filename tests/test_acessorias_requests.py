@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import math
 import threading
 import time
 from typing import Any
@@ -204,7 +205,7 @@ def test_payload_is_bounded_and_contains_only_approved_fields() -> None:
         "departamento": "10",
         "prioridade": "2",
         "descricao": "Descrição persistida",
-        "tipo": "E",
+        "tipo": "I",
     }
     assert set(payload.form) == {
         "assunto",
@@ -214,6 +215,38 @@ def test_payload_is_bounded_and_contains_only_approved_fields() -> None:
         "descricao",
         "tipo",
     }
+
+
+@pytest.mark.parametrize(
+    ("value", "state", "reason", "score"),
+    [
+        (0.49, "below_threshold", "confidence_below_threshold", 4.9),
+        (0.4999, "below_threshold", "confidence_below_threshold", 4.999),
+        (0.50, "allowed", "confidence_accepted", 5.0),
+        (0.5001, "allowed", "confidence_accepted", 5.001),
+        (0.90, "allowed", "confidence_accepted", 9.0),
+        (None, "invalid", "confidence_invalid", None),
+        ("0.50", "invalid", "confidence_invalid", None),
+        (math.nan, "invalid", "confidence_invalid", None),
+        (math.inf, "invalid", "confidence_invalid", None),
+        (-0.01, "invalid", "confidence_invalid", None),
+        (1.01, "invalid", "confidence_invalid", None),
+    ],
+)
+def test_request_confidence_policy_uses_business_scale(
+    value: Any,
+    state: str,
+    reason: str,
+    score: float | None,
+) -> None:
+    decision = acessorias_requests_module.evaluate_request_confidence(value)
+
+    assert decision.state == state
+    assert decision.reason == reason
+    if score is None:
+        assert decision.score_10 is None
+    else:
+        assert decision.score_10 == pytest.approx(score)
 
 
 def test_payload_prefixes_subject_with_protocol() -> None:
@@ -684,6 +717,156 @@ async def test_completed_cycle_creates_once_and_completed_replay_is_noop() -> No
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("slug", "confidence", "expected_category"),
+    [
+        ("below-threshold", 0.49, "confidence_below_threshold"),
+        ("missing", None, "confidence_invalid"),
+    ],
+)
+async def test_request_confidence_gate_blocks_before_provider(
+    slug: str,
+    confidence: float | None,
+    expected_category: str,
+) -> None:
+    cycle_id = await seed_eligible_cycle(slug)
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE ia_classifications AS classification
+            SET confidence = %s
+            FROM conversation_processing_cycles AS cycle
+            WHERE cycle.public_id = %s
+              AND cycle.classification_id = classification.id
+            """,
+            (confidence, cycle_id),
+        )
+
+    class Provider:
+        calls = 0
+
+        def create_request(self, payload: Any) -> AcessoriasRequestOutcome:
+            self.calls += 1
+            return AcessoriasRequestOutcome.success("SOL-should-not-exist")
+
+    provider = Provider()
+    blocked = await create_request_for_cycle(cycle_id, provider=provider)
+    replayed = await create_request_for_cycle(cycle_id, provider=provider)
+
+    assert blocked["state"] == "definitive_failure"
+    assert blocked["failure_category"] == expected_category
+    assert replayed["id"] == blocked["id"]
+    assert replayed["state"] == "definitive_failure"
+    assert provider.calls == 0
+    with psycopg.connect(settings.database_url) as connection:
+        row = connection.execute(
+            """
+            SELECT attempt_count, post_started_at, sol_id,
+                   payload_metadata_json
+            FROM acessorias_request_operations
+            """
+        ).fetchone()
+    assert row is not None
+    assert row[0:3] == (0, None, None)
+    assert row[3]["confidence_gate"]["decision"] in {
+        "below_threshold",
+        "invalid",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_request_confidence_boundary_is_allowed_and_audited() -> None:
+    cycle_id = await seed_eligible_cycle("confidence-boundary")
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE ia_classifications AS classification
+            SET confidence = 0.50
+            FROM conversation_processing_cycles AS cycle
+            WHERE cycle.public_id = %s
+              AND cycle.classification_id = classification.id
+            """,
+            (cycle_id,),
+        )
+
+    class Provider:
+        calls = 0
+
+        def create_request(self, payload: Any) -> AcessoriasRequestOutcome:
+            self.calls += 1
+            return AcessoriasRequestOutcome.success("SOL-confidence-boundary")
+
+    provider = Provider()
+    result = await create_request_for_cycle(cycle_id, provider=provider)
+
+    assert result["state"] == "completed"
+    assert result["sol_id"] == "SOL-confidence-boundary"
+    assert provider.calls == 1
+    with psycopg.connect(settings.database_url) as connection:
+        metadata = connection.execute(
+            "SELECT payload_metadata_json FROM acessorias_request_operations"
+        ).fetchone()[0]
+    assert metadata["confidence_gate"] == {
+        "scale": "0_10",
+        "threshold": 5.0,
+        "decision": "allowed",
+        "score": 5.0,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_final_confidence_guard_blocks_legacy_operation_before_post_start() -> None:
+    cycle_id = await seed_eligible_cycle("confidence-final-guard")
+    operation = await asyncio.to_thread(
+        acessorias_requests_module._ensure_operation_sync, cycle_id
+    )
+    owner = "confidence-final-guard"
+    claimed = await asyncio.to_thread(
+        acessorias_requests_module._claim_operation_sync,
+        int(operation["id"]),
+        owner,
+        settings.finalization_lease_seconds,
+    )
+    assert claimed is not None
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE ia_classifications AS classification
+            SET confidence = 0.49
+            FROM conversation_processing_cycles AS cycle
+            WHERE cycle.public_id = %s
+              AND cycle.classification_id = classification.id
+            """,
+            (cycle_id,),
+        )
+
+    marked = await asyncio.to_thread(
+        acessorias_requests_module._mark_post_started_sync,
+        int(operation["id"]),
+        owner,
+    )
+
+    assert marked is False
+    with psycopg.connect(settings.database_url) as connection:
+        row = connection.execute(
+            """
+            SELECT state, failure_category, attempt_count, post_started_at, sol_id
+            FROM acessorias_request_operations
+            """
+        ).fetchone()
+    assert row == (
+        "definitive_failure",
+        "confidence_below_threshold",
+        0,
+        None,
+        None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_uncertain_outcome_requires_manual_reconciliation() -> None:
     cycle, _ = await close_cycle(
         conversation_id="request-reconcile",
@@ -760,6 +943,7 @@ async def test_uncertain_request_is_reconciled_or_released_only_with_explicit_ev
 
     class SuccessProvider:
         def create_request(self, payload: Any) -> AcessoriasRequestOutcome:
+            assert payload.form["tipo"] == "I"
             return AcessoriasRequestOutcome.success("SOL-retried")
 
     assert (
