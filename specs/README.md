@@ -12,7 +12,7 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.7 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
 | SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.4; issue 0041 | P1 / reconciliação documental | SPEC-0002–0004, SPEC-0006, SPEC-0012 | Reconciliou PRD/arquitetura/rastreabilidade com `0022`/`238+76` e a API administrativa, sem alegar UI. |
 | SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.2 | P1 / documentação de compatibilidade | SPEC-0001–0005, SPEC-0012 | Publica OpenAPI/Swagger/ReDoc para as oito rotas originais e as seis rotas administrativas internas montadas. |
-| SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.2; issues 0012, 0034 e 0045 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com delta manual seguro; `ativa=S` isolado falha como visão incompleta; não cria Request nem identidade DigiSac. |
+| SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.2; issues 0012, 0034 e 0045 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com delta manual seguro; `ListAll` inclui todos os status sem filtro `ativa`; não cria Request nem identidade DigiSac. |
 | SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.5; issues 0013, 0014, 0026 e 0045; boundary estrutural 0028 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, provenance canônica do contato no ciclo, hydration, full backfill e consumo pela reconciliação manual; sem deleção por ausência. |
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.3; issues 0015, 0026 e 0045 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência/candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e redescoberta manual em lote; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
@@ -28,9 +28,9 @@ PostgreSQL descartável (issue 0044, sem nova migration; head
 
 O issue 0045 acrescenta a migration `0023_manual_reconciliation`
 e a fronteira manual incremental. Em 2026-08-25, a execução canônica com
-`APP_TIMEZONE=UTC` passou **256 passed, 77 skipped** offline e **77 passed, 256
-deselected** no PostgreSQL descartável; seus testes não comprovam composição
-ativa/inativa no provider ou aceitação de produção.
+`APP_TIMEZONE=UTC` passou **255 passed, 77 skipped** offline e **77 passed, 255
+deselected** no PostgreSQL descartável; seus testes não comprovam disponibilidade
+live do provider ou aceitação de produção.
 A evidência anterior de issue 0036 foi **224 passed, 69 skipped** na etapa
 offline e **69 passed, 224 deselected** no PostgreSQL. A evidência anterior de
 issue 0033 foi **220 passed,

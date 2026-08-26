@@ -125,6 +125,7 @@ def test_adapter_fetches_complete_pages_and_centralizes_bearer_header() -> None:
     assert snapshot.companies[0].contacts[0].normalized_mobile == "5511"
     assert snapshot.companies[0].contacts[0].normalized_email == "user@example.com"
     assert session.calls[1][1]["params"]["Pagina"] == 1
+    assert "ativa" not in session.calls[1][1]["params"]
     assert session.calls[2][1]["params"]["Pagina"] == 2
     assert session.calls[0][1]["headers"] == {"Authorization": "Bearer test-token"}
 

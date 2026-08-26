@@ -410,10 +410,10 @@ explícito. A execução usa lock PostgreSQL compartilhado com as publicações 
 contatos e do diretório Acessórias, conserva IDs e histórico e, após o commit,
 faz uma redescoberta local em lote pelas regras conservadoras de SPEC-0009.
 Não usa Redis, o ledger administrativo por contato, Request ou mapping. A
-consulta Acessórias observada com `ativa=S` é marcada como visão ativa-only e
-falha com `incomplete_source_view` antes do apply; o comando não inventa um
-parâmetro de seleção de inativos. Um apply real exige uma composição completa
-provider-supported e autorização operacional independente.
+consulta Acessórias usa `ListAll` sem filtro `ativa` e inclui empresas ativas e
+inativas; `Status` é preservado e `is_active` é derivado pela normalização
+existente. Um apply real continua exigindo autorização operacional
+independente.
 
 ## API HTTP
 
@@ -671,12 +671,12 @@ recursos externos. Nenhum browser harness ou executável Playwright estava
 disponível neste ambiente; não houve QA renderizado nem aceitação de produção.
 
 Na validação do issue 0045 em 2026-08-25, o runner descartável com
-`APP_TIMEZONE=UTC` passou compileall, Pyright, **256 passed, 77 skipped** offline,
-Alembic `0023_manual_reconciliation` e **77 passed, 256 deselected** no
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **255 passed, 77 skipped** offline,
+Alembic `0023_manual_reconciliation` e **77 passed, 255 deselected** no
 PostgreSQL 16. A cobertura inclui dry-run não destrutivo, apply atômico, replay
 idempotente, retenção histórica e redescoberta após a publicação. O resultado
-é evidência local/descartável: não comprova a composição ativa/inativa do
-provider Acessórias, Redis, credenciais, deployment ou produção.
+é evidência local/descartável: não comprova disponibilidade live do provider
+Acessórias, Redis, credenciais, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

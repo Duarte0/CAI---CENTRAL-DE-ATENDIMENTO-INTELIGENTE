@@ -88,9 +88,6 @@ class AcessoriasSnapshot:
     companies: tuple[AcessoriasCompany, ...]
     page_count: int = 0
     request_attempt_count: int = 0
-    # The observed ``ativa=S`` request is not a complete active/inactive view.
-    # Synthetic or future provider composition can explicitly mark one complete.
-    complete_view: bool = True
 
     @property
     def relationship_count(self) -> int:
@@ -140,7 +137,6 @@ class AcessoriasSnapshot:
                 }
                 for item in sorted(self.companies, key=lambda value: value.external_id)
             ],
-            "complete_view": self.complete_view,
         }
         encoded = json.dumps(
             canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -480,7 +476,7 @@ class AcessoriasDirectoryAdapter:
                 raise AcessoriasDirectoryError("pagination_limit", "company page safety limit reached")
             raw_page = self._get_json(
                 "/companies/ListAll",
-                params={"contacts": "", "departments": "", "ativa": "S", "Pagina": page},
+                params={"contacts": "", "departments": "", "Pagina": page},
             )
             if not isinstance(raw_page, list):
                 raise AcessoriasDirectoryError("invalid_payload", "company page must be a list")
@@ -511,7 +507,6 @@ class AcessoriasDirectoryAdapter:
             companies=tuple(companies),
             page_count=page_count,
             request_attempt_count=self.request_attempt_count,
-            complete_view=False,
         )
         _validate_snapshot(snapshot)
         return snapshot
@@ -533,22 +528,9 @@ def _validate_snapshot(snapshot: AcessoriasSnapshot) -> None:
             raise AcessoriasDirectoryError("invalid_payload", "duplicate company contact")
 
 
-def _require_complete_snapshot(snapshot: AcessoriasSnapshot) -> None:
-    if not snapshot.complete_view:
-        raise AcessoriasDirectoryError(
-            "incomplete_source_view",
-            "Acessórias source view is active-only and cannot support reconciliation",
-        )
-
-
 def validate_acessorias_snapshot(snapshot: AcessoriasSnapshot) -> None:
     """Validate a typed Acessórias snapshot at another service boundary."""
     _validate_snapshot(snapshot)
-
-
-def require_complete_acessorias_snapshot(snapshot: AcessoriasSnapshot) -> None:
-    """Reject the observed active-only view before any business-table write."""
-    _require_complete_snapshot(snapshot)
 
 
 def _execution_counts(snapshot: AcessoriasSnapshot, *, inactivated: int = 0) -> dict[str, int]:
@@ -630,7 +612,6 @@ def _fail_execution(
 
 def _publish_snapshot(execution_id: UUID, snapshot: AcessoriasSnapshot) -> AcessoriasSyncResult:
     _validate_snapshot(snapshot)
-    _require_complete_snapshot(snapshot)
     now = datetime.now(timezone.utc)
     counts = _execution_counts(snapshot)
     inactivated = 0
@@ -852,7 +833,6 @@ def sync_acessorias_directory_sync(
     try:
         snapshot = selected_adapter.fetch_snapshot()
         _validate_snapshot(snapshot)
-        _require_complete_snapshot(snapshot)
         return _publish_snapshot(execution_id, snapshot)
     except AcessoriasDirectoryError as exc:
         return _fail_execution(

@@ -98,7 +98,7 @@ sincronização.
    configuração segura. Os endpoints de leitura autorizados são:
 
    - `GET /departments/ListAll`, que retorna objetos com `ID` e `Nome`;
-   - `GET /companies/ListAll?contacts&departments&ativa=S&Pagina=N`, cuja
+   - `GET /companies/ListAll?contacts&departments&Pagina=N`, cuja
      lista observada contém `ID`, `Identificador`, `Razao`, `Fantasia`,
      `Status`, `Telefone`, `UF`, `ClienteDesde`, `ClienteAte`,
      `DataDoCadastro`, `Honorario`, `ContatosNaEmpresa` e `Departamentos`;
@@ -118,11 +118,10 @@ sincronização.
    detalhada pode enriquecer os atributos observados, mas não substitui a
    coleta paginada nem cria uma dependência de cursor incremental.
 3. O adaptador deve obter uma visão completa dos quatro recursos autorizados,
-   incluindo empresas ativas e inativas. Ele deve conservar `Status` como dado
-   bruto do provider e só derivar atividade quando um contrato observado o
-   permitir. Se a API exigir seleções separadas para compor ativos e inativos,
-   o adaptador deve compor a visão completa sem supor valores textuais de
-   `Status`. Uma página inválida, incompleta ou
+   incluindo empresas ativas e inativas, usando `ListAll` sem filtro de status.
+   Ele deve conservar `Status` como dado bruto do provider e só derivar
+   atividade quando um contrato observado o permitir. Uma página inválida,
+   incompleta ou
    repetida, identificador obrigatório ausente, ou referência de relação sem
    pai válido **deve** falhar a execução; dados parciais **não podem** ser
    publicados como uma reconciliação completa.
@@ -235,13 +234,12 @@ contato Acessórias cujo `external_key` mudou é uma nova observação; a
 especificação não autoriza deduplicação por nome, telefone, email, CNPJ ou
 similaridade.
 
-O resultado observado pelo adaptador com `ativa=S` é marcado como
-`complete_view=false`. Essa consulta isolada não é tratada como visão completa
-de ativos e inativos: o caminho manual falha com categoria sanitizada
-`incomplete_source_view` antes do apply até que uma composição suportada pelo
-provider seja fornecida. Nenhum parâmetro ou valor de status não documentado é
-inventado. Apenas uma visão completa pode reconciliar ausência de empresas,
-contatos e relações, sempre sem remoção física.
+O adaptador solicita `ListAll` sem filtro de status e trata a resposta como a
+visão completa de empresas, incluindo ativos e inativos. `Status` é preservado
+como dado bruto do provider e `is_active` é derivado somente pela normalização
+existente. Nenhum parâmetro de status é inventado; apenas uma resposta
+completa e validada pode reconciliar ausência de empresas, contatos e relações,
+sempre sem remoção física.
 
 O comando manual é `PYTHONPATH=/app python -m
 src.utils.reconcile_digisac_acessorias`; `--dry-run` é o padrão e `--apply` é

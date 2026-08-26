@@ -6,7 +6,7 @@ status: closed
 priority: high
 phase: 4
 created_at: 2026-08-25
-updated_at: 2026-08-25
+updated_at: 2026-08-26
 closed_at: 2026-08-25
 related_issues:
   - "0012"
@@ -57,13 +57,15 @@ because the old Acessórias contact row is no longer current.
 
 - `src/core/acessorias_directory.py::fetch_snapshot()` reads
   `/departments/ListAll` and paginates `/companies/ListAll` with the observed
-  `contacts`, `departments`, `ativa=S`, and `Pagina=N` parameters. It validates
-  the complete in-memory snapshot and computes one global snapshot hash.
+  `contacts`, `departments`, and `Pagina=N` parameters. It validates the
+  complete in-memory snapshot and computes one global snapshot hash; the
+  returned company list is treated as including every status.
 - The current Acessórias publisher first sets all directory rows that are
   currently present/active to `is_present=FALSE, is_active=FALSE`, then
   upserts the acquired snapshot. That is a full-snapshot reconciliation, not a
-  safe manual delta application. An active-only provider view can therefore
-  make an unreturned company/contact look absent.
+  safe manual delta application. The provider list is now requested without a
+  status filter, so a returned inactive company is retained with its raw
+  status and derived activity state.
 - Acessórias company contacts have no observed stable provider contact ID.
   `external_key` is derived from company identity, name, email, and mobile.
   A changed contact payload therefore must be treated conservatively as a new
@@ -150,14 +152,13 @@ added.
 - For a valid returned company payload whose child lists are authoritative,
   current child presence/activity may be reconciled without physical deletion:
   old Acessórias contact and relationship rows remain historical, while only
-  current rows participate in future discovery/mapping. An incomplete or
-  active-only view must not trigger blanket absence/inactivation of unrelated
-  companies, departments, contacts, or relationships.
-- The complete active/inactive Acessórias acquisition contract must be honored.
-  The implementation may use only provider-supported composition; it must not
-  invent a status parameter or assume that `ativa=S` alone is a complete
-  provider view. If a complete view cannot be acquired and validated, the run
-  must stop before apply and preserve the prior directory.
+  current rows participate in future discovery/mapping. The full list contains
+  active and inactive companies, and absence is applied only after that
+  complete validated list is acquired.
+- The Acessórias acquisition must not send an undocumented status filter. The
+  observed `Status` value is retained as provider metadata and activity is
+  derived only by the existing normalization rule; all returned statuses are
+  accepted equally.
 - DigiSac Contacts acquisition must reuse the validated `perPage`/`page=N`
   contract, validate `total`, `limit`, `currentPage`, and `lastPage`, globally
   deduplicate by `contact.id`, and preserve `deletedAt`/metadata semantics.
@@ -237,9 +238,9 @@ added.
    - Document that Acessórias has no reliable `updated_at`/delta cursor in the
      observed contract. The operation is therefore a complete read followed by
      a local delta application, not a fabricated provider delta request.
-   - Determine and test the provider-supported active/inactive composition. A
-     response obtained only with `ativa=S` cannot be presented as a complete
-     all-company reconciliation.
+   - Determine and test that the provider-supported `ListAll` composition
+     returns all companies without a status filter, retaining both raw status
+     and derived activity.
 
 2. **Create the manual orchestration boundary.**
    - Add a focused utility, for example
@@ -286,7 +287,7 @@ added.
    - Preserve old Acessórias contact/evidence rows when a responsible contact
      changes. Mark a prior child row non-current only when the validated
      returned parent payload establishes the current child set; never infer
-     global absence from a partial/active-only source view.
+     global absence from a partial or invalid source view.
    - Publish DigiSac contacts through the existing repository boundary, keeping
      the full-backfill lock and merge semantics.
    - Commit the directory/contact data only after both snapshots and the delta
@@ -356,8 +357,8 @@ added.
 - **Acessórias acquisition:** deterministic provider doubles for departments,
   complete active/inactive composition, paginated companies, embedded contacts,
   empty contact lists, repeated pages/records, invalid parent references,
-  bounded retries, `Retry-After`, missing credentials, and active-only/incomplete
-  composition failing before publication.
+  bounded retries, `Retry-After`, missing credentials, and all-status company
+  acquisition before publication.
 - **DigiSac acquisition:** valid one-page and multi-page Contacts responses,
   metadata validation, page mismatch/non-advancement, repeated contacts,
   invalid contact shapes, transient/permanent provider failures, timestamp
@@ -366,7 +367,7 @@ added.
 - **Delta planner:** new/changed/unchanged companies; new and changed embedded
   contacts; changed department relationships; stable company identity; old
   contact history retention; no name/phone/fuzzy contact merge; safe
-  active-only behavior; deterministic counts and hashes.
+  all-status behavior; deterministic counts and hashes.
 - **PostgreSQL publication:** dry-run leaves business tables unchanged; apply
   is atomic for both acquired source snapshots; replay is idempotent; a
   failed acquisition/commit preserves the previous state; advisory lock blocks
@@ -399,9 +400,9 @@ added.
 - [x] Apply cannot begin until both provider snapshots are complete, valid,
   and internally consistent; a provider/auth/pagination/rate-limit failure
   preserves the last successful local state.
-- [x] Acessórias acquisition does not present `ativa=S` alone as a complete
-  all-company view and never applies blanket absence/inactivation from a
-  partial or active-only response.
+- [x] Acessórias acquisition requests `ListAll` without a status filter, includes
+  companies regardless of provider status, preserves raw `Status`, and only
+  applies absence/inactivation after the complete list is validated.
 - [x] New Acessórias companies, departments, relationships, and embedded
   contacts are inserted once using their stable/deterministic local keys.
 - [x] Existing companies and departments retain their durable PostgreSQL
@@ -411,7 +412,7 @@ added.
   preserved, and no name/phone/email/fuzzy inference merges the two contacts.
 - [x] Explicit current child-list changes may update current presence/activity
   without physically deleting historical contact or relationship rows; global
-  absence is not inferred from an incomplete source view.
+  absence is inferred only from the complete all-status list.
 - [x] DigiSac Contacts are acquired through validated `page=N` pagination,
   deduplicated by canonical `contact.id`, merged with timestamp-aware
   precedence, and never deleted/inactivated by list absence.
@@ -467,7 +468,7 @@ added.
   durable identity evidence/link implementation.
 - `issues/0023_-_include_inactive_acessorias_companies_in_directory_snapshots.md`
   — deprecated active/inactive concern that must not be duplicated or silently
-  treated as solved by an active-only manual run.
+  treated as solved by a partial manual run.
 - `issues/0038_-_implement-authenticated-read-only-identity-link-triage-api.md`,
   `issues/0039_-_implement-authenticated-identity-link-confirmation-and-rejection.md`,
   and `issues/0040_-_implement-authenticated-identity-discovery-command.md` —
@@ -490,26 +491,30 @@ uses the shared reconciliation/Acessórias/DigiSac advisory locks, publishes the
 two sources atomically, retains replaced contacts and evidence, and records
 only sanitized execution counters, hashes, statuses, and failure categories.
 
-The existing `ativa=S` adapter result is now explicitly marked as
-`complete_view=False`; the manual path fails with `incomplete_source_view`
-before apply until a provider-supported active/inactive composition is supplied.
-This records the current evidence boundary without inventing an undocumented
-query parameter. A complete injected/provider view applies child-list and
-global absence only non-destructively, preserving durable IDs and historical
-rows. DigiSac contacts reuse the validated full-backfill and timestamp-aware
+The Acessórias adapter now requests `ListAll` without a status filter, so the manual
+path accepts active and inactive companies in the same complete snapshot. Raw
+`Status` is preserved and only the existing activity normalization derives
+`is_active`; no status filter or undocumented provider parameter is invented.
+The complete snapshot applies child-list and global absence only
+non-destructively, preserving durable IDs and historical rows. DigiSac contacts reuse the validated full-backfill and timestamp-aware
 repository boundary. A new `discover_all_identities()` domain batch rematches
 all local contacts in stable order after commit, without the admin ledger,
 Redis, Requests, mappings, or cycle mutation; a failure is reported as
 `matching_failed` for a later manual retry.
 
-Added focused coverage for the active-only fail-closed boundary and sanitized
+Contract correction on 2026-08-26: removed the `ativa=S` request parameter and
+the `complete_view`/`incomplete_source_view` gate. `ListAll` now imports every
+returned company regardless of status while retaining raw `Status` and the
+derived `is_active` value.
+
+Added focused coverage for all-status Acessórias acquisition and sanitized
 manual orchestration, updated the shared contact duplicate merge to preserve
 email metadata, updated the PostgreSQL test fixture for the new execution
 table, and synchronized SPEC-0007/0008/0009/0012, README, ARCHITECTURE, and
 IMPLEMENTATION_PLAN. The canonical runner, executed as
 `APP_TIMEZONE=UTC PYTHONPATH=/app python scripts/verify.py`, passed compileall,
-Pyright, offline pytest (**256 passed, 77 skipped**), Alembic head
-`0023_manual_reconciliation`, and PostgreSQL pytest (**77 passed, 256
+Pyright, offline pytest (**255 passed, 77 skipped**), Alembic head
+`0023_manual_reconciliation`, and PostgreSQL pytest (**77 passed, 255
 deselected**) on 2026-08-25. Local validation evidence is recorded separately
-from provider/production acceptance; the active-only provider boundary remains
-fail-closed until a complete supported composition is available.
+from provider/production acceptance; live provider acceptance remains a
+separate operational step.

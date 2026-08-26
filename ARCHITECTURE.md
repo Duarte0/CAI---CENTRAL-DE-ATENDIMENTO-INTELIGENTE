@@ -504,8 +504,8 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its current recorded 2026-08-25
-  evidence is Alembic `0023_manual_reconciliation`, **256 passed, 77
-  skipped** offline, and **77 passed, 256 deselected** in PostgreSQL; static and
+  evidence is Alembic `0023_manual_reconciliation`, **255 passed, 77
+  skipped** offline, and **77 passed, 255 deselected** in PostgreSQL; static and
   disposable evidence does not prove Redis, DigiSac, Groq, secret-manager
   provisioning, replicas, deployment, or production availability or release
   readiness. The older `0020`/`203+68` result is historical evidence only.
@@ -572,9 +572,9 @@ records these delivery limitations:
   It acquires complete source views before publication, uses compatible
   PostgreSQL advisory locks, applies non-destructive directory deltas, records
   sanitized execution state, and rematches local contacts after commit. The
-  current `ativa=S` Acessórias adapter view is explicitly incomplete and fails
-  closed; no provider-complete active/inactive composition or production
-  acceptance is claimed.
+  Acessórias `ListAll` is requested without a status filter, preserving active
+  and inactive companies with raw `Status` and derived `is_active`; no live
+  provider or production acceptance is claimed.
 
 - Durable Acessórias Request creation and preparation are implemented under issues
   `0017`–`0019`, `0021`–`0022`, `0026`, and structural boundary issues `0034` and

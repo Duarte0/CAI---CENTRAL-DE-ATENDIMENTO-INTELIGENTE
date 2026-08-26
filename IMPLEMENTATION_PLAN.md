@@ -45,16 +45,17 @@ complete locally; production acceptance remains separate._
   (SPEC-0007–0009, 0012; issue 0045). The explicit dry-run/apply CLI acquires
   both validated snapshots before publishing, applies safe PostgreSQL deltas
   under compatible advisory locks, retains historical directory facts, and
-  runs deterministic batch identity discovery after commit. The observed
-  Acessórias `ativa=S` view is fail-closed as `incomplete_source_view`; no
-  provider parameter or production availability is inferred.
+  runs deterministic batch identity discovery after commit. Acessórias
+  `ListAll` is requested without a status filter, preserving active and
+  inactive companies and raw `Status`; no provider write or production
+  availability is inferred.
 - **[completed | current checkout] Offline verification.** On 2026-08-25,
-  `APP_TIMEZONE=UTC PYTHONPATH=/app python -m pytest -q` passed **256** and
+  `APP_TIMEZONE=UTC PYTHONPATH=/app python -m pytest -q` passed **255** and
   skipped **77**.
   The skips are the intentionally unconfigured `CAI_TEST_DATABASE_URL`
   PostgreSQL family. The most recent recorded disposable runner evidence is
   compileall and strict Pyright clean, Alembic head `0023_manual_reconciliation`,
-  and PostgreSQL pytest **77 passed, 256 deselected**. The opt-in local webhook
+  and PostgreSQL pytest **77 passed, 255 deselected**. The opt-in local webhook
   smoke remains import-safe and outside canonical automation.
 
 ### Implemented with bounded evidence
@@ -72,11 +73,10 @@ complete locally; production acceptance remains separate._
   or disposable result is production/provider/Redis acceptance.
 - **[completed | local/disposable evidence]** Issue 0045 was validated on
   2026-08-25 with `APP_TIMEZONE=UTC`: compileall, strict Pyright, offline
-  pytest **256 passed, 77 skipped**, Alembic
-  `0023_manual_reconciliation`, and PostgreSQL pytest **77 passed, 256
+  pytest **255 passed, 77 skipped**, Alembic
+  `0023_manual_reconciliation`, and PostgreSQL pytest **77 passed, 255
   deselected**. This proves the tracked contracts and disposable publication;
-  it does not prove a complete active/inactive provider composition or
-  production acceptance.
+  it does not prove live provider availability or production acceptance.
 
 ### No current implementation backlog signal
 
@@ -169,8 +169,8 @@ complete locally; production acceptance remains separate._
    Completion criteria: additive execution state, compatible advisory locks,
    safe report, stable ordering, replay idempotency, dry-run non-destructiveness,
    focused integration coverage, and canonical disposable verification. All
-   criteria are complete locally on 2026-08-25; provider composition and
-   production acceptance remain separate gates.
+  criteria are complete locally on 2026-08-25; live provider and production
+  acceptance remain separate gates.
 
 ### Phase 4 — Product and release gates
 
@@ -205,7 +205,7 @@ complete locally; production acceptance remains separate._
 | completed | SPEC-0007–0012 and issues 0012–0022, 0026, and 0038–0040 have matching source, migrations, and focused test families. | Do not reopen as feature work without a concrete defect. |
 | completed | Issue 0041 reconciled PRD §9/source traceability and ARCHITECTURE §13/source map with Alembic `0022`, `238/76`, and the six-operation SPEC-0012 surface. | Keep older counts dated as history and retain the external-runtime boundary. |
 | completed locally | SPEC-0013 login/session/security policy and shell/session/BFF/read/action increments are implemented by issues 0042–0044. | Keep secure credential provisioning and production acceptance separate. |
-| completed locally | Issue 0045 adds the manual two-source reconciliation boundary, Alembic `0023_manual_reconciliation`, and disposable evidence of dry-run/apply/replay behavior. | Keep the provider active/inactive composition gate and production acceptance separate. |
+| completed locally | Issue 0045 adds the manual two-source reconciliation boundary, Alembic `0023_manual_reconciliation`, and disposable evidence of dry-run/apply/replay behavior; Acessórias `ListAll` is all-status. | Keep live provider and production acceptance separate. |
 | blocked | Production evidence requires environment, credentials, rollout ownership, and acceptance criteria. | Keep local verification and production acceptance separate. |
 | blocked | Milestone F and broader IA-policy changes lack product decisions. | Do not create implementation work from inference. |
 

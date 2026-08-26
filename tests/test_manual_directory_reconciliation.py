@@ -9,16 +9,13 @@ from src.core.acessorias_directory import (
     AcessoriasContact,
     AcessoriasDepartment,
     AcessoriasDirectoryAdapter,
-    AcessoriasDirectoryError,
     AcessoriasSnapshot,
-    require_complete_acessorias_snapshot,
 )
 from src.core.digisac_acessorias_reconciliation import (
     run_manual_reconciliation,
 )
 from src.core.config import settings
 from src.core.digisac_client import DigisacContact, DigisacContactPage
-from src.core.digisac_contact_backfill import DigisacContactBackfillSnapshot
 
 
 class _Response:
@@ -47,7 +44,18 @@ class _Session:
                         "UF": "SP",
                         "ContatosNaEmpresa": [],
                         "Departamentos": [{"ID": 10, "Nome": "Fiscal"}],
-                    }
+                    },
+                    {
+                        "ID": 2,
+                        "Identificador": "company-2",
+                        "Razao": "Empresa Inativa",
+                        "Fantasia": "Empresa Inativa",
+                        "Status": "Inativa",
+                        "Telefone": None,
+                        "UF": "SP",
+                        "ContatosNaEmpresa": [],
+                        "Departamentos": [{"ID": 10, "Nome": "Fiscal"}],
+                    },
                 ]
             ),
             _Response([]),
@@ -83,7 +91,7 @@ class _StaticDigiSacProvider:
         )
 
 
-def _snapshot(*, complete_view: bool) -> AcessoriasSnapshot:
+def _snapshot() -> AcessoriasSnapshot:
     return AcessoriasSnapshot(
         departments=(AcessoriasDepartment("10", "Fiscal"),),
         companies=(
@@ -114,20 +122,10 @@ def _snapshot(*, complete_view: bool) -> AcessoriasSnapshot:
         ),
         page_count=1,
         request_attempt_count=1,
-        complete_view=complete_view,
     )
 
 
-def _contacts_snapshot() -> DigisacContactBackfillSnapshot:
-    return DigisacContactBackfillSnapshot(
-        contacts=(DigisacContact(external_id="digisac-1"),),
-        page_count=1,
-        duplicate_count=0,
-        total=1,
-    )
-
-
-def test_observed_active_only_view_is_not_accepted_as_complete() -> None:
+def test_adapter_fetches_companies_regardless_of_status() -> None:
     adapter = AcessoriasDirectoryAdapter(
         token="synthetic-token",
         session=cast(Any, _Session()),
@@ -137,52 +135,14 @@ def test_observed_active_only_view_is_not_accepted_as_complete() -> None:
 
     snapshot = adapter.fetch_snapshot()
 
-    assert snapshot.complete_view is False
-    with pytest.raises(AcessoriasDirectoryError) as error:
-        require_complete_acessorias_snapshot(snapshot)
-    assert error.value.category == "incomplete_source_view"
-
-
-@pytest.mark.asyncio
-async def test_reconciliation_rejects_incomplete_source_before_apply(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import src.core.digisac_acessorias_reconciliation as reconciliation
-
-    started: list[tuple[object, object]] = []
-    finished: list[tuple[object, object, object]] = []
-
-    def start(execution_id: object, mode: object) -> None:
-        started.append((execution_id, mode))
-
-    def finish(
-        execution_id: object,
-        *,
-        status: object,
-        report: object,
-        failure_category: object = None,
-        failure_message: object = None,
-    ) -> None:
-        finished.append((execution_id, status, failure_category))
-
-    async def acquire(**_kwargs: object):
-        return _snapshot(complete_view=False), _contacts_snapshot()
-
-    monkeypatch.setattr(reconciliation, "_start_execution", start)
-    monkeypatch.setattr(reconciliation, "_finish_execution", finish)
-    monkeypatch.setattr(reconciliation, "_acquire_snapshots", acquire)
-
-    result = await run_manual_reconciliation(apply=True)
-
-    assert result.status == "failed"
-    assert result.failure_category == "incomplete_source_view"
-    assert started and finished[-1][2] == "incomplete_source_view"
+    assert {item.external_id for item in snapshot.companies} == {"company-1", "company-2"}
+    assert {item.is_active for item in snapshot.companies} == {True, False}
 
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_reconciliation_dry_run_apply_and_replay_are_idempotent() -> None:
-    acessorias = _snapshot(complete_view=True)
+    acessorias = _snapshot()
     digisac = DigisacContact(
         external_id="digisac-1",
         raw_email="responsavel@example.test",

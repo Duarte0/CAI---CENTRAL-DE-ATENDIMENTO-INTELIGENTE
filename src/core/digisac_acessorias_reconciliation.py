@@ -30,7 +30,6 @@ from src.core.acessorias_directory import (
     AcessoriasDirectoryAdapter,
     AcessoriasDirectoryError,
     AcessoriasSnapshot,
-    require_complete_acessorias_snapshot,
     validate_acessorias_snapshot,
 )
 from src.core.db import get_database_pool
@@ -334,7 +333,6 @@ def build_reconciliation_plan(
 ) -> ReconciliationPlan:
     """Build a deterministic plan from PostgreSQL and two validated snapshots."""
     validate_acessorias_snapshot(acessorias_snapshot)
-    require_complete_acessorias_snapshot(acessorias_snapshot)
     rows = _load_directory_rows(connection)
     companies = {item.external_id: item for item in acessorias_snapshot.companies}
     departments = {
@@ -906,7 +904,6 @@ async def _acquire_snapshots(
         try:
             snapshot = await asyncio.to_thread(selected_acessorias.fetch_snapshot)
             validate_acessorias_snapshot(snapshot)
-            require_complete_acessorias_snapshot(snapshot)
             return snapshot
         except AcessoriasDirectoryError:
             raise
@@ -959,7 +956,6 @@ async def run_manual_reconciliation(
         # Keep the publication boundary defensive even when a test or internal
         # caller supplies a custom acquisition implementation.
         validate_acessorias_snapshot(acessorias_snapshot)
-        require_complete_acessorias_snapshot(acessorias_snapshot)
         if not apply:
             with get_database_pool().connection() as connection:
                 with connection.transaction():
