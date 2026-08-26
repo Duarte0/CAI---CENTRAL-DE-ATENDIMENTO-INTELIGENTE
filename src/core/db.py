@@ -20,7 +20,7 @@ from src.core.config import settings
 from src.core.digisac_client import DigisacContact
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0022_identity_discovery_command"
+CURRENT_SCHEMA_REVISION = "0023_manual_reconciliation"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {

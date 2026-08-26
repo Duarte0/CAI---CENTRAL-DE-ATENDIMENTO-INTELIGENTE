@@ -1,7 +1,7 @@
 # SPEC-0007 — Fundação do diretório externo Acessórias
 
-- **Status:** implementado localmente pelo issue 0012; boundary estrutural pelo issue 0034; evidência descartável, sem provider/produção
-- **Versão:** 1.1
+- **Status:** implementado localmente pelos issues 0012, 0034 e 0045; evidência descartável, sem provider/produção
+- **Versão:** 1.2
 - **Prioridade/Fase:** P0 / Milestone A — External Directory Foundation
 - **Rastreabilidade:** PRD §§3, 4, 5.5, 8 e 10; ARCHITECTURE §2.1 e §§8–9; `IMPLEMENTATION_PLAN.md` Milestone A; SPEC-0001 e SPEC-0004
 - **Dependências:** SPEC-0001, SPEC-0004; configuração segura de credencial da Acessórias
@@ -224,6 +224,33 @@ Não há blocker material conhecido para abrir as issues de implementação do
 Milestone A. A implementação deve respeitar o contrato de evidência acima e
 registrar, em seus próprios testes/doubles, as respostas autorizadas sem
 reproduzir credenciais reais.
+
+### Reconciliação manual incremental (issue 0045)
+
+O serviço manual `src/core/digisac_acessorias_reconciliation.py` faz uma
+leitura completa dos dois diretórios antes de qualquer publicação. O planner
+compara por identidade estável e a aplicação atualiza somente o delta lógico,
+retendo empresas, relacionamentos e contatos antigos como histórico. Um
+contato Acessórias cujo `external_key` mudou é uma nova observação; a
+especificação não autoriza deduplicação por nome, telefone, email, CNPJ ou
+similaridade.
+
+O resultado observado pelo adaptador com `ativa=S` é marcado como
+`complete_view=false`. Essa consulta isolada não é tratada como visão completa
+de ativos e inativos: o caminho manual falha com categoria sanitizada
+`incomplete_source_view` antes do apply até que uma composição suportada pelo
+provider seja fornecida. Nenhum parâmetro ou valor de status não documentado é
+inventado. Apenas uma visão completa pode reconciliar ausência de empresas,
+contatos e relações, sempre sem remoção física.
+
+O comando manual é `PYTHONPATH=/app python -m
+src.utils.reconcile_digisac_acessorias`; `--dry-run` é o padrão e `--apply` é
+explícito. Ele inicializa/verifica/fecha PostgreSQL, adquire locks compatíveis
+com as publicações existentes e grava somente hashes, IDs de execução,
+contagens, timestamps e categorias de falha. Após o commit, a redescoberta usa
+uma única fronteira de domínio em ordem estável, preserva confirmações e não
+reescreve evidência, transições ou resoluções terminais de ciclos. Não há
+scheduler, startup hook ou loop periódico.
 
 Continuam deliberadamente fora deste contrato, sem bloquear a primeira issue:
 a versão nominal da API; valores textuais completos de `Status`; a forma exata

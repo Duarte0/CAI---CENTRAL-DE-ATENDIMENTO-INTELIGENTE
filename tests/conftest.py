@@ -75,6 +75,7 @@ async def postgres_state(request):
                 department_mapping_transitions,
                 department_mapping_rules,
                 identity_admin_commands,
+                digisac_acessorias_reconciliation_executions,
                 identity_company_link_transitions,
                 identity_match_evidence,
                 identity_company_links,

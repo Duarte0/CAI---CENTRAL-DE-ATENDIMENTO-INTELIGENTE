@@ -1,7 +1,7 @@
 # SPEC-0008 — Fundação de identidade de contato DigiSac
 
-- **Status:** implementada localmente pelos issues 0013, 0014 e 0026
-- **Versão:** 1.4 (issue 0026 adiciona a proveniência durável do contato de ticket)
+- **Status:** implementada localmente pelos issues 0013, 0014, 0026 e 0045
+- **Versão:** 1.5 (issue 0045 adiciona a reconciliação manual incremental)
 - **Prioridade/Fase:** P0 / Milestone B — DigiSac Contact Identity Foundation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone B; SPEC-0001, SPEC-0002, SPEC-0004 e SPEC-0007
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0004 e SPEC-0007
@@ -111,6 +111,20 @@ ou estendida coerentemente.
 3. A adição do diretório não pode alterar as oito rotas HTTP atuais, contrato de IA, finalização ou consultas sem versão. Exposição de contato exige SPEC própria e revisão de privacidade.
 4. Doubles determinísticos devem provar snapshot de ticket, referência `contactId` sem busca por mensagem, hydration deduplicada, grupo, replay, precedência e preservação diante de dados sem ordenação. Para o full backfill, devem cobrir página única, fallback multi-page por `page=N`, envelope inválido/erro do provider, não avanço de `currentPage`, deduplicação entre páginas e falha parcial.
 5. Testes PostgreSQL descartáveis devem provar migration para head, unicidade, upsert idempotente, rollback parcial, preservação da última observação válida e isolamento de Redis. Testes de adaptador devem cobrir credencial ausente, timeout, conexão, `429`/`Retry-After`, limite de tentativas, resposta inválida e ausência de PII/segredo em logs/estado.
+
+### Consumo pela reconciliação manual (issue 0045)
+
+O serviço manual reutiliza `acquire_contact_backfill()` e a publicação
+timestamp-aware do repositório, sem criar uma segunda identidade ou interpretar
+ausência de Contacts como deleção. As páginas são adquiridas e deduplicadas por
+`contact.id` antes da transação que também publica o delta Acessórias. O
+relatório registra somente páginas, duplicatas, hashes e contagens.
+
+Depois do commit, a redescoberta local usa `discover_all_identities()` em ordem
+estável, sem chamar o endpoint administrativo por contato. A operação preserva
+metadata mais nova, campos já conhecidos quando a observação recebida é
+incompleta, vínculos confirmados e toda a história; falhas do rematch deixam o
+resultado como `matching_failed` para nova execução manual.
 
 ## Critérios de aceitação e próximo slice
 

@@ -381,7 +381,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0022_identity_discovery_command\`. The main data groups
+Alembic owns the schema through \`0023_manual_reconciliation\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -392,6 +392,7 @@ are:
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
 | DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
+| Manual directory reconciliation | \`digisac_acessorias_reconciliation_executions\` | Sanitized manual two-source execution, delta hashes/counts, rematch counts, and resumable failure state. |
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\`, \`identity_admin_commands\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, immutable per-cycle outcomes, and PostgreSQL command idempotency. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, canonical ticket-contact provenance, and identity-resolution linkage. |
@@ -502,9 +503,9 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-21
-  evidence is Alembic `0022_identity_discovery_command`, **238 passed, 76
-  skipped** offline, and **76 passed, 238 deselected** in PostgreSQL; static and
+  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-25
+  evidence is Alembic `0023_manual_reconciliation`, **256 passed, 77
+  skipped** offline, and **77 passed, 256 deselected** in PostgreSQL; static and
   disposable evidence does not prove Redis, DigiSac, Groq, secret-manager
   provisioning, replicas, deployment, or production availability or release
   readiness. The older `0020`/`203+68` result is historical evidence only.
@@ -567,6 +568,13 @@ records these delivery limitations:
   cycle's persisted boundaries, and appends sanitized cycle snapshots; it does
   not add an HTTP route, IA routing, or fallback selection. Request creation is
   implemented separately under issue `0017`.
+- Manual DigiSac–Acessórias reconciliation is implemented under issue `0045`.
+  It acquires complete source views before publication, uses compatible
+  PostgreSQL advisory locks, applies non-destructive directory deltas, records
+  sanitized execution state, and rematches local contacts after commit. The
+  current `ativa=S` Acessórias adapter view is explicitly incomplete and fails
+  closed; no provider-complete active/inactive composition or production
+  acceptance is claimed.
 
 - Durable Acessórias Request creation and preparation are implemented under issues
   `0017`–`0019`, `0021`–`0022`, `0026`, and structural boundary issues `0034` and
@@ -618,7 +626,7 @@ they limit release verification and future evolution decisions.
   \`src/core/digisac_directory.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0022_identity_discovery_command.py\`.
+  \`0023_manual_digisac_acessorias_reconciliation.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
@@ -640,6 +648,10 @@ they limit release verification and future evolution decisions.
   \`src/core/acessorias_directory.py\`,
   \`src/core/acessorias_request_provider.py\`, and
   \`src/core/provider_coordination.py\`.
+- Manual DigiSac–Acessórias reconciliation: \`src/core/digisac_acessorias_reconciliation.py\`,
+  \`src/utils/reconcile_digisac_acessorias.py\`, migration
+  \`0023_manual_digisac_acessorias_reconciliation.py\`, and the focused
+  \`tests/test_manual_directory_reconciliation.py\` coverage.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

@@ -243,6 +243,9 @@ de execução. As principais estruturas são:
 - `identity_admin_commands`: hashes de chaves, fingerprints e resultados
   sanitizados da idempotência dos comandos administrativos; a chave bruta não é
   persistida nem retornada.
+- `digisac_acessorias_reconciliation_executions`: execução manual de dois
+  snapshots, hashes, contagens de delta/rematch e falha sanitizada; não guarda
+  payload, token ou PII.
 
 O ciclo de vida do pool e a verificação do schema permanecem em
 `src/core/db.py`. A persistência de contatos DigiSac e o estado durável de
@@ -391,6 +394,26 @@ com credencial DigiSac configurada:
 ```bash
 PYTHONPATH=/app python -m src.utils.backfill_digisac_contacts
 ```
+
+A reconciliação manual incremental dos diretórios DigiSac e Acessórias é uma
+operação separada, sem scheduler, startup hook, worker loop ou rota HTTP. Ela
+inicializa e verifica PostgreSQL, adquire os dois snapshots antes de publicar,
+gera um relatório sanitizado e fecha o pool:
+
+```bash
+PYTHONPATH=/app python -m src.utils.reconcile_digisac_acessorias --dry-run
+PYTHONPATH=/app python -m src.utils.reconcile_digisac_acessorias --apply
+```
+
+`--dry-run` é o padrão e não altera as tabelas de negócio; `--apply` é
+explícito. A execução usa lock PostgreSQL compartilhado com as publicações de
+contatos e do diretório Acessórias, conserva IDs e histórico e, após o commit,
+faz uma redescoberta local em lote pelas regras conservadoras de SPEC-0009.
+Não usa Redis, o ledger administrativo por contato, Request ou mapping. A
+consulta Acessórias observada com `ativa=S` é marcada como visão ativa-only e
+falha com `incomplete_source_view` antes do apply; o comando não inventa um
+parâmetro de seleção de inativos. Um apply real exige uma composição completa
+provider-supported e autorização operacional independente.
 
 ## API HTTP
 
@@ -573,7 +596,7 @@ descartável, DigiSac, provedores ou produção.
 Verificação canônica completa, incluindo PostgreSQL descartável:
 
 ```bash
-PYTHONPATH=/app python scripts/verify.py
+APP_TIMEZONE=UTC PYTHONPATH=/app python scripts/verify.py
 ```
 
 O runner executa compileall, Pyright estrito, a suíte offline sem selecionar
@@ -582,7 +605,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0022_identity_discovery_command` e só então
+ao destino, aplica e verifica Alembic `0023_manual_reconciliation` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -646,6 +669,14 @@ focada validou os três paths BFF, razões fixas, replay `201`/`200`, erros
 sanitizados, chave transitória no cliente e contrato local sem storage ou
 recursos externos. Nenhum browser harness ou executável Playwright estava
 disponível neste ambiente; não houve QA renderizado nem aceitação de produção.
+
+Na validação do issue 0045 em 2026-08-25, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **256 passed, 77 skipped** offline,
+Alembic `0023_manual_reconciliation` e **77 passed, 256 deselected** no
+PostgreSQL 16. A cobertura inclui dry-run não destrutivo, apply atômico, replay
+idempotente, retenção histórica e redescoberta após a publicação. O resultado
+é evidência local/descartável: não comprova a composição ativa/inativa do
+provider Acessórias, Redis, credenciais, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
