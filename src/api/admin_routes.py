@@ -390,19 +390,24 @@ admin_router = APIRouter(
 )
 async def identity_link_list(
     state: str | None = None,
+    query: str | None = None,
     cursor: str | None = None,
     limit: str = "50",
 ) -> IdentityLinkListResponse:
     selected_state = _validated_state(state)
+    selected_query = _validated_query(query)
     selected_limit = _validated_limit(limit)
-    parameters = {"state": selected_state}
+    parameters = {"state": selected_state, "query": selected_query}
     after = (
         _decode_cursor(cursor, scope="identity-links", parameters=parameters)
         if cursor
         else None
     )
     projection = await list_identity_link_projection(
-        state=selected_state, after=after, limit=selected_limit
+        state=selected_state,
+        query=selected_query,
+        after=after,
+        limit=selected_limit,
     )
     next_after = projection["next_after"]
     next_cursor = (
@@ -484,7 +489,7 @@ async def identity_link_confirm(
 
 
 @admin_router.post(
-    "/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+    "/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id:path}/reject",
     response_model=IdentityLinkCommandResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Reject one identity link",

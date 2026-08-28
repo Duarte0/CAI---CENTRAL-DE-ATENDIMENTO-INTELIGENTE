@@ -1,6 +1,6 @@
 # Implementation Plan
 
-_Planning baseline: 2026-08-21; synchronized 2026-08-26. Source, Alembic revisions, configuration, and
+_Planning baseline: 2026-08-21. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
 evidence, never production availability. The SPEC-0013 Phase 2 delivery is
 complete locally; production acceptance remains separate._
@@ -14,9 +14,8 @@ complete locally; production acceptance remains separate._
   history reconstruction, Groq classification, Redis coordination, and
   separate durable audio/image processing are implemented. PostgreSQL state is
   reserved before queue publication; lease, due-retry, reconciliation, and
-  idempotency paths recover interrupted work. Terminal audio or image failure
-  blocks only dependent cycles; classification requires non-empty completed
-  media content.
+  idempotency paths recover interrupted work. Terminal image failure blocks
+  only dependent cycles; terminal audio failure becomes a warning.
 - **[completed] Persistent-only finalization and privacy hardening**
   (SPEC-0001–0003; issues 0005, 0024, 0025). The legacy Redis
   buffer/debounce mode and raw-payload diagnostic routes are removed. Parser
@@ -24,18 +23,16 @@ complete locally; production acceptance remains separate._
   extracted customer values, secrets, or payload bodies.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
   issues 0004, 0027–0033, 0037). Alembic owns the schema through
-  `0023_manual_reconciliation`; persistence boundaries for contacts,
+  `0022_identity_discovery_command`; persistence boundaries for contacts,
   cycles, assignments, media, classifications, and DigiSac directory state are
   isolated behind repositories. Audio transient retry parity and bounded Redis
   residue cleanup are implemented with recovery coverage.
 - **[completed] Acessórias directory through Request creation**
-  (SPEC-0007–0011; issues 0012–0022, 0026, 0034, 0036, 0047). Directory sync,
+  (SPEC-0007–0011; issues 0012–0022, 0026, 0034, 0036). Directory sync,
   canonical ticket `contact.id`, conservative identity candidates/manual
   confirmation, cycle-scoped department mapping, and one durable Request
   operation per eligible cycle are implemented. Identity and mapping prepare
-  before a provider call; missing or ambiguous facts fail closed. Issue 0047
-  adds the persisted confidence gate (`0..1` to `0..10`, minimum `5.0`/`0.50`)
-  and makes every automatic opening internal (`tipo=I`). A second POST
+  before a provider call; missing or ambiguous facts fail closed. A second POST
   is allowed only after durable proof of pre-send failure; uncertain transport
   outcomes, including unproven `429`, remain in reconciliation.
 - **[completed] Authenticated identity administration** (SPEC-0012; issues
@@ -44,21 +41,12 @@ complete locally; production acceptance remains separate._
   rediscovery. It uses `ADMIN_API_TOKEN`, PostgreSQL command idempotency, and
   Alembic `0021`/`0022`; it neither calls providers nor changes historical
   cycle resolution or Request state.
-- **[completed] Manual incremental DigiSac–Acessórias reconciliation**
-  (SPEC-0007–0009, 0012; issue 0045). The explicit dry-run/apply CLI acquires
-  both validated snapshots before publishing, applies safe PostgreSQL deltas
-  under compatible advisory locks, retains historical directory facts, and
-  runs deterministic batch identity discovery after commit. Acessórias
-  `ListAll` is requested without a status filter, preserving active and
-  inactive companies and raw `Status`; no provider write or production
-  availability is inferred.
-- **[completed | current checkout] Offline verification.** On 2026-08-26,
-  `APP_TIMEZONE=UTC PYTHONPATH=/app python -m pytest -q` passed **269** and
-  skipped **82**.
+- **[completed | current checkout] Offline verification.** On 2026-08-21,
+  `PYTHONPATH=/app python -m pytest -q` passed **238** and skipped **76**.
   The skips are the intentionally unconfigured `CAI_TEST_DATABASE_URL`
-  PostgreSQL family. The most recent disposable runner evidence is compileall
-  and strict Pyright clean, Alembic head `0023_manual_reconciliation`, and
-  PostgreSQL pytest **82 passed, 269 deselected**. The opt-in local webhook
+  PostgreSQL family. The most recent recorded disposable runner evidence is
+  compileall and strict Pyright clean, Alembic head `0022`, and PostgreSQL
+  pytest **76 passed, 238 deselected** (issue 0040). The opt-in local webhook
   smoke remains import-safe and outside canonical automation.
 
 ### Implemented with bounded evidence
@@ -74,36 +62,16 @@ complete locally; production acceptance remains separate._
   local baseline and the complete six-operation SPEC-0012 internal surface.
   Older `0020`/`203+68` results remain dated historical evidence only; no local
   or disposable result is production/provider/Redis acceptance.
-- **[completed | local/disposable evidence]** Issue 0045 was validated on
-  2026-08-25 with `APP_TIMEZONE=UTC`: compileall, strict Pyright, offline
-  pytest **255 passed, 77 skipped**, Alembic
-  `0023_manual_reconciliation`, and PostgreSQL pytest **77 passed, 255
-  deselected**. This proves the tracked contracts and disposable publication;
-  it does not prove live provider availability or production acceptance.
-- **[completed | local/disposable evidence]** Issue 0046 aligns audio and image
-  finalization safety: pending/recoverable media waits, terminal media blocks
-  dependent cycles, and only non-empty completed media reaches classification.
-  The 2026-08-26 canonical run passed offline pytest **258 passed, 78 skipped**
-  and PostgreSQL pytest **78 passed, 258 deselected**, with compileall,
-  strict Pyright, and Alembic `0023_manual_reconciliation` clean.
-- **[completed | local/disposable evidence]** Issue 0047 gates automatic
-  Acessórias openings on persisted confidence, accepts the exact `0.50`
-  boundary, records sanitized definitive blocks, and sends internal `tipo=I`
-  only. The 2026-08-26 canonical run passed offline pytest **269 passed, 82
-  skipped** and PostgreSQL pytest **82 passed, 269 deselected**, with compileall,
-  strict Pyright, and Alembic `0023_manual_reconciliation` clean. This is local
-  disposable evidence and not provider or production acceptance.
 
 ### No current implementation backlog signal
 
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
-  `pass` occurrences are exception-control flow; the 82 skips are the explicit
+  `pass` occurrences are exception-control flow; the 76 skips are the explicit
   database prerequisite policy.
 - **[superseded/deprecated]** Issue 0023 is deprecated: its active/inactive
   directory concern was superseded by the later directory-contract alignment,
-  not an open duplicate build item. Issues 0001–0022, 0024–0041, 0045–0047 are
-  closed.
+  not an open duplicate build item. Issues 0001–0022 and 0024–0041 are closed.
 
 ## Priority plan
 
@@ -171,27 +139,9 @@ complete locally; production acceptance remains separate._
    three administrative credentials remains an operational prerequisite, and
    production acceptance remains a separate blocked gate.
 
-### Phase 3 — Manual source reconciliation
+### Phase 3 — Product and release gates
 
-3. **[P1 | completed locally] Manual incremental DigiSac–Acessórias
-   reconciliation** (`SPEC-0007`–`0009`, `0012`, issue 0045).
-
-   Outcome: provide an explicit dry-run/apply service and CLI that acquires
-   complete Acessórias and DigiSac Contacts views before one atomic local
-   publication, computes sanitized deltas, preserves historical facts, and
-   rematches local contacts through the existing conservative identity rules.
-   Active-only Acessórias evidence fails closed; no scheduler, provider write,
-   Request, Redis identity authority, or admin-ledger loop is introduced.
-
-   Completion criteria: additive execution state, compatible advisory locks,
-   safe report, stable ordering, replay idempotency, dry-run non-destructiveness,
-   focused integration coverage, and canonical disposable verification. All
-  criteria are complete locally on 2026-08-25; live provider and production
-  acceptance remain separate gates.
-
-### Phase 4 — Product and release gates
-
-4. **[P2 | blocked | product decision] Request lifecycle integration**
+3. **[P2 | blocked | product decision] Request lifecycle integration**
    (Milestone F).
 
    Outcome: define any Request status polling, interactions, comments,
@@ -200,14 +150,14 @@ complete locally; production acceptance remains separate._
    provider contract, ownership, data/retry/reconciliation rules, and an issue
    decomposition. Current Request creation does not authorize this work.
 
-5. **[P2 | blocked | product decision] Broader IA classification policy.**
+4. **[P2 | blocked | product decision] Broader IA classification policy.**
 
    Outcome: decide any change to taxonomy precedence, confidence semantics,
    summary invariants, or structured descriptions before changing the
    four-field contract. Completion criteria: PRD/spec decision plus tests and
    migration assessment. Until then retain the implemented contract.
 
-6. **[P1 | blocked | operational authorization] Production acceptance.**
+5. **[P1 | blocked | operational authorization] Production acceptance.**
 
    Outcome: separately authorized acceptance against the intended deployment.
    Completion criteria: named environment and owner, protected credentials,
@@ -222,8 +172,6 @@ complete locally; production acceptance remains separate._
 | completed | SPEC-0007–0012 and issues 0012–0022, 0026, and 0038–0040 have matching source, migrations, and focused test families. | Do not reopen as feature work without a concrete defect. |
 | completed | Issue 0041 reconciled PRD §9/source traceability and ARCHITECTURE §13/source map with Alembic `0022`, `238/76`, and the six-operation SPEC-0012 surface. | Keep older counts dated as history and retain the external-runtime boundary. |
 | completed locally | SPEC-0013 login/session/security policy and shell/session/BFF/read/action increments are implemented by issues 0042–0044. | Keep secure credential provisioning and production acceptance separate. |
-| completed locally | Issue 0045 adds the manual two-source reconciliation boundary, Alembic `0023_manual_reconciliation`, and disposable evidence of dry-run/apply/replay behavior; Acessórias `ListAll` is all-status. | Keep live provider and production acceptance separate. |
-| completed locally | Issue 0047 adds the confidence gate at `0.50` persisted (`5.0` business scale) and makes automatic Acessórias Request payloads internal with `tipo=I`; historical post-start evidence remains immutable. | Keep the IA `0..1` contract and live provider acceptance separate. |
 | blocked | Production evidence requires environment, credentials, rollout ownership, and acceptance criteria. | Keep local verification and production acceptance separate. |
 | blocked | Milestone F and broader IA-policy changes lack product decisions. | Do not create implementation work from inference. |
 
@@ -233,10 +181,8 @@ complete locally; production acceptance remains separate._
   legacy finalization and raw diagnostic removal (0005–0006), documentation and
   OpenAPI baseline work (0007–0011), Acessórias Milestones A–E (0012–0022,
   0026), audio retry parity (0027), persistence/provider boundary refactors
-  (0028–0036), Redis residue audit/cleanup (0037), SPEC-0012 admin API
-  slices (0038–0040), documentation reconciliation (0041), and manual
-  DigiSac–Acessórias reconciliation (0045), and shared audio/image finalization
-  gate (0046), and the internal Acessórias confidence gate (0047).
+  (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
+  slices (0038–0040), and the documentation reconciliation (0041).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -245,6 +191,6 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issues 0045 and 0046
-are also complete locally, including issue 0047; Request lifecycle, broader IA policy, provider
-composition, and production acceptance remain separate blocked plan items.
+shell/session/BFF, read, and command-action increments. Request lifecycle,
+broader IA policy, and production acceptance remain separate blocked plan
+items.

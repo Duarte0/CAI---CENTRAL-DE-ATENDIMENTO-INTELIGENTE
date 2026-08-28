@@ -3,6 +3,8 @@ id: 0041
 title: "Reconcile the current verification baseline and administrative API traceability"
 type: spec
 status: closed
+product_authorization: granted_for_spec_0013_issue_decomposition
+spec_0013_status: approved_for_issue_decomposition_implementation_not_started
 priority: high
 phase: 1
 created_at: 2026-08-21
@@ -23,6 +25,7 @@ affects:
   - specs/0006-api-documentation-and-openapi-contract.md
   - specs/README.md
   - IMPLEMENTATION_PLAN.md
+  - specs/0013-administrative-identity-link-review-ui.md
 ---
 
 ## Description
@@ -43,14 +46,40 @@ older 2026-08-17 `0020_cycle_contact_provenance` / **203 passed, 68 skipped** /
 foregrounds the same stale baseline. The active documents must also describe
 the complete six-operation authenticated `/admin/acessorias` surface from
 SPEC-0012 alongside the eight original operations, without presenting the
-administrative API as public or claiming that the quarantined SPEC-0013 UI
-exists.
+administrative API as public or claiming that the approved-but-unimplemented
+SPEC-0013 UI exists.
 
 Expected outcome: maintainers can identify the actual local verification
 baseline, the source-backed migration head, the complete authenticated
 SPEC-0012 read/command/discovery surface, and the boundaries around local,
 disposable, provider, Redis, deployment, and production evidence without
-inferring a removed feature, a new route, a UI, or a production acceptance.
+inferring a removed feature, an implemented UI, or a production acceptance.
+
+### SPEC-0013 authorization alignment
+
+Product authorization is granted for adoption and issue decomposition of
+SPEC-0013. The UI is not implemented, and this closed documentation issue does
+not create implementation issues. The approved decisions are:
+
+1. The administrative identity-link review UI is adopted and authorized.
+2. The stack is an HTML page served by FastAPI, with local CSS and modular
+   JavaScript without a required bundler; it uses `fetch` for SPEC-0012 routes,
+   with Jinja2 only if needed. React/Vite are not used at this stage.
+3. The authentication boundary is an in-process BFF in the same FastAPI
+   process, using a signed `HttpOnly` cookie session, `Secure` in production,
+   `SameSite=Strict`, fixed 60-minute expiry without a sliding window, and
+   Starlette `SessionMiddleware` or `itsdangerous` for signing.
+4. CSRF protection is `SameSite=Strict`; no additional CSRF token is adopted
+   in this version.
+5. `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and `ADMIN_SESSION_SECRET` must be
+   securely provisioned with the same level of care and never exposed to the
+   browser, logs, metrics, or cache.
+6. Session bootstrap is a single operator password compared securely with
+   `ADMIN_UI_PASSWORD`, with no user registration, RBAC, or IdP at this stage.
+
+This authorization does not change Milestone F / Request lifecycle decisions,
+the broader IA policy, or production acceptance criteria; those remain blocked
+and outside this issue's scope.
 
 ## Scope
 
@@ -71,7 +100,8 @@ inferring a removed feature, a new route, a UI, or a production acceptance.
   from the six administrative operations.
 - Update statuses, links, versions, and traceability so SPEC-0005 v1.4 and
   the plan can record this delta as completed after verification. Preserve
-  SPEC-0013 as a non-active, product-authorization-blocked proposal.
+  SPEC-0013 as approved for issue decomposition, with implementation still
+  unstarted.
 - Preserve the existing documentation contracts for persistent-only
   finalization, unversioned query routes, runner credential isolation, and the
   distinction between local/disposable verification and external-runtime or
@@ -85,11 +115,12 @@ inferring a removed feature, a new route, a UI, or a production acceptance.
 - Any change to the eight original routes, the six SPEC-0012 routes,
   authentication behavior, identity matching, command idempotency, Request
   creation, cycle resolution, or provider retry/reconciliation behavior.
-- Implementing or authorizing SPEC-0013's UI, login, session, BFF, browser,
-  accessibility, or new-secret decisions. Do not claim a UI is implemented.
+- Implementing SPEC-0013's UI, login, session, BFF, browser, accessibility, or
+  credential changes. The approved authorization contract is recorded above;
+  do not claim a UI is implemented or create its implementation issues here.
 - Product decisions for Request lifecycle integration, broader IA policy, or
   production acceptance; these remain blocked plan items.
-- Rewriting or reopening closed issue records, manufacturing provider/Redis/
+- Rewriting or reopening other closed issue records, manufacturing provider/Redis/
   deployment evidence, or changing historical counts in closed issues.
 
 ## Implementation Plan
@@ -183,7 +214,8 @@ inferring a removed feature, a new route, a UI, or a production acceptance.
 - [x] The active documentation distinguishes the eight original HTTP
   operations from the six authenticated internal SPEC-0012 operations,
   documents Bearer `ADMIN_API_TOKEN`, and does not present the administrative
-  API as public or claim that SPEC-0013's UI is implemented.
+  API as public or claim that SPEC-0013's UI is implemented; SPEC-0013 is
+  recorded as approved for issue decomposition with implementation unstarted.
 - [x] The documentation preserves SPEC-0012's expected, negative, retry,
   idempotency, and concurrency invariants: sanitized projections; PostgreSQL
   command authority; same-key replay convergence; incompatible-key conflict;
@@ -211,7 +243,8 @@ inferring a removed feature, a new route, a UI, or a production acceptance.
 ## References
 
 - Plan: `IMPLEMENTATION_PLAN.md` — Phase 1, item 1 (selected); Phase 2 item 2
-  (SPEC-0013 UI) and Phase 3 items remain blocked and are not this issue.
+  (SPEC-0013 UI) is approved for issue decomposition but remains unimplemented;
+  Phase 3 items remain blocked and are not this issue.
 - Primary specification: `specs/0005-documentation-baseline-reconciliation.md`
   v1.4 — current baseline, documentation invariants, evidence boundaries, and
   acceptance contract.
@@ -263,7 +296,7 @@ and `graphify update .` checks passed.
 Migrations/data/runtime: none; this was documentation-only. Older verification
 counts remain dated historical evidence. Local and disposable checks do not
 prove Redis, DigiSac, Groq, secret-manager provisioning, replicas, deployment,
-provider behavior, or production readiness. The SPEC-0013 UI remains
-quarantined and requires product authorization.
+provider behavior, or production readiness. SPEC-0013 is approved for issue
+decomposition, but its UI remains unimplemented.
 
 The focused documentation commit is reported by the build pass.

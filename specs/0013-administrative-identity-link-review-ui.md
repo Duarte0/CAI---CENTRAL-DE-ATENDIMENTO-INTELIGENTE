@@ -19,17 +19,20 @@ usam `Cache-Control: no-store` e não entram no OpenAPI.
 O boundary `AdminUIContext` autentica a sessão no processo FastAPI e oferece o
 acesso server-side aos serviços já existentes da SPEC-0012, preservando as
 projeções sanitizadas sem proxy HTTP, acesso do navegador ao PostgreSQL/Redis
-ou exposição do `ADMIN_API_TOKEN`. Não há migration nem escrita em estado de
-identidade neste slice.
+ou exposição do `ADMIN_API_TOKEN`. O detalhe autenticado da UI pode incluir o
+número bruto persistido do contato para conferência operacional; a API Bearer
+da SPEC-0012 continua sem esse valor. Não há migration nem escrita em estado
+de identidade neste slice.
 
 O issue 0043 substitui o conteúdo provisório pelo primeiro viewport responsivo
 com fila filtrada por `candidate`, `ambiguous` e `unresolved`, paginação opaca,
 detalhe de contato e busca display-only de empresas presentes e ativas. Os
 paths BFF sob `/admin/acessorias/ui/api/` usam somente a sessão assinada,
 reutilizam as projeções e cursores da SPEC-0012, retornam `no-store` e não
-expõem o token Bearer, valores de contato, storage do navegador ou recursos
-externos. Loading, vazio, expiração, ausência, rate limit, timeout, rede e
-respostas fora de ordem têm estados seguros no cliente.
+expõem o token Bearer, email, evidência bruta, storage do navegador ou
+recursos externos. O número aparece somente no detalhe carregado por sessão
+administrativa. Loading, vazio, expiração, ausência, rate limit, timeout, rede
+e respostas fora de ordem têm estados seguros no cliente.
 
 O issue 0044 adiciona os três paths BFF de ação sob
 `/admin/acessorias/ui/api/`, autenticados pela mesma sessão e sem expor o
@@ -183,9 +186,9 @@ credencial nesta versão. O formulário e a resposta de login devem usar
 protegida no perímetro autorizado.
 
 Não devem existir chamadas de terceiros, recursos remotos ou conteúdo que
-permita exfiltração do token. Respostas da UI, mensagens de erro e logs devem
-continuar sem telefone, email, payload de conversa, token ou valor bruto de
-evidência.
+permita exfiltração do token. O número bruto pode aparecer somente na resposta
+de detalhe da UI autenticada; mensagens de erro e logs continuam sem número,
+email, payload de conversa, token ou valor bruto de evidência.
 
 ## Estados e erros
 
@@ -207,10 +210,9 @@ já aplicado, sem criar nova transição visualmente.
 
 ## Privacidade e acessibilidade
 
-A UI deve mostrar somente os campos já autorizados pela SPEC-0012: IDs
-externos, nomes de exibição permitidos, estados, contagens, categorias de
-evidência e horários seguros. Não deve exibir valor de telefone, email ou
-evidência.
+A UI deve mostrar IDs externos, nomes de exibição permitidos, o número bruto
+do contato no detalhe autenticado, estados, contagens, categorias de evidência
+e horários seguros. Não deve exibir email ou evidência bruta.
 
 A página deve funcionar em desktop e em viewport estreito, ter navegação por
 teclado, foco visível, rótulos associados aos controles, mensagens de erro
@@ -247,8 +249,9 @@ README/guia operacional separado.
    usa `operator_verified` e rejeição usa `operator_rejected`.
 6. `401`, `404`, `409`, `422`, timeout e resposta vazia têm tratamento visível
    e seguro.
-7. Nenhum teste ou inspeção do navegador encontra telefone, email, evidência
-   bruta, token, payload de conversa ou credencial de provider.
+7. Nenhum teste ou inspeção do navegador encontra email, evidência bruta,
+   token, payload de conversa ou credencial de provider fora do número bruto
+   explicitamente autorizado no detalhe autenticado.
 8. A tela é utilizável por teclado, em viewport estreito e sem recursos
    externos.
 9. Testes de integração cobrem o fluxo de leitura, confirmação, conflito,

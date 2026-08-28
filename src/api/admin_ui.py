@@ -46,8 +46,8 @@ SESSION_LIFETIME_SECONDS = 60 * 60
 SESSION_COOKIE_PATH = "/admin/acessorias"
 _SESSION_VERSION = 1
 _MAX_SESSION_COOKIE_LENGTH = 4096
-_GENERIC_AUTH_ERROR = "Invalid credentials"
-_UI_IDENTITY_STATES = frozenset({"candidate", "ambiguous", "unresolved"})
+_GENERIC_AUTH_ERROR = "Credenciais inválidas"
+_UI_IDENTITY_STATES = frozenset({"candidate", "ambiguous", "unresolved", "confirmed"})
 
 
 def _validate_ui_opaque_value(value: str, field_name: str) -> str:
@@ -86,6 +86,12 @@ class UIIdentityDiscoveryRequest(UIIdentityCommandRequest):
     pass
 
 
+class UIIdentityContactDetail(IdentityContactDetail):
+    """Contact detail exposed only behind the authenticated UI session."""
+
+    contact_number: str | None = None
+
+
 @dataclass(frozen=True)
 class AdminUIContext:
     """Authenticated server-side bridge to SPEC-0012 application services."""
@@ -99,7 +105,9 @@ class AdminUIContext:
     async def get_identity_contact(
         self, contact_external_id: str
     ) -> dict[str, Any] | None:
-        return await get_identity_contact_projection(contact_external_id)
+        return await get_identity_contact_projection(
+            contact_external_id, include_contact_number=True
+        )
 
     async def list_active_companies(self, **kwargs: Any) -> dict[str, Any]:
         return await list_active_company_projection(**kwargs)
@@ -245,11 +253,11 @@ def _ui_raise_identity_command_http_error(exc: Exception) -> None:
 def _login_page(error: str | None = None) -> str:
     message = f'<p class="error" role="alert">{html.escape(error)}</p>' if error else ""
     return f"""<!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Identity review sign in</title>
+  <title>Entrar | Conciliação de empresas</title>
   <style>
     :root {{ color-scheme: light; font-family: system-ui, sans-serif; }}
     body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; color: #17202a; }}
@@ -262,13 +270,13 @@ def _login_page(error: str | None = None) -> str:
 </head>
 <body>
   <main>
-    <h1>Identity review</h1>
-    <p>Sign in to access the administrative review shell.</p>
+    <h1>Conciliação de empresas</h1>
+    <p>Entre para revisar e confirmar os vínculos com a Acessórias.</p>
     {message}
     <form method="post" action="/admin/acessorias/login" autocomplete="off">
-      <label for="password">Operator password</label>
+      <label for="password">Senha do operador</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">Sign in</button>
+      <button type="submit">Entrar</button>
     </form>
   </main>
 </body>
@@ -277,130 +285,164 @@ def _login_page(error: str | None = None) -> str:
 
 def _protected_shell() -> str:
     return """<!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Identity review</title>
+  <title>Conciliação de empresas | CAI</title>
   <style>
-    :root { color-scheme: light; font-family: system-ui, sans-serif; --ink: #17202a; --muted: #52606d; --line: #d8dee4; --panel: #fff; --page: #f4f6f8; --accent: #145da0; --accent-soft: #e8f1f8; --danger: #a61b1b; --success: #285943; }
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --ink: #132536; --muted: #607184; --line: #d9e2ea; --panel: #fff; --page: #eef3f7; --accent: #0f6b8f; --accent-strong: #0a526f; --accent-soft: #e5f3f7; --danger: #a52d3a; --danger-soft: #fff0f1; --success: #236947; --warning: #99651d; --shadow: 0 .55rem 1.5rem #17324a12; }
     * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
     body { margin: 0; background: var(--page); color: var(--ink); line-height: 1.45; }
-    header { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; padding: 1rem clamp(1rem, 4vw, 3rem); background: #12344d; color: white; }
-    header h1 { margin: 0; font-size: 1.35rem; }
-    header p { margin: .2rem 0 0; color: #d9edf9; }
-    main { width: min(88rem, calc(100% - 2rem)); margin: 1.5rem auto 3rem; }
-    section { min-width: 0; padding: clamp(1rem, 2.5vw, 1.5rem); background: var(--panel); border: 1px solid var(--line); border-radius: .75rem; }
-    h2, h3 { margin-top: 0; }
-    button, input, select { min-height: 2.5rem; padding: .5rem .7rem; font: inherit; border-radius: .35rem; border: 1px solid #8c98a4; }
+    header { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; padding: 1rem clamp(1rem, 4vw, 3rem); background: #102f47; color: white; }
+    header h1 { margin: 0; font-size: clamp(1.15rem, 2vw, 1.45rem); letter-spacing: -.02em; }
+    header p { margin: .2rem 0 0; color: #c8e3ef; font-size: .9rem; }
+    header form { margin-left: auto; }
+    main { width: min(94rem, calc(100% - 2rem)); margin: 1.25rem auto 3rem; }
+    section { min-width: 0; padding: clamp(.9rem, 2vw, 1.25rem); background: var(--panel); border: 1px solid var(--line); border-radius: 1rem; box-shadow: var(--shadow); }
+    h2, h3, h4 { margin-top: 0; }
+    h2 { font-size: 1.1rem; letter-spacing: -.015em; }
+    h3 { font-size: 1rem; }
+    button, input, select { min-height: 2.4rem; padding: .5rem .7rem; font: inherit; font-size: .9rem; border-radius: .55rem; border: 1px solid #b8c6d1; }
     button { cursor: pointer; background: white; color: var(--ink); }
     button:disabled { cursor: not-allowed; opacity: .55; }
-    button:hover { border-color: var(--accent); }
+    button:hover:not(:disabled) { border-color: var(--accent); }
     button:focus-visible, input:focus-visible, select:focus-visible { outline: .2rem solid #f3b61f; outline-offset: .15rem; }
     button.primary { background: var(--accent); border-color: var(--accent); color: white; font-weight: 700; }
-    button.danger { color: var(--danger); border-color: #d98b8b; }
-    .toolbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+    button.danger { color: var(--danger); border-color: #e4aeb4; background: var(--danger-soft); }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem; margin-bottom: .85rem; padding: .95rem 1.1rem; }
     .toolbar h2 { margin-bottom: .25rem; }
-    .toolbar p { margin: 0; color: var(--muted); }
-    .filters { display: flex; flex-wrap: wrap; gap: .5rem; }
-    .filters label { display: inline-flex; align-items: center; gap: .35rem; padding: .45rem .65rem; border: 1px solid var(--line); border-radius: .35rem; cursor: pointer; }
+    .toolbar p { max-width: 38rem; margin: 0; color: var(--muted); font-size: .9rem; }
+    .filters { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .filters label { display: inline-flex; align-items: center; gap: .35rem; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .55rem; cursor: pointer; color: var(--muted); font-size: .82rem; font-weight: 700; }
+    .filters label:has(input:checked) { background: var(--accent-soft); border-color: #87c0cf; color: var(--accent-strong); }
     .filters input { min-height: auto; accent-color: var(--accent); }
-    .workspace { display: grid; grid-template-columns: minmax(15rem, .8fr) minmax(20rem, 1.4fr) minmax(15rem, .8fr); gap: 1rem; align-items: start; }
-    .workspace section { min-height: 18rem; }
-    .status { min-height: 1.5rem; color: var(--muted); }
+    .workspace { display: grid; grid-template-columns: minmax(15rem, .8fr) minmax(23rem, 1.55fr) minmax(16rem, .8fr); gap: .85rem; align-items: start; }
+    .workspace section { min-height: 12rem; }
+    #identity-queue { position: sticky; top: .75rem; }
+    .panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+    .panel-heading h3 { margin-bottom: .2rem; }
+    .panel-count { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+    .status { min-height: 1.35rem; margin: .5rem 0; color: var(--muted); font-size: .82rem; }
     .status.error { color: var(--danger); font-weight: 600; }
     .status.success { color: var(--success); font-weight: 600; }
-    .queue-list, .company-list, .detail-list { display: grid; gap: .55rem; padding: 0; margin: 1rem 0; list-style: none; }
-    .queue-item { width: 100%; display: block; text-align: left; padding: .75rem; border: 1px solid var(--line); border-radius: .45rem; background: white; }
-    .queue-item[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 .1rem #145da033; }
-    .queue-item strong, .queue-item span { display: block; }
-    .queue-item span, .muted { color: var(--muted); }
-    .state { display: inline-block; width: fit-content; margin-top: .35rem; padding: .1rem .4rem; border-radius: .25rem; background: #edf0f2; color: var(--ink); font-size: .86rem; font-weight: 700; }
-    .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem 1rem; margin-bottom: 1.25rem; }
-    .detail-grid dt { color: var(--muted); font-size: .86rem; }
-    .detail-grid dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
-    .subheading { margin: 1.25rem 0 .5rem; font-size: 1rem; }
-    .detail-card, .company-result { padding: .65rem; border: 1px solid var(--line); border-radius: .35rem; }
-    .detail-card p, .company-result p { margin: .15rem 0; }
-    .detail-card .action-button, .company-result .action-button { margin-top: .5rem; }
-    .action-panel { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-    .action-controls { display: flex; flex-wrap: wrap; gap: .5rem; }
-    .action-target { min-height: 1.5rem; color: var(--muted); }
-    dialog { width: min(32rem, calc(100% - 2rem)); padding: 1.25rem; color: var(--ink); border: 1px solid var(--line); border-radius: .65rem; box-shadow: 0 1rem 3rem #17202a44; }
+    .queue-list, .company-list, .detail-list { display: grid; gap: .45rem; max-height: min(32rem, 50vh); overflow-y: auto; overscroll-behavior: contain; padding: 0 .25rem 0 0; margin: .65rem 0 0; scrollbar-gutter: stable; list-style: none; }
+    .queue-item { width: 100%; min-height: 4.25rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: .12rem .5rem; overflow: hidden; text-align: left; padding: .65rem .7rem; border: 1px solid var(--line); border-radius: .65rem; background: white; }
+    .queue-item[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 .12rem #0f6b8f22; }
+    .queue-name { min-width: 0; overflow: hidden; color: var(--ink); font-size: .9rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-id, .queue-meta, .muted { min-width: 0; overflow: hidden; color: var(--muted); font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-meta { grid-column: 1 / -1; }
+    .queue-companies { grid-column: 1 / -1; min-width: 0; overflow: hidden; color: var(--success); font-size: .76rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+    .state { align-self: start; display: inline-flex; width: fit-content; margin: 0; padding: .15rem .4rem; border-radius: 999px; background: #edf0f2; color: var(--ink); font-size: .68rem; font-weight: 800; }
+    .state-candidate { background: #fff4d7; color: #845514; }
+    .state-ambiguous { background: #f3e7ff; color: #733a9a; }
+    .state-unresolved { background: #ffe5e5; color: #9a3030; }
+    .state-confirmed { background: #e2f4e9; color: #236947; }
+    .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; margin: 0 0 1rem; }
+    .detail-grid > div { min-width: 0; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: .6rem; background: #f8fafb; }
+    .detail-grid dt { color: var(--muted); font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+    .detail-grid dd { margin: .15rem 0 0; overflow: hidden; font-size: .86rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .subheading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: 1rem 0 .45rem; font-size: .85rem; }
+    .extra-details { margin-top: .9rem; }
+    .extra-details > summary { cursor: pointer; list-style-position: inside; }
+    .detail-card, .company-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem .65rem; align-items: center; min-width: 0; min-height: 3.15rem; padding: .55rem .65rem; border: 1px solid var(--line); border-radius: .6rem; background: white; }
+    .detail-card-text, .company-result__main { min-width: 0; overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+    .detail-card-text { display: block; }
+    .detail-card .action-button, .company-result .action-button { white-space: nowrap; }
+    .action-button { min-height: 2.1rem; padding: .35rem .55rem; font-size: .76rem; font-weight: 700; }
+    .company-result__main { display: grid; gap: .1rem; }
+    .company-result__name { overflow: hidden; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .company-result__id { overflow: hidden; color: var(--muted); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+    .action-panel { position: sticky; bottom: .75rem; z-index: 2; margin-top: 1.15rem; padding: .8rem; border: 1px solid #a8d0db; border-radius: .75rem; background: #f1fafc; box-shadow: 0 .45rem 1rem #17324a18; }
+    .action-panel .subheading { margin: 0 0 .3rem; color: var(--accent-strong); }
+    .action-controls { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .action-target { min-height: 1.35rem; margin: .25rem 0 .5rem; color: var(--muted); font-size: .78rem; }
+    dialog { width: min(32rem, calc(100% - 2rem)); padding: 1.25rem; color: var(--ink); border: 1px solid var(--line); border-radius: .8rem; box-shadow: 0 1rem 3rem #17202a44; }
     dialog::backdrop { background: #17202a99; }
     dialog h3 { margin-top: 0; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
-    .search-form { display: flex; gap: .5rem; align-items: end; }
+    .search-form { display: flex; gap: .45rem; align-items: end; }
+    .contact-search-form { margin-top: .55rem; }
     .search-form label { flex: 1; }
     .search-form input { width: 100%; margin-top: .3rem; }
-    .pagination { display: flex; justify-content: flex-end; margin-top: 1rem; }
+    .pagination { display: flex; justify-content: flex-end; margin-top: .7rem; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-    .global-message { min-height: 1.5rem; margin-bottom: 1rem; }
-    @media (max-width: 72rem) { .workspace { grid-template-columns: minmax(15rem, .8fr) minmax(20rem, 1.2fr); } .workspace section:last-child { grid-column: 1 / -1; } }
-    @media (max-width: 48rem) { main { width: min(100% - 1rem, 42rem); margin-top: .75rem; } .workspace { display: block; } .workspace section { margin-bottom: 1rem; } .search-form { align-items: stretch; flex-direction: column; } .detail-grid { grid-template-columns: 1fr; } }
+    .global-message { min-height: 1.35rem; margin: .25rem 0 .75rem; }
+    @media (max-width: 78rem) { .workspace { grid-template-columns: minmax(14rem, .75fr) minmax(22rem, 1.35fr); } #company-search { grid-column: 1 / -1; } }
+    @media (max-width: 52rem) { main { width: min(100% - 1rem, 42rem); margin-top: .75rem; } .workspace { display: block; } .workspace section { margin-bottom: .75rem; } #identity-queue { position: static; max-height: none; overflow: visible; } .search-form { align-items: stretch; flex-direction: column; } .search-form button { width: 100%; } }
+    @media (max-width: 34rem) { header { padding: .85rem 1rem; } header form, header form button { width: 100%; } main { width: calc(100% - .75rem); } section, .toolbar { border-radius: .75rem; padding: .8rem; } .toolbar { align-items: stretch; } .filters { display: grid; grid-template-columns: repeat(3, 1fr); } .filters label { justify-content: center; padding: .45rem .25rem; } .filters button { grid-column: 1 / -1; width: 100%; } .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .detail-card, .company-result { grid-template-columns: 1fr; align-items: stretch; } .detail-card .action-button, .company-result .action-button { width: 100%; } }
   </style>
 </head>
 <body>
   <header>
-    <div><h1>Identity review</h1><p id="session-status" aria-live="polite">Signed-in session active</p></div>
-    <form method="post" action="/admin/acessorias/logout"><button type="submit">Sign out</button></form>
+    <div><h1>Conciliação de empresas</h1><p id="session-status" aria-live="polite">Sessão administrativa ativa</p></div>
+    <form method="post" action="/admin/acessorias/logout"><button type="submit">Sair</button></form>
   </header>
   <main>
     <section class="toolbar" aria-labelledby="queue-heading">
       <div>
-        <h2 id="queue-heading">Identity queue</h2>
-        <p>Review server-projected contacts and summarized evidence.</p>
+        <h2 id="queue-heading">Fila de conciliação</h2>
+        <p>Escolha um contato, confira as evidências resumidas e confirme a empresa correta.</p>
       </div>
-      <div class="filters" role="group" aria-label="Queue filters">
-        <label><input type="radio" name="queue-state" value="candidate" checked> Candidate</label>
-        <label><input type="radio" name="queue-state" value="ambiguous"> Ambiguous</label>
-        <label><input type="radio" name="queue-state" value="unresolved"> Unresolved</label>
-        <button class="primary" id="refresh-queue" type="button">Refresh</button>
+      <div class="filters" role="group" aria-label="Filtros da fila">
+        <label><input type="radio" name="queue-state" value="candidate" checked> Candidatos</label>
+        <label><input type="radio" name="queue-state" value="ambiguous"> Ambíguos</label>
+        <label><input type="radio" name="queue-state" value="unresolved"> Sem solução</label>
+        <label><input type="radio" name="queue-state" value="confirmed"> Vínculos confirmados</label>
+        <button class="primary" id="refresh-queue" type="button">Atualizar</button>
       </div>
     </section>
     <p id="global-message" class="global-message status" role="alert" aria-live="polite"></p>
     <div class="workspace">
       <section id="identity-queue" aria-labelledby="queue-list-heading">
-        <h3 id="queue-list-heading">Contacts</h3>
-        <p id="queue-status" class="status" role="status" aria-live="polite">Loading queue…</p>
+        <div class="panel-heading"><h3 id="queue-list-heading">Contatos</h3><span class="panel-count">25 por página</span></div>
+        <form id="contact-search-form" class="search-form contact-search-form">
+          <label for="contact-query">Nome ou identificador
+            <input id="contact-query" name="query" type="search" maxlength="120" autocomplete="off">
+          </label>
+          <button class="primary" type="submit">Buscar</button>
+        </form>
+        <p id="queue-status" class="status" role="status" aria-live="polite">Carregando fila…</p>
         <ul id="queue-items" class="queue-list"></ul>
-        <div class="pagination"><button id="queue-next" type="button" hidden>Next page</button></div>
+        <div class="pagination"><button id="queue-next" type="button" hidden>Próxima página</button></div>
       </section>
       <section id="contact-detail" aria-labelledby="detail-heading">
-        <h3 id="detail-heading">Contact detail</h3>
-        <p id="detail-status" class="status" role="status" aria-live="polite">Select a contact to inspect its projection.</p>
+        <div class="panel-heading"><h3 id="detail-heading">Detalhe do contato</h3><span class="panel-count">Selecione à esquerda</span></div>
+        <p id="detail-status" class="status" role="status" aria-live="polite">Selecione um contato para começar.</p>
         <div id="detail-content"></div>
         <div id="review-actions" class="action-panel" aria-labelledby="review-actions-heading">
-          <h4 id="review-actions-heading" class="subheading">Review actions</h4>
-          <p id="selected-target" class="action-target" role="status" aria-live="polite">Select a contact before choosing an action.</p>
+          <h4 id="review-actions-heading" class="subheading">Ação rápida</h4>
+          <p id="selected-target" class="action-target" role="status" aria-live="polite">Selecione um contato e uma empresa para continuar.</p>
           <p id="action-status" class="status" role="status" aria-live="polite"></p>
           <div class="action-controls">
-            <button id="confirm-action" class="primary" type="button" disabled>Confirm selected company</button>
-            <button id="reject-action" class="danger" type="button" disabled>Reject selected link</button>
-            <button id="discover-action" type="button" disabled>Run deterministic discovery</button>
+            <button id="confirm-action" class="primary" type="button" disabled>Confirmar empresa</button>
+            <button id="reject-action" class="danger" type="button" disabled>Rejeitar vínculo</button>
+            <button id="discover-action" type="button" disabled>Refazer busca</button>
           </div>
         </div>
       </section>
       <section id="company-search" aria-labelledby="company-heading">
-        <h3 id="company-heading">Active company search</h3>
+        <div class="panel-heading"><h3 id="company-heading">Buscar empresa</h3><span class="panel-count">Somente ativas</span></div>
         <form id="company-search-form" class="search-form">
-          <label for="company-query">Search present and active companies
+          <label for="company-query">Nome ou identificador
             <input id="company-query" name="query" type="search" maxlength="120" autocomplete="off">
           </label>
-          <button class="primary" type="submit">Search</button>
+          <button class="primary" type="submit">Buscar</button>
         </form>
-        <p id="company-status" class="status" role="status" aria-live="polite">No search submitted.</p>
+        <p id="company-status" class="status" role="status" aria-live="polite">Digite para localizar uma empresa.</p>
         <ul id="company-results" class="company-list"></ul>
-        <div class="pagination"><button id="company-next" type="button" hidden>Next page</button></div>
+        <div class="pagination"><button id="company-next" type="button" hidden>Próxima página</button></div>
       </section>
     </div>
   </main>
   <dialog id="action-confirmation" aria-labelledby="action-confirmation-heading">
-    <h3 id="action-confirmation-heading">Confirm review action</h3>
+    <h3 id="action-confirmation-heading">Confirmar ação</h3>
     <p id="action-confirmation-text"></p>
     <div class="dialog-actions">
-      <button id="cancel-action" type="button">Cancel</button>
-      <button id="confirm-dialog-action" class="primary" type="button">Continue</button>
+      <button id="cancel-action" type="button">Cancelar</button>
+      <button id="confirm-dialog-action" class="primary" type="button">Continuar</button>
     </div>
   </dialog>
   <script>
@@ -409,6 +451,7 @@ def _protected_shell() -> str:
 
       const state = {
         queueState: "candidate",
+        queueQuery: "",
         queueProjection: null,
         queueRequest: 0,
         selectedContact: null,
@@ -481,18 +524,18 @@ def _protected_shell() -> str:
       }
 
       function errorText(error, resource) {
-        if (error.code === "session-expired") return "Your session expired. Sign in again.";
-        if (error.code === "timeout") return `${resource} timed out. Retry when ready.`;
-        if (error.code === "network") return `${resource} is unavailable. Check the connection and retry.`;
-        if (error.status === 404) return resource === "Contact" ? "The selected contact is no longer available." : `${resource} was not found.`;
-        if (error.status === 429) return `${resource} is rate limited. Retry shortly.`;
-        return `${resource} could not be loaded safely. Retry the read.`;
+        if (error.code === "session-expired") return "Sua sessão expirou. Entre novamente.";
+        if (error.code === "timeout") return `${resource} demorou demais. Tente novamente.`;
+        if (error.code === "network") return `${resource} está indisponível. Verifique a conexão.`;
+        if (error.status === 404) return resource === "Contato" ? "O contato selecionado não está mais disponível." : `${resource} não foi encontrado.`;
+        if (error.status === 429) return `${resource} está temporariamente limitado. Tente em instantes.`;
+        return `Não foi possível carregar ${resource.toLowerCase()} com segurança.`;
       }
 
       function retryButton(target, callback) {
         const button = document.createElement("button");
         button.type = "button";
-        button.textContent = "Retry";
+        button.textContent = "Tentar novamente";
         button.addEventListener("click", callback, { once: true });
         target.append(document.createTextNode(" "), button);
       }
@@ -505,13 +548,23 @@ def _protected_shell() -> str:
         return node;
       }
 
+      function stateLabel(value) {
+        return {
+          candidate: "Candidato",
+          ambiguous: "Ambíguo",
+          unresolved: "Sem solução",
+          confirmed: "Confirmado",
+          rejected: "Rejeitado",
+        }[value] || value;
+      }
+
       function renderQueue(projection) {
         state.queueProjection = projection;
         const list = element("queue-items");
         list.replaceChildren();
         if (!projection.items.length) {
-          addText(list, "Queue is empty for this filter.", "muted");
-          setStatus(queueStatus, "No contacts match this filter.");
+          addText(list, "Nenhum contato nesta fila.", "muted");
+          setStatus(queueStatus, "Nenhum contato corresponde a este filtro.");
         } else {
           projection.items.forEach((item) => {
             const row = document.createElement("li");
@@ -519,15 +572,23 @@ def _protected_shell() -> str:
             button.type = "button";
             button.className = "queue-item";
             button.setAttribute("aria-pressed", String(item.digisac_contact_external_id === state.selectedContact));
-            addText(button, item.display_name || "Unnamed contact");
-            addText(button, item.digisac_contact_external_id, "muted");
-            addText(button, `${item.candidate_company_count} candidate compan${item.candidate_company_count === 1 ? "y" : "ies"}`, "muted");
-            addText(button, item.state, "state");
+            button.setAttribute("aria-label", `Abrir ${item.display_name || "contato sem nome"}`);
+            addText(button, item.display_name || "Contato sem nome", "queue-name");
+            addText(button, stateLabel(item.state), `state state-${item.state}`);
+            if (state.queueState === "confirmed") {
+              const confirmedLinks = item.links.filter((link) => link.state === "confirmed");
+              addText(button, `${item.digisac_contact_external_id} · ${confirmedLinks.length} ${confirmedLinks.length === 1 ? "empresa vinculada" : "empresas vinculadas"}`, "queue-meta");
+              if (confirmedLinks.length) {
+                addText(button, `Empresas vinculadas: ${confirmedLinks.map((link) => link.display_name || link.acessorias_company_external_id).join(" · ")}`, "queue-companies");
+              }
+            } else {
+              addText(button, `${item.digisac_contact_external_id} · ${item.candidate_company_count} ${item.candidate_company_count === 1 ? "empresa candidata" : "empresas candidatas"}`, "queue-meta");
+            }
             button.addEventListener("click", () => selectContact(item.digisac_contact_external_id));
             row.append(button);
             list.append(row);
           });
-          setStatus(queueStatus, `${projection.items.length} contact${projection.items.length === 1 ? "" : "s"} loaded.`);
+          setStatus(queueStatus, `${projection.items.length} ${projection.items.length === 1 ? "contato carregado" : "contatos carregados"}.`);
         }
         const next = element("queue-next");
         next.hidden = !projection.next_cursor;
@@ -537,16 +598,18 @@ def _protected_shell() -> str:
       async function loadQueue(cursor = null) {
         const request = ++state.queueRequest;
         const filter = state.queueState;
-        setStatus(queueStatus, "Loading queue…");
+        const query = state.queueQuery;
+        setStatus(queueStatus, "Carregando fila…");
         const params = new URLSearchParams({ state: filter, limit: "25" });
+        if (query) params.set("query", query);
         if (cursor) params.set("cursor", cursor);
         try {
           const projection = await readJSON(`/admin/acessorias/ui/api/identity-links?${params.toString()}`);
-          if (request !== state.queueRequest || filter !== state.queueState) return;
+          if (request !== state.queueRequest || filter !== state.queueState || query !== state.queueQuery) return;
           renderQueue(projection);
         } catch (error) {
-          if (request !== state.queueRequest || filter !== state.queueState) return;
-          setStatus(queueStatus, errorText(error, "Queue"), "error");
+          if (request !== state.queueRequest || filter !== state.queueState || query !== state.queueQuery) return;
+          setStatus(queueStatus, errorText(error, "Fila"), "error");
           retryButton(queueStatus, () => loadQueue(cursor));
         }
       }
@@ -567,52 +630,64 @@ def _protected_shell() -> str:
         content.replaceChildren();
         const grid = document.createElement("dl");
         grid.className = "detail-grid";
-        addField(grid, "Contact", projection.display_name || "Unnamed contact");
-        addField(grid, "External ID", projection.digisac_contact_external_id);
-        addField(grid, "State", projection.state);
-        addField(grid, "Group", projection.is_group === true ? "Yes" : projection.is_group === false ? "No" : "Not specified");
-        addField(grid, "Candidate companies", String(projection.candidate_company_count));
+        addField(grid, "Contato", projection.display_name || "Contato sem nome");
+        addField(grid, "Número", projection.contact_number || "Não informado");
+        addField(grid, "Identificador", projection.digisac_contact_external_id);
+        addField(grid, "Situação", stateLabel(projection.state));
+        addField(grid, "Grupo", projection.is_group === true ? "Sim" : projection.is_group === false ? "Não" : "Não informado");
+        addField(grid, "Empresas candidatas", String(projection.candidate_company_count));
         content.append(grid);
 
         const sections = [
-          ["Links", projection.links, (link) => `${link.display_name} · ${link.state} · ${link.acessorias_company_external_id}`],
-          ["Evidence summaries", projection.evidence, (item) => `${item.evidence_type} · ${item.count} observed · ${item.latest_observed_at}`],
-          ["History", projection.transitions, (item) => `${item.to_state} · ${item.reason} · ${item.created_at}`],
-          ["Candidate companies", projection.candidate_companies, (item) => `${item.display_name} · ${item.available === true ? "available" : "unavailable"}`],
+          { key: "links", heading: "Vínculos encontrados", empty: "Nenhum vínculo registrado.", items: projection.links, formatter: (link) => `${link.display_name} · ${stateLabel(link.state)} · ${link.acessorias_company_external_id}` },
+          { key: "evidence", heading: "Evidências resumidas", empty: "Nenhuma evidência registrada.", items: projection.evidence, formatter: (item) => `${item.evidence_type} · ${item.count} ${item.count === 1 ? "observação" : "observações"} · ${item.latest_observed_at}` },
+          { key: "history", heading: "Histórico", empty: "Nenhuma mudança registrada.", items: projection.transitions, formatter: (item) => `${stateLabel(item.to_state)} · ${item.reason} · ${item.created_at}` },
+          { key: "companies", heading: "Empresas candidatas", empty: "Nenhuma empresa candidata disponível.", items: projection.candidate_companies, formatter: (item) => `${item.display_name} · ${item.available === true ? "disponível" : "indisponível"}` },
         ];
-        sections.forEach(([heading, items, formatter]) => {
-          const title = document.createElement("h4");
-          title.className = "subheading";
-          title.textContent = heading;
-          content.append(title);
+        sections.forEach(({ key, heading, empty, items, formatter }) => {
+          const expandable = key === "evidence" || key === "history";
+          const sectionContent = expandable ? document.createElement("details") : content;
+          if (expandable) {
+            sectionContent.className = "extra-details";
+            const summary = document.createElement("summary");
+            summary.className = "subheading";
+            summary.textContent = heading;
+            sectionContent.append(summary);
+          } else {
+            const title = document.createElement("h4");
+            title.className = "subheading";
+            title.textContent = heading;
+            content.append(title);
+          }
           const list = document.createElement("ul");
           list.className = "detail-list";
-          if (!items.length) addText(list, `No ${heading.toLowerCase()} recorded.`, "muted");
+          if (!items.length) addText(list, empty, "muted");
           items.forEach((item) => {
             const row = document.createElement("li");
             row.className = "detail-card";
-            row.textContent = formatter(item);
-            if (heading === "Links") {
+            addText(row, formatter(item), "detail-card-text");
+            if (key === "links") {
               const button = document.createElement("button");
               button.type = "button";
               button.className = "action-button danger";
-              button.textContent = "Select for rejection";
+              button.textContent = state.selectedLinkExternalId === item.acessorias_company_external_id ? "Selecionado" : "Rejeitar";
               button.disabled = state.actionInFlight || state.pendingAction !== null;
               button.addEventListener("click", () => selectLink(item));
               row.append(button);
             }
-            if (heading === "Candidate companies" && item.available === true) {
+            if (key === "companies" && item.available === true) {
               const button = document.createElement("button");
               button.type = "button";
               button.className = "action-button";
-              button.textContent = "Select for confirmation";
+              button.textContent = state.selectedCompanyExternalId === item.acessorias_company_external_id ? "Selecionada" : "Selecionar";
               button.disabled = state.actionInFlight || state.pendingAction !== null;
               button.addEventListener("click", () => selectCompany(item));
               row.append(button);
             }
             list.append(row);
           });
-          content.append(list);
+          sectionContent.append(list);
+          if (expandable) content.append(sectionContent);
         });
         updateActionPanel();
       }
@@ -631,12 +706,12 @@ def _protected_shell() -> str:
           setStatus(actionStatus, "");
         }
         const request = ++state.detailRequest;
-        setStatus(detailStatus, "Loading contact detail…");
+        setStatus(detailStatus, "Carregando detalhe do contato…");
         try {
           const projection = await readJSON(`/admin/acessorias/ui/api/contacts/${encodeURIComponent(contactId)}/identity`);
           if (request !== state.detailRequest || contactId !== state.selectedContact) return;
           renderDetail(projection);
-          setStatus(detailStatus, "Contact detail loaded.", "success");
+          setStatus(detailStatus, "Detalhe carregado.", "success");
           if (state.queueProjection) renderQueue(state.queueProjection);
         } catch (error) {
           if (request !== state.detailRequest || contactId !== state.selectedContact) return;
@@ -644,7 +719,7 @@ def _protected_shell() -> str:
             state.selectedContact = null;
             element("detail-content").replaceChildren();
           }
-          setStatus(detailStatus, errorText(error, "Contact"), "error");
+          setStatus(detailStatus, errorText(error, "Contato"), "error");
           retryButton(detailStatus, () => selectContact(contactId));
         }
       }
@@ -655,24 +730,27 @@ def _protected_shell() -> str:
         list.replaceChildren();
         const visible = projection.items.filter((item) => item.is_present === true && item.is_active === true && item.available === true);
         if (!visible.length) {
-          addText(list, "No present and active companies found.", "muted");
-          setStatus(companyStatus, "No companies match this search.");
+          addText(list, "Nenhuma empresa ativa encontrada.", "muted");
+          setStatus(companyStatus, "Nenhuma empresa corresponde à busca.");
         } else {
           visible.forEach((item) => {
             const row = document.createElement("li");
             row.className = "company-result";
-            addText(row, item.display_name);
-            addText(row, item.acessorias_company_external_id, "muted");
+            const company = document.createElement("span");
+            company.className = "company-result__main";
+            addText(company, item.display_name, "company-result__name");
+            addText(company, item.acessorias_company_external_id, "company-result__id");
+            row.append(company);
             const button = document.createElement("button");
             button.type = "button";
             button.className = "action-button";
-            button.textContent = state.selectedCompanyExternalId === item.acessorias_company_external_id ? "Selected for confirmation" : "Select for confirmation";
+            button.textContent = state.selectedCompanyExternalId === item.acessorias_company_external_id ? "Selecionada" : "Selecionar";
             button.disabled = state.actionInFlight || state.pendingAction !== null;
             button.addEventListener("click", () => selectCompany(item));
             row.append(button);
             list.append(row);
           });
-          setStatus(companyStatus, `${visible.length} active compan${visible.length === 1 ? "y" : "ies"} found.`);
+          setStatus(companyStatus, `${visible.length} ${visible.length === 1 ? "empresa ativa encontrada" : "empresas ativas encontradas"}.`);
         }
         updateActionPanel();
         const next = element("company-next");
@@ -683,7 +761,7 @@ def _protected_shell() -> str:
       async function loadCompanies(cursor = null) {
         const request = ++state.companyRequest;
         const query = state.companyQuery;
-        setStatus(companyStatus, "Loading companies…");
+        setStatus(companyStatus, "Buscando empresas…");
         const params = new URLSearchParams({ limit: "25" });
         if (query) params.set("query", query);
         if (cursor) params.set("cursor", cursor);
@@ -693,7 +771,7 @@ def _protected_shell() -> str:
           renderCompanies(projection);
         } catch (error) {
           if (request !== state.companyRequest || query !== state.companyQuery) return;
-          setStatus(companyStatus, errorText(error, "Company search"), "error");
+          setStatus(companyStatus, errorText(error, "Busca de empresas"), "error");
           retryButton(companyStatus, () => loadCompanies(cursor));
         }
       }
@@ -736,13 +814,13 @@ def _protected_shell() -> str:
         rejectButton.disabled = blocked || !contactReady || !link;
         discoverButton.disabled = blocked || !contactReady;
         if (!contactReady) {
-          selectedTarget.textContent = "Select a contact before choosing an action.";
+          selectedTarget.textContent = "Selecione um contato e uma empresa para continuar.";
         } else if (company) {
-          selectedTarget.textContent = `Confirmation target: ${company.acessorias_company_external_id}`;
+          selectedTarget.textContent = `Empresa selecionada: ${company.display_name || company.acessorias_company_external_id}`;
         } else if (link) {
-          selectedTarget.textContent = `Rejection target: ${link.acessorias_company_external_id}`;
+          selectedTarget.textContent = `Vínculo selecionado para rejeição: ${link.acessorias_company_external_id}`;
         } else {
-          selectedTarget.textContent = "Choose an active company to confirm or a link to reject.";
+          selectedTarget.textContent = "Selecione uma empresa ativa para confirmar ou um vínculo para rejeitar.";
         }
       }
 
@@ -756,9 +834,9 @@ def _protected_shell() -> str:
         ) return;
         state.selectedCompanyExternalId = item.acessorias_company_external_id;
         state.selectedLinkExternalId = null;
-        setStatus(actionStatus, `Company ${item.acessorias_company_external_id} selected for confirmation.`);
+        setStatus(actionStatus, "Seleção atualizada.", "success");
         updateActionPanel();
-        renderCompanies(state.companyProjection || { items: [], next_cursor: null });
+        if (state.companyProjection) renderCompanies(state.companyProjection);
         if (state.detailProjection) renderDetail(state.detailProjection);
       }
 
@@ -769,7 +847,7 @@ def _protected_shell() -> str:
         )) return;
         state.selectedLinkExternalId = item.acessorias_company_external_id;
         state.selectedCompanyExternalId = null;
-        setStatus(actionStatus, `Link ${item.acessorias_company_external_id} selected for rejection.`);
+        setStatus(actionStatus, "Vínculo selecionado.", "success");
         updateActionPanel();
         renderDetail(state.detailProjection);
       }
@@ -783,17 +861,17 @@ def _protected_shell() -> str:
 
       function openActionConfirmation(kind) {
         if (!currentContactReady()) {
-          setStatus(actionStatus, "Select a current contact before submitting an action.", "error");
+          setStatus(actionStatus, "Selecione um contato atual antes de enviar uma ação.", "error");
           return;
         }
         const company = selectedCompany();
         const link = selectedLink();
         if (kind === "confirm" && !company) {
-          setStatus(actionStatus, "Select a present and active company before confirming.", "error");
+          setStatus(actionStatus, "Selecione uma empresa presente e ativa antes de confirmar.", "error");
           return;
         }
         if (kind === "reject" && !link) {
-          setStatus(actionStatus, "Select an existing link before rejecting it.", "error");
+          setStatus(actionStatus, "Selecione um vínculo existente antes de rejeitá-lo.", "error");
           return;
         }
         state.confirmationAction = {
@@ -802,9 +880,9 @@ def _protected_shell() -> str:
           companyId: kind === "confirm" ? company.acessorias_company_external_id : kind === "reject" ? link.acessorias_company_external_id : null,
         };
         const target = kind === "discover"
-          ? `contact ${state.selectedContact}`
-          : `${kind === "confirm" ? "company" : "link"} ${kind === "confirm" ? company.acessorias_company_external_id : link.acessorias_company_external_id} for contact ${state.selectedContact}`;
-        actionDialogText.textContent = `Review this explicit action for ${target}.`;
+          ? `o contato ${state.selectedContact}`
+          : `${kind === "confirm" ? "a empresa" : "o vínculo"} ${kind === "confirm" ? company.acessorias_company_external_id : link.acessorias_company_external_id} do contato ${state.selectedContact}`;
+        actionDialogText.textContent = `Confirme esta ação explícita para ${target}.`;
         if (typeof actionDialog.showModal === "function") actionDialog.showModal();
         else actionDialog.setAttribute("open", "");
         element("confirm-dialog-action").focus();
@@ -844,16 +922,16 @@ def _protected_shell() -> str:
       }
 
       function actionErrorText(error) {
-        if (error.code === "session-expired") return "Your session expired. Sign in again.";
-        if (error.code === "timeout") return "The action timed out. Retry with the same key if you want to check it again.";
-        if (error.code === "network") return "The action could not reach the server. Retry with the same key if you want to check it again.";
-        if (error.code === "empty") return "The action returned no safe result. Retry with the same key if you want to check it again.";
-        if (error.status === 404) return "The selected contact or link is stale. Refreshing its detail is required.";
-        if (error.status === 409) return "The action conflicts with a newer decision. Reload the contact detail before trying again.";
-        if (error.status === 422) return "The selected company is no longer available. Choose another active company.";
-        if (error.status === 429) return "The action is rate limited. Retry with the same key shortly.";
-        if (error.status >= 500) return "The server did not confirm the action. Retry with the same key if you want to check it again.";
-        return "The action could not be completed safely.";
+        if (error.code === "session-expired") return "Sua sessão expirou. Entre novamente.";
+        if (error.code === "timeout") return "A ação demorou demais. Tente novamente com a mesma chave para verificar o resultado.";
+        if (error.code === "network") return "A ação não alcançou o servidor. Tente novamente com a mesma chave.";
+        if (error.code === "empty") return "A ação não retornou um resultado seguro. Tente novamente com a mesma chave.";
+        if (error.status === 404) return "O contato ou vínculo ficou desatualizado. Atualize o detalhe antes de tentar.";
+        if (error.status === 409) return "A ação conflita com uma decisão mais recente. Recarregue o detalhe.";
+        if (error.status === 422) return "A empresa selecionada não está mais disponível. Escolha outra ativa.";
+        if (error.status === 429) return "A ação foi limitada temporariamente. Tente novamente com a mesma chave.";
+        if (error.status >= 500) return "O servidor não confirmou a ação. Tente novamente com a mesma chave para verificar.";
+        return "A ação não pôde ser concluída com segurança.";
       }
 
       function isUncertainActionError(error) {
@@ -870,11 +948,11 @@ def _protected_shell() -> str:
         const replayed = outcome.status === 200 && action.kind !== "discover";
         if (action.kind === "discover") {
           const count = Number.isSafeInteger(result.matched_company_count) ? result.matched_company_count : 0;
-          setStatus(actionStatus, `Discovery completed for contact ${action.contactId}; ${count} matching compan${count === 1 ? "y" : "ies"} reported.`, "success");
+          setStatus(actionStatus, `Busca refeita para ${action.contactId}; ${count} ${count === 1 ? "empresa correspondente encontrada" : "empresas correspondentes encontradas"}.`, "success");
         } else {
           const companyId = result.acessorias_company_external_id || action.companyId;
-          const actionName = action.kind === "confirm" ? "Confirmation" : "Rejection";
-          setStatus(actionStatus, `${actionName} ${replayed ? "was already applied" : "completed"} for company ${companyId}${replayed ? " (replay)" : ""}.`, "success");
+          const actionName = action.kind === "confirm" ? "Confirmação" : "Rejeição";
+          setStatus(actionStatus, `${actionName} ${replayed ? "já estava aplicada" : "concluída"} para a empresa ${companyId}${replayed ? " (replay)" : ""}.`, "success");
         }
       }
 
@@ -908,7 +986,7 @@ def _protected_shell() -> str:
         const request = ++state.actionRequest;
         state.actionInFlight = true;
         updateActionPanel();
-        setStatus(actionStatus, "Submitting action…");
+        setStatus(actionStatus, "Enviando ação…");
         const requestDetails = actionPathAndBody(action);
         try {
           const outcome = await commandJSON(requestDetails.path, requestDetails.body);
@@ -945,14 +1023,14 @@ def _protected_shell() -> str:
         const selection = state.confirmationAction;
         closeActionDialog();
         if (!selection || state.selectedContact !== selection.contactId || !currentContactReady()) {
-          setStatus(actionStatus, "The selected contact changed before confirmation. Review it again.", "error");
+          setStatus(actionStatus, "O contato mudou antes da confirmação. Revise novamente.", "error");
           return;
         }
         if (
           (selection.kind === "confirm" && (!selectedCompany() || selectedCompany().acessorias_company_external_id !== selection.companyId))
           || (selection.kind === "reject" && (!selectedLink() || selectedLink().acessorias_company_external_id !== selection.companyId))
         ) {
-          setStatus(actionStatus, "The selected target changed before confirmation. Review it again.", "error");
+          setStatus(actionStatus, "O alvo mudou antes da confirmação. Revise novamente.", "error");
           return;
         }
         const action = {
@@ -972,6 +1050,12 @@ def _protected_shell() -> str:
           loadQueue();
         });
       });
+      element("contact-search-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        state.queueQuery = element("contact-query").value.trim();
+        state.queueProjection = null;
+        loadQueue();
+      });
       element("refresh-queue").addEventListener("click", () => loadQueue());
       element("confirm-action").addEventListener("click", () => openActionConfirmation("confirm"));
       element("reject-action").addEventListener("click", () => openActionConfirmation("reject"));
@@ -984,7 +1068,7 @@ def _protected_shell() -> str:
         state.companyProjection = null;
         loadCompanies();
       });
-      setStatus(globalMessage, "Reads are session-protected and use server projections.");
+      setStatus(globalMessage, "Dados protegidos pela sessão; a tela usa projeções seguras do servidor.");
       updateActionPanel();
       loadQueue();
     })();
@@ -1086,15 +1170,20 @@ async def ui_identity_link_list(
     response: Response,
     context: Annotated[AdminUIContext, Depends(require_admin_ui_context)],
     state: str = "candidate",
+    query: str | None = None,
     cursor: str | None = None,
     limit: str = "25",
 ) -> IdentityLinkListResponse:
     selected_state = _ui_state(state)
+    selected_query = _ui_query(query)
     selected_limit = _ui_limit(limit)
-    parameters = {"state": selected_state}
+    parameters = {"state": selected_state, "query": selected_query}
     after = _ui_after(cursor, scope="identity-links", parameters=parameters)
     projection = await context.list_identity_links(
-        state=selected_state, after=after, limit=selected_limit
+        state=selected_state,
+        query=selected_query,
+        after=after,
+        limit=selected_limit,
     )
     next_after = projection["next_after"]
     next_cursor = (
@@ -1109,18 +1198,18 @@ async def ui_identity_link_list(
 @admin_ui_router.get(
     "/ui/api/contacts/{digisac_contact_external_id}/identity",
     include_in_schema=False,
-    response_model=IdentityContactDetail,
+    response_model=UIIdentityContactDetail,
 )
 async def ui_identity_contact_detail(
     digisac_contact_external_id: str,
     response: Response,
     context: Annotated[AdminUIContext, Depends(require_admin_ui_context)],
-) -> IdentityContactDetail:
+) -> UIIdentityContactDetail:
     projection = await context.get_identity_contact(digisac_contact_external_id)
     if projection is None:
         raise _ui_http_error(404, "DigiSac contact not found")
     response.headers["Cache-Control"] = "no-store"
-    return IdentityContactDetail.model_validate(projection)
+    return UIIdentityContactDetail.model_validate(projection)
 
 
 @admin_ui_router.get(
@@ -1179,7 +1268,7 @@ async def ui_identity_link_confirm(
 
 
 @admin_ui_router.post(
-    "/ui/api/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject",
+    "/ui/api/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id:path}/reject",
     include_in_schema=False,
     response_model=IdentityLinkCommandResponse,
     status_code=status.HTTP_201_CREATED,

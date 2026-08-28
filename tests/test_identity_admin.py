@@ -134,18 +134,16 @@ def test_admin_identity_commands_validate_and_return_new_or_replayed_results(
         "updated_at": "2026-08-21T12:00:00Z",
     }
     confirm_calls: list[tuple[str, str, str, str]] = []
+    reject_calls: list[tuple[str, str, str, str]] = []
 
     async def fake_confirm(contact: str, company: str, *, reason: str, idempotency_key: str) -> dict[str, Any]:
         confirm_calls.append((contact, company, reason, idempotency_key))
         return {"replayed": len(confirm_calls) > 1, "result": command_result}
 
     async def fake_reject(contact: str, company: str, *, reason: str, idempotency_key: str) -> dict[str, Any]:
-        assert (contact, company, reason, idempotency_key) == (
-            "contact-external",
-            "company-external",
-            "operator_correction",
-            "reject-key",
-        )
+        reject_calls.append((contact, company, reason, idempotency_key))
+        assert contact == "contact-external"
+        assert reason == "operator_correction"
         return {
             "replayed": False,
             "result": {**command_result, "state": "rejected", "source": "admin_api", "confirmation_source": None, "confirmed_at": None, "rejection_reason": "operator_correction"},
@@ -174,6 +172,11 @@ def test_admin_identity_commands_validate_and_return_new_or_replayed_results(
         json={"reason": "operator_correction", "idempotency_key": "reject-key"},
         headers=headers,
     )
+    rejected_with_slash = admin_client.post(
+        "/admin/acessorias/contacts/contact-external/identity-links/42.633.226/0001-70/reject",
+        json={"reason": "operator_correction", "idempotency_key": "reject-slash-key"},
+        headers=headers,
+    )
     invalid = admin_client.post(
         "/admin/acessorias/contacts/contact-external/identity-links/confirm",
         json={"reason": "contains spaces", "idempotency_key": "opaque-confirm-key"},
@@ -183,12 +186,17 @@ def test_admin_identity_commands_validate_and_return_new_or_replayed_results(
     assert created.status_code == 201
     assert replay.status_code == 200
     assert rejected.status_code == 201
+    assert rejected_with_slash.status_code == 201
     assert invalid.status_code == 400
     assert invalid.json() == {"detail": "Invalid administrative command body"}
     assert "opaque-confirm-key" not in created.text
     assert confirm_calls == [
         ("contact-external", "company-external", "operator_verified", "opaque-confirm-key"),
         ("contact-external", "company-external", "operator_verified", "opaque-confirm-key"),
+    ]
+    assert reject_calls == [
+        ("contact-external", "company-external", "operator_correction", "reject-key"),
+        ("contact-external", "42.633.226/0001-70", "operator_correction", "reject-slash-key"),
     ]
 
 
@@ -404,7 +412,7 @@ async def test_read_projections_are_safe_and_use_existing_directory_state() -> N
         )
 
     candidate_page = await list_identity_link_projection(
-        state="candidate", after=None, limit=100
+        state="candidate", query="Operator-visible", after=None, limit=100
     )
     assert [item["digisac_contact_external_id"] for item in candidate_page["items"]] == [
         "admin-contact-candidate"
@@ -414,10 +422,20 @@ async def test_read_projections_are_safe_and_use_existing_directory_state() -> N
     assert "private@example.test" not in serialized
     assert "exact_phone" in serialized
     assert "Visible Active" in serialized
+    empty_search_page = await list_identity_link_projection(
+        state="candidate", query="does-not-match", after=None, limit=100
+    )
+    assert empty_search_page["items"] == []
     candidate_detail = await get_identity_contact_projection("admin-contact-candidate")
     assert candidate_detail is not None
     assert candidate_detail["state"] == "candidate"
     assert candidate_detail["transitions"][0]["reason"] == "discovery"
+    assert "contact_number" not in candidate_detail
+    ui_detail = await get_identity_contact_projection(
+        "admin-contact-candidate", include_contact_number=True
+    )
+    assert ui_detail is not None
+    assert ui_detail["contact_number"] == "5511998765432"
 
     unresolved_page = await list_identity_link_projection(
         state="unresolved", after=None, limit=100

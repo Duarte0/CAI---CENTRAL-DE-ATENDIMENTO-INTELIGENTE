@@ -1,5 +1,6 @@
 # src/core/config.py
 from typing import Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     database_statement_timeout_ms: int = 15_000
     database_lock_timeout_ms: int = 3_000
     database_idle_transaction_timeout_ms: int = 30_000
+    app_timezone: str = "America/Sao_Paulo"
 
     # Application
     debug: bool = False
@@ -116,6 +118,18 @@ class Settings(BaseSettings):
     def normalize_debug(cls, value: Any) -> Any:
         if isinstance(value, str) and value.lower() in {"release", "production"}:
             return False
+        return value
+
+    @field_validator("app_timezone")
+    @classmethod
+    def validate_app_timezone(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("APP_TIMEZONE must not be empty")
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"APP_TIMEZONE is not a valid IANA timezone: {value}") from exc
         return value
 
     @field_validator("admin_api_token")

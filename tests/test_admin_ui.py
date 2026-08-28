@@ -99,7 +99,7 @@ def test_login_protects_shell_with_fixed_signed_cookie(ui_client: TestClient) ->
     assert shell.status_code == 200
     assert shell.headers["cache-control"] == "no-store"
     assert "set-cookie" not in shell.headers
-    assert "Identity review" in shell.text
+    assert "Conciliação de empresas" in shell.text
     assert "ADMIN_API_TOKEN" not in shell.text
     assert "https://" not in shell.text
     assert "http://" not in shell.text
@@ -113,12 +113,21 @@ def test_ui_read_workspace_has_local_accessible_contract(
     shell = ui_client.get("/admin/acessorias/ui")
 
     assert shell.status_code == 200
+    assert '<html lang="pt-BR">' in shell.text
+    assert "Fila de conciliação" in shell.text
+    assert "Confirmar empresa" in shell.text
     assert 'id="identity-queue"' in shell.text
+    assert 'id="contact-search-form"' in shell.text
+    assert 'id="contact-query"' in shell.text
     assert 'value="candidate"' in shell.text
     assert 'value="ambiguous"' in shell.text
     assert 'value="unresolved"' in shell.text
+    assert 'value="confirmed"' in shell.text
+    assert "Vínculos confirmados" in shell.text
     assert 'id="company-search"' in shell.text
     assert 'aria-live="polite"' in shell.text
+    assert "max-height: min(32rem, 50vh)" in shell.text
+    assert "overflow-y: auto" in shell.text
     assert "/admin/acessorias/ui/api/identity-links" in shell.text
     assert "/admin/acessorias/ui/api/companies" in shell.text
     assert "localStorage" not in shell.text
@@ -215,6 +224,10 @@ def test_ui_action_bridge_uses_fixed_reasons_and_durable_replay(
         "/admin/acessorias/ui/api/contacts/contact-1/identity-links/company-1/reject",
         json={"idempotency_key": "key-2"},
     )
+    rejected_with_slash = ui_client.post(
+        "/admin/acessorias/ui/api/contacts/contact-1/identity-links/42.633.226/0001-70/reject",
+        json={"idempotency_key": "key-2-slash"},
+    )
     discovered = ui_client.post(
         "/admin/acessorias/ui/api/contacts/contact-1/identity-discovery",
         json={"idempotency_key": "key-3"},
@@ -223,6 +236,7 @@ def test_ui_action_bridge_uses_fixed_reasons_and_durable_replay(
     assert created.status_code == 201
     assert replay.status_code == 200
     assert rejected.status_code == 201
+    assert rejected_with_slash.status_code == 201
     assert discovered.status_code == 200
     assert all(
         response.headers["cache-control"] == "no-store"
@@ -232,6 +246,7 @@ def test_ui_action_bridge_uses_fixed_reasons_and_durable_replay(
         ("confirm", "contact-1", "company-1", "operator_verified", "key-1"),
         ("confirm", "contact-1", "company-1", "operator_verified", "key-1"),
         ("reject", "contact-1", "company-1", "operator_rejected", "key-2"),
+        ("reject", "contact-1", "42.633.226/0001-70", "operator_rejected", "key-2-slash"),
         ("discovery", "contact-1", "key-3"),
     ]
     assert "key-1" not in created.text
@@ -325,7 +340,7 @@ def test_ui_action_shell_exposes_explicit_local_action_contract(
     assert "/identity-discovery" in shell.text
     assert "crypto.randomUUID" in shell.text
     assert "isUncertainActionError" in shell.text
-    assert "Retry with the same key" in shell.text
+    assert "mesma chave" in shell.text
     assert "localStorage" not in shell.text
     assert "sessionStorage" not in shell.text
     assert "ADMIN_API_TOKEN" not in shell.text
@@ -365,37 +380,57 @@ def test_ui_read_bridge_requires_session_and_preserves_opaque_cursor(
     _login(ui_client)
     first = ui_client.get(
         "/admin/acessorias/ui/api/identity-links",
-        params={"state": "candidate", "limit": "1"},
+        params={"state": "candidate", "query": "Ana", "limit": "1"},
     )
     assert first.status_code == 200
     cursor = first.json()["next_cursor"]
     assert isinstance(cursor, str)
-    assert calls == [{"state": "candidate", "after": None, "limit": 1}]
+    assert calls == [{"state": "candidate", "query": "Ana", "after": None, "limit": 1}]
 
     second = ui_client.get(
         "/admin/acessorias/ui/api/identity-links",
-        params={"state": "candidate", "limit": "1", "cursor": cursor},
+        params={"state": "candidate", "query": "Ana", "limit": "1", "cursor": cursor},
     )
     assert second.status_code == 200
-    assert calls[1] == {"state": "candidate", "after": ("contact-1", 1), "limit": 1}
-    invalid = ui_client.get(
+    assert calls[1] == {
+        "state": "candidate",
+        "query": "Ana",
+        "after": ("contact-1", 1),
+        "limit": 1,
+    }
+    confirmed = ui_client.get(
         "/admin/acessorias/ui/api/identity-links",
         params={"state": "confirmed", "limit": "1"},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.headers["cache-control"] == "no-store"
+    assert calls[2] == {
+        "state": "confirmed",
+        "query": None,
+        "after": None,
+        "limit": 1,
+    }
+
+    invalid = ui_client.get(
+        "/admin/acessorias/ui/api/identity-links",
+        params={"state": "rejected", "limit": "1"},
     )
     assert invalid.status_code == 400
     assert invalid.headers["cache-control"] == "no-store"
 
 
-def test_ui_read_bridge_returns_sanitized_detail_and_active_companies(
+def test_ui_read_bridge_returns_authenticated_detail_and_active_companies(
     ui_client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_contact(contact: str) -> dict[str, object] | None:
+    async def fake_contact(contact: str, **kwargs: object) -> dict[str, object] | None:
         if contact == "missing":
             return None
+        assert kwargs == {"include_contact_number": True}
         return {
             "digisac_contact_external_id": "contact-1",
             "display_name": "Safe display name",
+            "contact_number": "5511998765432",
             "is_group": True,
             "state": "unresolved",
             "candidate_company_count": 0,
@@ -432,6 +467,7 @@ def test_ui_read_bridge_returns_sanitized_detail_and_active_companies(
 
     assert detail.status_code == 200
     assert detail.json()["is_group"] is True
+    assert detail.json()["contact_number"] == "5511998765432"
     assert companies.status_code == 200
     assert companies.json() == {
         "items": [
@@ -489,7 +525,7 @@ def test_expired_cookie_fails_closed_without_sliding_expiry(
     assert response.status_code == 401
     assert response.headers["cache-control"] == "no-store"
     assert "Administrative review workspace" not in response.text
-    assert "Invalid credentials" in response.text
+    assert "Credenciais inválidas" in response.text
 
 
 def test_logout_is_repeatable_and_clears_session(ui_client: TestClient) -> None:

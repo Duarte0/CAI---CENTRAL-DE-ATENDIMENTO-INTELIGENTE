@@ -60,3 +60,5 @@ Thumbs.db
 
 # ---------- Docker ----------
 *.pid
+
+backups/

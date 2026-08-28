@@ -73,6 +73,7 @@ def _evidence_projection(row: Mapping[str, Any]) -> dict[str, Any]:
 def _list_identity_link_projection_sync(
     *,
     state: str | None,
+    query: str | None,
     after: tuple[str, int] | None,
     limit: int,
 ) -> dict[str, Any]:
@@ -89,6 +90,16 @@ def _list_identity_link_projection_sync(
             "OR (%s = 'rejected' AND classified.rejected_count > 0))"
         )
         parameters.extend((state, state))
+    if query:
+        conditions.append(
+            "(classified.external_id ILIKE %s OR "
+            "COALESCE(NULLIF(BTRIM(classified.name), ''), "
+            "NULLIF(BTRIM(classified.alternative_name), ''), "
+            "NULLIF(BTRIM(classified.internal_name), ''), "
+            "classified.external_id) ILIKE %s)"
+        )
+        pattern = f"%{query}%"
+        parameters.extend((pattern, pattern))
     if after is not None:
         conditions.append("(classified.external_id, classified.contact_id) > (%s, %s)")
         parameters.extend(after)
@@ -236,6 +247,7 @@ def _list_identity_link_projection_sync(
 async def list_identity_link_projection(
     *,
     state: str | None,
+    query: str | None = None,
     after: tuple[str, int] | None,
     limit: int,
 ) -> dict[str, Any]:
@@ -243,6 +255,7 @@ async def list_identity_link_projection(
     return await asyncio.to_thread(
         _list_identity_link_projection_sync,
         state=state,
+        query=query,
         after=after,
         limit=limit,
     )
@@ -250,13 +263,21 @@ async def list_identity_link_projection(
 
 def _get_identity_contact_projection_sync(
     external_id: str,
+    *,
+    include_contact_number: bool,
 ) -> dict[str, Any] | None:
     pool = get_database_pool()
     with pool.connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
+            contact_columns = (
+                "id, external_id, name, alternative_name, internal_name, "
+                "raw_number, is_group"
+                if include_contact_number
+                else "id, external_id, name, alternative_name, internal_name, is_group"
+            )
             contact = cursor.execute(
-                """
-                SELECT id, external_id, name, alternative_name, internal_name, is_group
+                f"""
+                SELECT {contact_columns}
                 FROM digisac_contacts
                 WHERE external_id = %s
                 """,
@@ -393,7 +414,7 @@ def _get_identity_contact_projection_sync(
         }
         for row in transition_rows
     ]
-    return {
+    projection = {
         "digisac_contact_external_id": str(contact["external_id"]),
         "display_name": display_name,
         "is_group": contact["is_group"],
@@ -406,13 +427,22 @@ def _get_identity_contact_projection_sync(
         "transitions": transitions,
         "candidate_companies": companies,
     }
+    if include_contact_number:
+        projection["contact_number"] = contact["raw_number"]
+    return projection
 
 
 async def get_identity_contact_projection(
     external_id: str,
+    *,
+    include_contact_number: bool = False,
 ) -> dict[str, Any] | None:
     """Return one contact projection, including candidate-free contacts."""
-    return await asyncio.to_thread(_get_identity_contact_projection_sync, external_id)
+    return await asyncio.to_thread(
+        _get_identity_contact_projection_sync,
+        external_id,
+        include_contact_number=include_contact_number,
+    )
 
 
 def _list_active_companies_sync(
