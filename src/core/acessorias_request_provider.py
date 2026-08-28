@@ -32,7 +32,7 @@ REQUEST_FIELDS = (
     "tipo",
 )
 DEFAULT_PRIORITY = 2
-REQUEST_TYPE = "E"
+REQUEST_TYPE = "I"
 SAFE_SOL_ID = re.compile(r"^[^\s\x00-\x1f\x7f]{1,160}$")
 SAFE_DEPARTMENT_ID = re.compile(r"^[0-9]+$")
 
@@ -158,7 +158,7 @@ class AcessoriasRequestOutcome:
 
 class AcessoriasRequestProvider(Protocol):
     def create_request(self, payload: AcessoriasRequestPayload) -> AcessoriasRequestOutcome:
-        """Create one external Request and classify only safe outcome metadata."""
+        """Create one internal Acessórias Request and classify safe metadata."""
 
 
 def _safe_category(value: str) -> str:

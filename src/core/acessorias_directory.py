@@ -476,7 +476,7 @@ class AcessoriasDirectoryAdapter:
                 raise AcessoriasDirectoryError("pagination_limit", "company page safety limit reached")
             raw_page = self._get_json(
                 "/companies/ListAll",
-                params={"contacts": "", "departments": "", "ativa": "S", "Pagina": page},
+                params={"contacts": "", "departments": "", "Pagina": page},
             )
             if not isinstance(raw_page, list):
                 raise AcessoriasDirectoryError("invalid_payload", "company page must be a list")
@@ -526,6 +526,11 @@ def _validate_snapshot(snapshot: AcessoriasSnapshot) -> None:
         contact_keys = {contact.external_key for contact in company.contacts}
         if len(contact_keys) != len(company.contacts):
             raise AcessoriasDirectoryError("invalid_payload", "duplicate company contact")
+
+
+def validate_acessorias_snapshot(snapshot: AcessoriasSnapshot) -> None:
+    """Validate a typed Acessórias snapshot at another service boundary."""
+    _validate_snapshot(snapshot)
 
 
 def _execution_counts(snapshot: AcessoriasSnapshot, *, inactivated: int = 0) -> dict[str, int]:

@@ -77,3 +77,4 @@ def test_provider_boundary_preserves_multipart_request_contract() -> None:
     assert session.calls[0][0] == "https://api.example.test/requests"
     assert set(session.calls[0][1]["files"]) == set(payload.form)
     assert session.calls[0][1]["headers"] == {"Authorization": "Bearer test-token"}
+    assert payload.form["tipo"] == "I"

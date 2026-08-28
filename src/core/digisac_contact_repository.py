@@ -160,6 +160,18 @@ def _upsert_digisac_contact_cursor(
     return row
 
 
+def upsert_digisac_contact_cursor(
+    cursor: Any,
+    contact: DigisacContact,
+    normalized_source: str,
+    observed: datetime,
+) -> Mapping[str, Any]:
+    """Publish one contact through the repository's timestamp-aware boundary."""
+    return _upsert_digisac_contact_cursor(
+        cursor, contact, normalized_source, observed
+    )
+
+
 def _upsert_digisac_contact_sync(
     contact: DigisacContact,
     source: str,

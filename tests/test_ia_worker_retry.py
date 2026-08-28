@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -262,6 +262,126 @@ async def test_provider_window_is_checked_again_before_claim(monkeypatch):
 
     assert redis.lmove_calls == 1
     assert len(redis.queue) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_audio_blocks_cycle_before_classification(monkeypatch):
+    transitions = []
+
+    async def get_states(_audio_ids, _image_ids):
+        return {
+            "audio": {
+                "kind": "audio",
+                "status": "failed",
+                "attempt_count": 3,
+                "text": None,
+            }
+        }
+
+    async def ensure_media_jobs(_conversation_id, _messages, _states):
+        return None
+
+    async def transition(cycle_id, status, **kwargs):
+        transitions.append((cycle_id, status, kwargs))
+        return {}
+
+    async def unexpected_classification(*_args, **_kwargs):
+        pytest.fail("terminal audio must block before Groq classification")
+
+    async def unexpected_persistence(*_args, **_kwargs):
+        pytest.fail("terminal audio must not persist a classification")
+
+    monkeypatch.setattr(ia_worker, "get_content_states", get_states)
+    monkeypatch.setattr(ia_worker, "transition_cycle", transition)
+    monkeypatch.setattr(ia_worker, "insert_classification", unexpected_persistence)
+    monkeypatch.setattr(
+        ia_worker, "create_request_for_cycle", unexpected_persistence
+    )
+    worker = worker_without_init()
+    worker.max_retries = 3
+    worker._ensure_media_jobs = ensure_media_jobs
+    worker._analyze_with_groq = unexpected_classification
+
+    await worker._process_cycle(
+        {
+            "public_id": "cycle-audio-blocked",
+            "conversation_id": "ticket-audio-blocked",
+            "snapshot_json": {
+                "history_recovery": {"complete": True},
+                "messages": [
+                    {"message_id": "audio", "type": "ptt", "content": ""}
+                ],
+                "warnings": [],
+                "departments": [],
+                "agents": [],
+            },
+        },
+        {},
+    )
+
+    assert len(transitions) == 1
+    assert transitions[0][1] == "media_blocked"
+    fields = transitions[0][2]["fields"]
+    assert "audio:audio" in fields["error_message"]
+    assert fields["snapshot_json"]["media_wait"]["blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_pending_audio_keeps_cycle_waiting_before_classification(monkeypatch):
+    transitions = []
+
+    async def get_states(_audio_ids, _image_ids):
+        return {
+            "audio": {
+                "kind": "audio",
+                "status": "pending",
+                "attempt_count": 1,
+                "next_attempt_at": (
+                    datetime.now(timezone.utc) + timedelta(minutes=5)
+                ).isoformat(),
+            }
+        }
+
+    async def ensure_media_jobs(_conversation_id, _messages, _states):
+        return None
+
+    async def transition(cycle_id, status, **kwargs):
+        transitions.append((cycle_id, status, kwargs))
+        return {}
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("pending audio must not reach classification or persistence")
+
+    monkeypatch.setattr(ia_worker, "get_content_states", get_states)
+    monkeypatch.setattr(ia_worker, "transition_cycle", transition)
+    monkeypatch.setattr(ia_worker, "insert_classification", unexpected)
+    worker = worker_without_init()
+    worker.max_retries = 3
+    worker._ensure_media_jobs = ensure_media_jobs
+    worker._analyze_with_groq = unexpected
+
+    await worker._process_cycle(
+        {
+            "public_id": "cycle-audio-pending",
+            "conversation_id": "ticket-audio-pending",
+            "snapshot_json": {
+                "history_recovery": {"complete": True},
+                "messages": [
+                    {"message_id": "audio", "type": "ptt", "content": ""}
+                ],
+                "warnings": [],
+                "departments": [],
+                "agents": [],
+            },
+        },
+        {},
+    )
+
+    assert len(transitions) == 1
+    assert transitions[0][1] == "waiting_media"
+    fields = transitions[0][2]["fields"]
+    assert fields["next_attempt_at"] is not None
+    assert fields["snapshot_json"]["media_wait"]["blocked"] is False
 
 
 @pytest.mark.asyncio

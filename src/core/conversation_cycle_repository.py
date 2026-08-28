@@ -622,12 +622,25 @@ def _wake_unblocked_media_cycles_sync(
                           AND NOT EXISTS (
                               SELECT 1
                               FROM conversation_cycle_messages AS message
-                              JOIN message_image_extractions AS image
+                              LEFT JOIN message_transcriptions AS audio
+                                ON audio.message_id = message.message_id
+                               AND message.message_type IN ('ptt', 'audio', 'voice')
+                              LEFT JOIN message_image_extractions AS image
                                 ON image.message_id = message.message_id
+                               AND message.message_type = 'image'
                               WHERE message.cycle_id = cycle.id
-                                AND message.message_type = 'image'
-                                AND image.status = 'failed'
-                                AND image.attempt_count >= %s
+                                AND (
+                                    (
+                                        message.message_type IN ('ptt', 'audio', 'voice')
+                                        AND audio.status = 'failed'
+                                        AND audio.attempt_count >= %s
+                                    )
+                                    OR (
+                                        message.message_type = 'image'
+                                        AND image.status = 'failed'
+                                        AND image.attempt_count >= %s
+                                    )
+                                )
                           )
                         ORDER BY cycle.updated_at, cycle.id
                         FOR UPDATE SKIP LOCKED
@@ -644,7 +657,7 @@ def _wake_unblocked_media_cycles_sync(
                     WHERE cycle.id = candidates.id
                     RETURNING cycle.*
                     """,
-                    (max_attempts, max(1, limit)),
+                    (max_attempts, max_attempts, max(1, limit)),
                 ).fetchall()
     return [_row_dict(row) or {} for row in rows]
 

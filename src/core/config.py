@@ -1,5 +1,6 @@
 # src/core/config.py
 from typing import Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,8 @@ class Settings(BaseSettings):
     acessorias_api_base_url: str = "https://api.acessorias.com"
     webhook_secret: Optional[str] = None
     admin_api_token: Optional[str] = None
+    admin_ui_password: Optional[str] = None
+    admin_session_secret: Optional[str] = None
 
     # Database & Cache
     redis_url: str = "redis://localhost:6379"
@@ -27,6 +30,7 @@ class Settings(BaseSettings):
     database_statement_timeout_ms: int = 15_000
     database_lock_timeout_ms: int = 3_000
     database_idle_transaction_timeout_ms: int = 30_000
+    app_timezone: str = "America/Sao_Paulo"
 
     # Application
     debug: bool = False
@@ -116,6 +120,18 @@ class Settings(BaseSettings):
             return False
         return value
 
+    @field_validator("app_timezone")
+    @classmethod
+    def validate_app_timezone(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("APP_TIMEZONE must not be empty")
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"APP_TIMEZONE is not a valid IANA timezone: {value}") from exc
+        return value
+
     @field_validator("admin_api_token")
     @classmethod
     def validate_admin_api_token(cls, value: str | None) -> str | None:
@@ -124,6 +140,17 @@ class Settings(BaseSettings):
         normalized = value.strip()
         if not normalized:
             raise ValueError("ADMIN_API_TOKEN must not be empty")
+        return normalized
+
+    @field_validator("admin_ui_password", "admin_session_secret")
+    @classmethod
+    def validate_admin_ui_secret(cls, value: str | None, info: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            field_name = str(info.field_name).upper()
+            raise ValueError(f"{field_name} must not be empty")
         return normalized
 
     @field_validator(
@@ -212,3 +239,12 @@ def require_admin_api_token() -> str:
             "ADMIN_API_TOKEN is required to start the authenticated administrative API"
         )
     return token
+
+
+def require_admin_ui_configuration() -> tuple[str, str]:
+    """Return the UI secrets or fail closed without exposing their values."""
+    password = settings.admin_ui_password
+    session_secret = settings.admin_session_secret
+    if not password or not session_secret:
+        raise RuntimeError("Administrative UI configuration is unavailable")
+    return password, session_secret

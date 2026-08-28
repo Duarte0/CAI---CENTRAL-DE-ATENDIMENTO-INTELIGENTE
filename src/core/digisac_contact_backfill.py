@@ -38,6 +38,7 @@ class DigisacContactBackfillSnapshot:
 class ContactBackfillClient(Protocol):
     def get_contacts_page(self, *, page: int, per_page: int) -> DigisacContactPage:
         """Fetch one validated page from the Contacts provider boundary."""
+        ...
 
 
 def _merge_duplicate_contacts(
@@ -69,6 +70,8 @@ def _merge_duplicate_contacts(
             "internal_name",
             "raw_number",
             "normalized_number",
+            "raw_email",
+            "normalized_email",
             "is_group",
             "account_id",
             "service_id",
@@ -83,7 +86,7 @@ def _merge_duplicate_contacts(
 def _validate_page(
     page: DigisacContactPage, *, requested_page: int, expected_total: int | None
 ) -> None:
-    if not isinstance(page, DigisacContactPage):
+    if not isinstance(page, DigisacContactPage):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise DigisacContactBackfillError(
             "invalid_response", "DigiSac contacts page has an invalid type"
         )

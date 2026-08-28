@@ -139,9 +139,10 @@ essa proveniência. Identidade ou mapping bloqueado permanece observável e não
 faz POST.
 
 Essa fundação não adiciona endpoints públicos nem altera o contrato da IA. A
-etapa implementada pelos issues 0017–0019, 0021–0022 e 0026 cria Requests somente após fatos
-duráveis de ciclo, classificação, identidade confirmada e mapping válido; o
-efeito externo é separado por uma operação PostgreSQL única por ciclo, com
+etapa implementada pelos issues 0017–0019, 0021–0022, 0026 e 0047 cria Requests
+internos somente após fatos duráveis de ciclo, classificação, identidade
+confirmada, confidence aceita e mapping válido; o efeito no provider é separado
+por uma operação PostgreSQL única por ciclo, com
 `SolID`, claims, retry conservador somente quando a fronteira prova o pré-envio,
 e reconciliação `manual_db`. O payload persistido é carregado e validado antes do
 marcador `post_started_at`; falhas nessa etapa ficam retryable sem chamar o
@@ -163,6 +164,14 @@ de página única ou o fallback `page=N`, deduplica por `contact.id` e publica
 somente um snapshot completo em uma transação PostgreSQL; não cria rota pública
 nem autoridade de diretório no Redis.
 
+A confidence persistida permanece na escala `0..1`; antes de qualquer POST ela é
+normalizada para `0..10` (`confidence * 10`) e exige no mínimo `5.0`, equivalente
+a `0.50`. O valor de fronteira é aceito; valor baixo ou inválido bloqueia de
+forma durável e sanitizada, sem tentativa, `post_started_at` ou `SolID`. Toda
+abertura automática no provider usa `tipo=I` e é sempre interna; não existe
+override ou fallback para `tipo=E`. Operações históricas que já iniciaram POST
+não são reescritas nem convertidas.
+
 ### Reconciliação manual de Request
 
 Uma operação em `reconciliation_required` só pode ser resolvida no procedimento
@@ -183,14 +192,14 @@ mensagens, filtra conteúdo fora do ciclo e salva o snapshot usado na análise.
 Esse `/api/v1` pertence à DigiSac e não é uma rota de consulta montada pelo CAI.
 
 Os estados do ciclo incluem, entre outros, espera por histórico, espera por
-mídia, bloqueio por imagem, classificação, conclusão, conclusão com avisos e
+mídia, bloqueio por mídia, classificação, conclusão, conclusão com avisos e
 falha. `next_attempt_at`, leases e claims no PostgreSQL permitem recuperar jobs
 mesmo se houver queda entre a persistência e a publicação no Redis.
 
 - mídia pendente mantém o ciclo em espera até o horário real de nova tentativa;
-- falha terminal de imagem bloqueia a classificação para não concluir sem a
-  imagem;
-- falha terminal de áudio preserva um marcador e pode concluir com avisos;
+- falha terminal de áudio ou imagem bloqueia a classificação para não concluir
+  sem o conteúdo de mídia;
+- somente mídia `completed` com texto não vazio torna o ciclo elegível;
 - uma extração reprocessada desperta automaticamente ciclos bloqueados;
 - uma mensagem só pode pertencer a um ciclo;
 - a identidade persistida do ciclo e da classificação torna a análise idempotente.
@@ -243,6 +252,9 @@ de execução. As principais estruturas são:
 - `identity_admin_commands`: hashes de chaves, fingerprints e resultados
   sanitizados da idempotência dos comandos administrativos; a chave bruta não é
   persistida nem retornada.
+- `digisac_acessorias_reconciliation_executions`: execução manual de dois
+  snapshots, hashes, contagens de delta/rematch e falha sanitizada; não guarda
+  payload, token ou PII.
 
 O ciclo de vida do pool e a verificação do schema permanecem em
 `src/core/db.py`. A persistência de contatos DigiSac e o estado durável de
@@ -317,6 +329,9 @@ Variáveis principais:
 | `DIGISAC_API_KEY` | API da DigiSac. | vazio |
 | `DIGISAC_API_BASE_URL` | Base da API DigiSac. | `https://inov.digisac.chat/api/v1` |
 | `WEBHOOK_SECRET` | Habilita assinatura HMAC do webhook. | vazio |
+| `ADMIN_API_TOKEN` | Bearer da API administrativa interna. | vazio; obrigatório para iniciar a API administrativa |
+| `ADMIN_UI_PASSWORD` | Senha única de bootstrap da UI administrativa. | vazio; provisionar em ambiente protegido |
+| `ADMIN_SESSION_SECRET` | Chave de assinatura da sessão `HttpOnly` da UI. | vazio; provisionar em ambiente protegido |
 | `DATABASE_URL` | PostgreSQL da aplicação e Alembic. | obrigatório em execução |
 | `REDIS_URL` | Redis de filas e coordenação. | `redis://localhost:6379` |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
@@ -389,6 +404,26 @@ com credencial DigiSac configurada:
 PYTHONPATH=/app python -m src.utils.backfill_digisac_contacts
 ```
 
+A reconciliação manual incremental dos diretórios DigiSac e Acessórias é uma
+operação separada, sem scheduler, startup hook, worker loop ou rota HTTP. Ela
+inicializa e verifica PostgreSQL, adquire os dois snapshots antes de publicar,
+gera um relatório sanitizado e fecha o pool:
+
+```bash
+PYTHONPATH=/app python -m src.utils.reconcile_digisac_acessorias --dry-run
+PYTHONPATH=/app python -m src.utils.reconcile_digisac_acessorias --apply
+```
+
+`--dry-run` é o padrão e não altera as tabelas de negócio; `--apply` é
+explícito. A execução usa lock PostgreSQL compartilhado com as publicações de
+contatos e do diretório Acessórias, conserva IDs e histórico e, após o commit,
+faz uma redescoberta local em lote pelas regras conservadoras de SPEC-0009.
+Não usa Redis, o ledger administrativo por contato, Request ou mapping. A
+consulta Acessórias usa `ListAll` sem filtro `ativa` e inclui empresas ativas e
+inativas; `Status` é preservado e `is_active` é derivado pela normalização
+existente. Um apply real continua exigindo autorização operacional
+independente.
+
 ## API HTTP
 
 A API HTTP local fica disponível em `http://localhost:8000`. O contrato gerado
@@ -421,6 +456,39 @@ não mapeadas de Redis ou servidor não têm um envelope de negócio estável.
 | `GET` | `/conversations/{id}/cycles` | Lista ciclos persistidos da conversa. |
 | `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo. |
 | `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo específico. |
+
+As oito rotas acima são a superfície HTTP operacional original e continuam sem
+autenticação adicional nas consultas. A administração da identidade Acessórias
+é uma superfície interna separada, com seis operações autenticadas por
+`Authorization: Bearer` usando `ADMIN_API_TOKEN`:
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/admin/acessorias/identity-links` | Triagem paginada de vínculos e evidências sanitizadas. |
+| `GET` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity` | Projeção segura de um contato canônico. |
+| `GET` | `/admin/acessorias/companies` | Busca paginada de empresas presentes e ativas. |
+| `POST` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm` | Confirmação idempotente de um par explícito. |
+| `POST` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject` | Rejeição idempotente com histórico de auditoria. |
+| `POST` | `/admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery` | Redescoberta determinística sobre fatos locais. |
+
+As seis rotas administrativas retornam somente IDs externos, estados, contagens
+e timestamps seguros. PostgreSQL é a autoridade dos comandos: o replay da
+mesma chave converge para o mesmo resultado, a reutilização incompatível da
+chave retorna conflito e locks por contato impedem transições duplicadas sob
+concorrência. Elas não chamam providers ou Redis, não alteram resolução
+histórica de ciclos e não criam Requests. Os issues 0042 e 0043 adicionam o
+shell local em `/admin/acessorias/ui`, login/logout, sessão `HttpOnly` assinada
+e a fila/detalhe/busca read-only da SPEC-0013. Os paths BFF
+`/admin/acessorias/ui/api/identity-links`,
+`/admin/acessorias/ui/api/contacts/{id}/identity` e
+`/admin/acessorias/ui/api/companies` usam somente o cookie de sessão, chamam
+as projeções sanitizadas existentes e mantêm o `ADMIN_API_TOKEN` no servidor.
+Filtros de fila limitados a `candidate`, `ambiguous` e `unresolved`, cursores
+opacos, estados de erro/retry e busca somente de empresas presentes e ativas
+ficam no cliente local. Os paths BFF de confirmação, rejeição e discovery usam
+o mesmo cookie, razões fixas (`operator_verified` e `operator_rejected`),
+chaves idempotentes transitórias e refresh de fila/detalhe após sucesso ou
+replay; não chamam providers, Redis ou o fluxo de Request.
 
 As consultas estão montadas sem prefixo de versão. `/v1/` e `/v2/` permanecem
 somente como política de compatibilidade futura; não são aliases nem rotas
@@ -515,11 +583,11 @@ npx --yes pyright
 ```
 
 O modo persistente por histórico DigiSac é o único caminho suportado e não
-depende de uma flag no `.env`. Na execução canônica observada em 2026-08-20, a
+depende de uma flag no `.env`. Em uma execução histórica de 2026-08-20, a
 etapa offline produziu **224 passed, 69 skipped** e a etapa PostgreSQL
 descartável **69 passed, 224 deselected**; os skips offline exigem
 `CAI_TEST_DATABASE_URL` e os resultados não comprovam Redis, fornecedores ou
-produção.
+produção. O baseline atual está registrado abaixo, na execução do issue 0040.
 
 O smoke test live do webhook é opt-in e requer uma API local deliberadamente
 iniciada. Ele preserva o payload sintético e o endpoint local existentes:
@@ -537,7 +605,7 @@ descartável, DigiSac, provedores ou produção.
 Verificação canônica completa, incluindo PostgreSQL descartável:
 
 ```bash
-PYTHONPATH=/app python scripts/verify.py
+APP_TIMEZONE=UTC PYTHONPATH=/app python scripts/verify.py
 ```
 
 O runner executa compileall, Pyright estrito, a suíte offline sem selecionar
@@ -546,7 +614,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0022_identity_discovery_command` e só então
+ao destino, aplica e verifica Alembic `0023_manual_reconciliation` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -558,7 +626,7 @@ temporários são removidos mesmo quando uma etapa falha. Os resultados offline
 e PostgreSQL são reportados separadamente; o smoke test live permanece fora da
 execução canônica.
 
-Na execução observada do runner em 2026-08-20, a etapa offline produziu
+Em uma execução histórica observada do runner em 2026-08-20, a etapa offline produziu
 **224 passed, 69 skipped** e a etapa PostgreSQL produziu **69 passed, 224
 deselected**. Esses testes cobrem, no
 destino descartável, claim/lease de ciclos, publicação concorrente e sua
@@ -594,6 +662,37 @@ PostgreSQL 16. A execução sem o override manteve somente o failure preexistent
 de timezone em `tests/test_department_mapping.py`; a falha não envolve o slice
 administrativo. A evidência é local e descartável; não comprova Redis,
 providers, secret manager, deployment ou produção.
+
+Na validação do issue 0043 em 2026-08-21, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **249 passed, 76 skipped** offline,
+Alembic `0022_identity_discovery_command` e **76 passed, 249 deselected** no
+PostgreSQL 16 descartável. A evidência inclui os testes HTTP/BFF e de contrato
+da UI; não houve migration nova. A validação é local e descartável e não
+comprova Redis, providers, secret manager, deployment ou produção.
+
+Na validação do issue 0044 em 2026-08-22, o runner descartável com
+`APP_TIMEZONE=UTC` passou JavaScript syntax check, compileall, Pyright,
+**253 passed, 76 skipped** offline, Alembic `0022_identity_discovery_command`
+e **76 passed, 253 deselected** no PostgreSQL 16 descartável. A cobertura
+focada validou os três paths BFF, razões fixas, replay `201`/`200`, erros
+sanitizados, chave transitória no cliente e contrato local sem storage ou
+recursos externos. Nenhum browser harness ou executável Playwright estava
+disponível neste ambiente; não houve QA renderizado nem aceitação de produção.
+
+Na validação do issue 0045 em 2026-08-25, o runner descartável com
+`APP_TIMEZONE=UTC` passou compileall, Pyright, **255 passed, 77 skipped** offline,
+Alembic `0023_manual_reconciliation` e **77 passed, 255 deselected** no
+PostgreSQL 16. A cobertura inclui dry-run não destrutivo, apply atômico, replay
+idempotente, retenção histórica e redescoberta após a publicação. O resultado
+é evidência local/descartável: não comprova disponibilidade live do provider
+Acessórias, Redis, credenciais, deployment ou produção.
+
+Na validação do issue 0047 em 2026-08-26, o runner descartável passou compileall,
+Pyright estrito, **269 passed, 82 skipped** offline, Alembic
+`0023_manual_reconciliation` e **82 passed, 269 deselected** no PostgreSQL 16.
+A cobertura valida o gate de confidence, a fronteira `0.50` e o payload interno
+`tipo=I`. O resultado é evidência local/descartável e não comprova provider live,
+Redis, credenciais, deployment ou produção.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

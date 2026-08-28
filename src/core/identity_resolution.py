@@ -404,8 +404,8 @@ def _admin_discovery_result(
 ) -> dict[str, Any]:
     company_ids = list(discovery.company_ids)
     link_ids = list(discovery.link_ids)
-    company_rows: list[Mapping[str, Any]] = []
-    link_rows: list[Mapping[str, Any]] = []
+    company_rows: Sequence[Mapping[str, Any]] = ()
+    link_rows: Sequence[Mapping[str, Any]] = ()
     if company_ids:
         with connection.cursor(row_factory=dict_row) as cursor:
             company_rows = cursor.execute(
@@ -673,6 +673,98 @@ async def discover_identity(
         rule_version=rule_version,
         observed_at=observed_at,
     )
+
+
+@dataclass(frozen=True)
+class IdentityBatchDiscoveryResult:
+    """Safe counters from a deterministic local contact rematch."""
+
+    processed_count: int
+    candidate_count: int
+    ambiguous_count: int
+    unresolved_count: int
+    confirmed_preserved_count: int
+    failed_count: int
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "processed_count": self.processed_count,
+            "candidate_count": self.candidate_count,
+            "ambiguous_count": self.ambiguous_count,
+            "unresolved_count": self.unresolved_count,
+            "confirmed_preserved_count": self.confirmed_preserved_count,
+            "failed_count": self.failed_count,
+        }
+
+
+def _discover_all_identities_sync(
+    *,
+    rule_version: str = DEFAULT_RULE_VERSION,
+    observed_at: str | datetime | None = None,
+) -> IdentityBatchDiscoveryResult:
+    """Rematch every local contact without crossing the admin command boundary."""
+    safe_rule = _safe_value(rule_version, "rule_version")
+    timestamp = (
+        _parse_timestamp(observed_at)
+        if isinstance(observed_at, (str, datetime))
+        else datetime.now(timezone.utc)
+    )
+    processed = candidates = ambiguous = unresolved = confirmed = failed = 0
+    with get_database_pool().connection() as connection:
+        contact_ids = connection.execute(
+            "SELECT id FROM digisac_contacts ORDER BY id, external_id"
+        ).fetchall()
+        for row in contact_ids:
+            contact_id = int(row[0])
+            try:
+                # A transaction per contact makes a matching failure resumable:
+                # already completed contacts remain committed and later contacts
+                # can be retried by the next manual reconciliation.
+                with connection.transaction():
+                    result = _discover_locked(
+                        connection,
+                        contact_id=contact_id,
+                        rule_version=safe_rule,
+                        observed_at=timestamp,
+                    )
+            except Exception:
+                failed += 1
+                logger.warning(
+                    "Batch identity discovery failed: contact_id=%s category=internal_error",
+                    contact_id,
+                )
+                continue
+            processed += 1
+            if result.state == "candidate":
+                candidates += 1
+            elif result.state == "ambiguous":
+                ambiguous += 1
+            elif result.state == "unresolved":
+                unresolved += 1
+            elif result.state == "confirmed":
+                confirmed += 1
+    return IdentityBatchDiscoveryResult(
+        processed_count=processed,
+        candidate_count=candidates,
+        ambiguous_count=ambiguous,
+        unresolved_count=unresolved,
+        confirmed_preserved_count=confirmed,
+        failed_count=failed,
+    )
+
+
+async def discover_all_identities(
+    *,
+    rule_version: str = DEFAULT_RULE_VERSION,
+    observed_at: str | datetime | None = None,
+) -> dict[str, int]:
+    """Run one stable, local batch discovery boundary for all DigiSac contacts."""
+    result = await asyncio.to_thread(
+        _discover_all_identities_sync,
+        rule_version=rule_version,
+        observed_at=observed_at,
+    )
+    return result.as_dict()
 
 
 def _resolution_reason(state: str, *, company_count: int, is_group: bool | None) -> str:
@@ -1240,6 +1332,8 @@ def _execute_admin_identity_link_command_sync(
 
             contact_id = int(contact["id"])
             company_id = None if company is None else int(company["id"])
+            row: Mapping[str, Any] | None = None
+            result: dict[str, Any] | None = None
             if operation == ADMIN_DISCOVERY_OPERATION:
                 observed_at = datetime.now(timezone.utc)
                 discovery = _discover_locked(
@@ -1281,11 +1375,15 @@ def _execute_admin_identity_link_command_sync(
             if operation != ADMIN_DISCOVERY_OPERATION:
                 if safe_company_external_id is None:
                     raise RuntimeError("identity link command requires a company")
+                if row is None:
+                    raise RuntimeError("identity link command returned no row")
                 result = _admin_link_result(
                     row,
                     digisac_contact_external_id=safe_contact_external_id,
                     acessorias_company_external_id=safe_company_external_id,
                 )
+            if result is None:
+                raise RuntimeError("identity command returned no result")
             connection.execute(
                 """
                 UPDATE identity_admin_commands

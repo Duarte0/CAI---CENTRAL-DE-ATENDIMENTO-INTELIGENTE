@@ -19,7 +19,7 @@ COMPOSE_FILE = ROOT / "docker-compose.test.yml"
 TEST_DATABASE = "cai_test"
 TEST_USER = "cai_test"
 TEST_PASSWORD = "cai_test"
-EXPECTED_SCHEMA = "0022_identity_discovery_command"
+EXPECTED_SCHEMA = "0023_manual_reconciliation"
 
 
 class RunnerFailure(RuntimeError):

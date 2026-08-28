@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, and authenticated identity triage/commands. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -106,7 +106,8 @@ flowchart LR
     DC --> P
     P --> IR[Identity resolver]
     IR --> DM[Department mapping]
-    DM --> FR[Durable Request operation]
+    DM --> CG[Confidence gate]
+    CG --> FR[Durable internal Request operation]
     FC[Persisted CAI classification/cycle] --> IR
     FC --> FR
     P --> ADM[Authenticated admin reads and commands]
@@ -150,9 +151,9 @@ unresolved result when the boundary is insufficient. It then uses an explicitly
 administered PostgreSQL rule keyed by stable provider IDs and the confirmed
 company's current Acessórias relationship. It persists an append-only cycle
 evaluation and does not use IA \`intent_type\`, names, or fallback selection. The
-Request operation runs only after a persisted valid
-classification, confirmed identity, and mapping; issues 0017–0019, 0021–0022,
-0026, and structural boundary issues 0034 and 0036 give it durable one-cycle
+Request operation runs only after a persisted valid classification with
+confidence accepted by the `0..1` to `0..10` business gate, confirmed identity,
+and mapping; issues 0017–0019, 0021–0022, 0026, 0036, and 0047 give it durable one-cycle
 uniqueness, claim/reconciliation, failure state, and shared in-process
 Sliding Window admission by provider endpoint/configuration. The adapter retries only
 when a transport boundary explicitly proves that the POST did not start; the
@@ -277,8 +278,11 @@ The IA worker then:
     status/result data where applicable.
 12. resolves the canonical ticket contact identity and persists the cycle outcome;
 13. evaluates and persists the cycle-scoped department-mapping snapshot;
-14. claims or creates the durable Acessórias Request operation only when both
-    preparation stages are ready.
+14. evaluates the persisted classification confidence on the `0..10` business
+    scale (`confidence * 10`, minimum `5.0`/`0.50`) and fails closed when it is
+    below the threshold or invalid;
+15. claims or creates the durable internal Acessórias Request operation only
+    when both preparation stages and the confidence gate are ready.
 
 Persistent cycle publication is guarded by \`enqueued_at\`. Reconcilers only
 republish due work and recover jobs whose publication/lease has expired.
@@ -301,8 +305,8 @@ open
 
 Any recoverable processing failure -> retryable_failure -> pending
 Terminal processing failure -> failed
-Terminal image extraction failure -> media_blocked
-media_blocked + successful dependent image recovery -> waiting_media/pending
+Terminal audio/image extraction failure -> media_blocked
+media_blocked + successful dependent media recovery -> waiting_media/pending
 \`\`\`
 
 The exact transition is persisted in PostgreSQL and protected by expected
@@ -326,8 +330,9 @@ Queue and dead-letter entries are deduplicated by message ID; recovery retains
 one safety copy until a non-empty transcription is persisted. Failure logs and
 retry metadata use sanitized categories rather than provider bodies or signed
 URLs.
-Terminal audio failure leaves a safe marker in the context and can produce
-\`completed_with_warnings\`.
+Terminal audio failure places dependent cycles in \`media_blocked\`; it does not
+create a context marker or allow \`completed_with_warnings\` to bypass the
+media dependency.
 
 ### Image
 
@@ -336,9 +341,9 @@ content, calls the configured vision model, and updates
 \`message_image_extractions\`. Truncated or invalid vision output is not treated
 as a successful extraction.
 
-A terminal image failure places a dependent persistent cycle in \`media_blocked\`;
-the IA worker must not classify incomplete context. A later successful image
-recovery wakes only cycles that depend on that image.
+A terminal audio or image failure places a dependent persistent cycle in
+\`media_blocked\`; the IA worker must not classify incomplete context. A later
+successful media recovery wakes only cycles that depend on that media.
 
 \`next_attempt_at\` is the durable source of the next eligible attempt. Provider
 retry timing and local backoff use the later applicable time, preventing broad
@@ -381,7 +386,7 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0022_identity_discovery_command\`. The main data groups
+Alembic owns the schema through \`0023_manual_reconciliation\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
@@ -392,10 +397,11 @@ are:
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
 | DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
+| Manual directory reconciliation | \`digisac_acessorias_reconciliation_executions\` | Sanitized manual two-source execution, delta hashes/counts, rematch counts, and resumable failure state. |
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\`, \`identity_admin_commands\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, immutable per-cycle outcomes, and PostgreSQL command idempotency. |
 | Department mapping | \`department_mapping_rules\`, \`department_mapping_transitions\`, \`conversation_cycle_department_mappings\` | Stable-ID global rules, auditable lifecycle transitions, and append-only per-cycle validation snapshots. |
 | Cycles | \`conversation_processing_cycles\`, \`conversation_cycle_messages\` | Persistent finalization state, sequence, lease, snapshot, scheduling, status, ordered membership, canonical ticket-contact provenance, and identity-resolution linkage. |
-| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable external Request operation per cycle, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. |
+| Acessórias Request | \`acessorias_request_operations\`, \`acessorias_request_reconciliations\` | One durable internal Request operation per cycle, confidence-gate outcome, safe payload metadata/fingerprint, claims, `SolID`, preparation-recovery audit, sanitized outcomes, and controlled `manual_db` reconciliation. Automatic provider payloads use `tipo=I`. |
 
 Classifications expose UUIDv7 \`public_id\` values. JSON snapshots and lists use
 JSONB where defined by the schema, and durable timestamps use \`TIMESTAMPTZ\`.
@@ -407,6 +413,10 @@ deletion, if ever needed, is performed case by case by direct PostgreSQL query.
 ## 10. HTTP API and operational surface
 
 Implemented routes include:
+
+The first eight routes below are the original operational HTTP surface. The
+last six are a separate internal SPEC-0012 administration surface and require
+Bearer `ADMIN_API_TOKEN`; they are not public API operations.
 
 | Route | Purpose |
 | --- | --- |
@@ -476,19 +486,25 @@ application verifies that schema at startup and does not create or mutate it.
 - Cycle and classification identity prevent duplicate terminal analysis.
 - Retry scheduling respects provider timing and does not broadly republish
   future work.
-- Terminal image failures block classification; terminal audio failures preserve
-  a warning marker.
+- Terminal audio and image failures block classification until dependent media
+  is completed with non-empty extracted text.
 - Request adapters for the same provider endpoint/configuration share a
   concurrency-safe in-process Sliding Window before each POST; its transient
   state contains no credentials, headers, payload, classification content, or
   PII.
 - A terminal cycle must pass canonical-contact identity and cycle-scoped mapping
-  preparation before a Request operation can reach the provider boundary.
+  preparation and the persisted confidence gate before a Request operation can
+  reach the provider boundary.
 - A Request operation is persisted before every provider POST; only a non-empty
   provider `id` confirms completion, and uncertain transport outcomes cannot
   auto-post a second Request. Only an explicit pre-send boundary marker may
   enter the bounded retry path; an unproven `429` is reconciliation-required
   even when `Retry-After` is present.
+- The confidence gate accepts exactly persisted `0.50` and higher after
+  normalization to `0..10`; null, malformed, non-finite, out-of-range, and
+  lower values become sanitized definitive failures without an attempt,
+  `post_started_at`, `SolID`, or provider call. Future automatic openings send
+  `tipo=I` only; post-start historical evidence is not rewritten.
 - Unrelated dead-letter entries are not removed during targeted recovery.
 - No retention, archival, or deletion policy is currently implemented.
 
@@ -498,10 +514,12 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its observed 2026-08-17 evidence
-  was **203 passed, 68 skipped** offline and **68 passed, 203 deselected** in
-  PostgreSQL; static/local evidence does not prove Redis, DigiSac, Groq,
-  replica, deployment, or production availability or release readiness.
+  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-26
+  evidence is Alembic `0023_manual_reconciliation`, **269 passed, 82
+  skipped** offline, and **82 passed, 269 deselected** in PostgreSQL; static and
+  disposable evidence does not prove Redis, DigiSac, Groq, secret-manager
+  provisioning, replicas, deployment, or production availability or release
+  readiness. The older `0020`/`203+68` result is historical evidence only.
 - The runner's offline stage does not select a finalization setting and removes
   the test database prerequisite before execution; only the PostgreSQL stage
   receives the runner-owned disposable database URL.
@@ -517,6 +535,32 @@ records these delivery limitations:
   replacement debug route or raw-payload contract exists.
 - Issue `0025` removes extracted webhook values from normal logs while
   preserving safe event, presence/type, and source metadata.
+- SPEC-0012 and issues `0038`–`0040` provide six authenticated internal
+  `/admin/acessorias` operations. They expose sanitized projections and
+  PostgreSQL-authoritative idempotent commands/discovery; same-key retries
+  converge, incompatible key reuse conflicts, and contact locking prevents
+  duplicate concurrent transitions. They do not call providers or Redis, create
+  Requests, or mutate historical cycle resolution. SPEC-0013 is implemented
+  locally; issue 0042 implements its local shell,
+  login/logout, signed session, and in-process BFF boundary, while issue 0043
+  implements the queue/detail/company-search read model through session-only
+  BFF paths. Issue 0044 implements the session-only confirmation, rejection,
+  and deterministic-discovery action paths; the browser keeps idempotency keys
+  transient, requires explicit confirmation, and refreshes projections after
+  success or replay.
+
+  The approved SPEC-0013 architecture is a FastAPI-served HTML page with local
+  CSS and modular JavaScript, without a required bundler; it consumes SPEC-0012
+  through `fetch`, with Jinja2 only if server rendering is needed and without
+  React/Vite at this stage. The page is an in-process BFF in the same FastAPI
+  process, using a signed `HttpOnly` cookie session (`Secure` in production,
+  `SameSite=Strict`) with fixed 60-minute expiry and no sliding window; signing
+  may use Starlette `SessionMiddleware` or `itsdangerous`. `SameSite=Strict` is
+  the complete CSRF protection for this version, with no additional token.
+  `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and `ADMIN_SESSION_SECRET` require
+  equally careful secure provisioning and never enter the browser, logs,
+  metrics, or cache. Bootstrap is one operator password compared securely with
+  `ADMIN_UI_PASSWORD`, with no registration, RBAC, or IdP.
 - DigiSac Contacts full backfill is implemented under issue `0014` as an
   internal, typed acquisition and transactional PostgreSQL publication. It
   supports a validated one-page response and `page=N` fallback with global
@@ -535,6 +579,13 @@ records these delivery limitations:
   cycle's persisted boundaries, and appends sanitized cycle snapshots; it does
   not add an HTTP route, IA routing, or fallback selection. Request creation is
   implemented separately under issue `0017`.
+- Manual DigiSac–Acessórias reconciliation is implemented under issue `0045`.
+  It acquires complete source views before publication, uses compatible
+  PostgreSQL advisory locks, applies non-destructive directory deltas, records
+  sanitized execution state, and rematches local contacts after commit. The
+  Acessórias `ListAll` is requested without a status filter, preserving active
+  and inactive companies with raw `Status` and derived `is_active`; no live
+  provider or production acceptance is claimed.
 
 - Durable Acessórias Request creation and preparation are implemented under issues
   `0017`–`0019`, `0021`–`0022`, `0026`, and structural boundary issues `0034` and
@@ -586,14 +637,14 @@ they limit release verification and future evolution decisions.
   \`src/core/digisac_directory.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0019_acessorias_request_creation.py\` through
-  \`0021_identity_admin_commands.py\`.
+  \`0023_manual_digisac_acessorias_reconciliation.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
-- Authenticated identity triage, commands, and discovery: \`src/api/admin_routes.py\`,
+- Authenticated identity triage, commands, discovery, and UI shell/session: \`src/api/admin_routes.py\`,
+  \`src/api/admin_ui.py\`,
   \`src/core/identity_admin.py\`, \`src/core/identity_resolution.py\`,
   Alembic \`0021_identity_admin_commands.py\` and
   \`0022_identity_discovery_command.py\`, and SPEC-0012; it consumes
@@ -603,11 +654,16 @@ they limit release verification and future evolution decisions.
 - Durable Acessórias Request creation: \`src/core/acessorias_requests.py\`,
   \`src/core/acessorias_preparation.py\`, \`src/workers/ia_worker.py\`, and
   Alembic \`0019_acessorias_request_creation.py\` plus
-  \`0020_cycle_contact_provenance.py\`.
+  \`0020_cycle_contact_provenance.py\`; issue 0047 owns the confidence gate
+  and the invariant that automatic openings use internal \`tipo=I\`.
 - Acessórias provider adapters and transient coordination:
   \`src/core/acessorias_directory.py\`,
   \`src/core/acessorias_request_provider.py\`, and
   \`src/core/provider_coordination.py\`.
+- Manual DigiSac–Acessórias reconciliation: \`src/core/digisac_acessorias_reconciliation.py\`,
+  \`src/utils/reconcile_digisac_acessorias.py\`, migration
+  \`0023_manual_digisac_acessorias_reconciliation.py\`, and the focused
+  \`tests/test_manual_directory_reconciliation.py\` coverage.
 - Worker behavior: \`src/workers/ia_worker.py\`,
   \`src/workers/audio_worker.py\`, and \`src/workers/image_worker.py\`.
 - Configuration and deployment: \`src/core/config.py\`, \`.env.example\`,

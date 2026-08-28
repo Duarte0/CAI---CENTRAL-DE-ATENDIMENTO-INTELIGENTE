@@ -15,8 +15,9 @@ through an HTTP API.
 CAI is an analysis and operational-support system. The implemented system does
 not open DigiSac tickets, reply to customers, transfer tickets, or autonomously
 decide the department or agent responsible for a ticket. The approved
-Acessórias directory, identity, department mapping, and durable external
-Request increments are implemented locally behind their own contracts.
+Acessórias directory, identity, department mapping, and durable internal
+Request increments are implemented locally behind their own contracts. Every
+automatic Acessórias opening is internal (`tipo=I`), never external.
 
 The requirements in this document describe capabilities present in the current
 repository. Product policies approved by the product owner are recorded as
@@ -35,10 +36,12 @@ The implementation establishes these technical actors:
 
 The system has one internal operator and is not exposed to external or
 third-party API consumers. Existing public query endpoints do not require
-login, API keys, JWTs, or a separate authorization layer. The internal
-Acessórias identity-triage routes introduced by SPEC-0012 are a separate
-authenticated administrative surface using `ADMIN_API_TOKEN`; they are not
-public consumer endpoints.
+login, API keys, JWTs, or a separate authorization layer. The six internal
+Acessórias identity-administration operations introduced by SPEC-0012 are a
+separate authenticated administrative surface using `ADMIN_API_TOKEN`; they
+are not public consumer endpoints. Issues 0042–0043 mount the local
+authenticated UI shell/session boundary and the read-only triage queue, detail,
+and company search; command actions remain in the follow-up issue 0044.
 
 ## 3. Product goals
 
@@ -59,7 +62,8 @@ CAI must:
    interactions and conversation evolution.
 7. Integrate the approved DigiSac → CAI → Acessórias flow safely: maintain
    external directories, resolve identity conservatively, map departments, and
-   later create auditable, idempotent external Requests.
+   later create auditable, idempotent internal Requests only when classification
+   confidence reaches the approved threshold.
 
 ## 4. Non-goals and product boundaries
 
@@ -77,8 +81,9 @@ CAI does not currently:
 
 The directory foundation does not create or update Requests, synchronize Users,
 expose resolution/refresh endpoints or a UI, use fuzzy name matching, or change
-the IA contract. The implemented Request increment creates only external
-Requests of `tipo=E` from eligible durable facts. A unique phone match is a
+the IA contract. The implemented Request increment creates only internal
+Requests of `tipo=I` from eligible durable facts and a classification confidence
+of at least `0.50` (equivalent to `5.0` on the business `0..10` scale). A unique phone match is a
 candidate, not an automatic confirmation; DigiSac groups remain unresolved
 unless an explicit confirmed link exists.
 
@@ -132,9 +137,13 @@ Redis jobs are published.
   vision model, and persists extracted content.
 
 Transient provider failures honor retry timing, including `Retry-After`, local
-backoff, and configured attempt limits. A terminal audio failure may allow a
-classification with a warning marker. A terminal image failure blocks the
-dependent persistent cycle until the image is successfully recovered.
+backoff, and configured attempt limits. Audio transient retries keep their
+durable schedule independently of the IA classification attempt budget. Audio
+and image remain dependencies of the persistent cycle: pending/recoverable
+media keeps it waiting, and a
+terminal failure blocks the dependent cycle until the media is successfully
+recovered. Only a non-empty completed transcription or extraction is usable by
+classification; no synthetic media marker makes an incomplete cycle eligible.
 
 ### 5.4 Finalization mode
 
@@ -168,7 +177,7 @@ duplicating terminal classifications.
 
 The approved product flow is DigiSac ticket/conversation and contact → CAI
 classification → Acessórias company resolution → Acessórias department mapping
-→ durable external Request → persisted CAI-to-Request link. The Acessórias
+→ confidence gate → durable internal Request (`tipo=I`) → persisted CAI-to-Request link. The Acessórias
 Directory Foundation (SPEC-0007; issue 0012) is implemented locally and
 establishes only the directories required for this flow.
 
@@ -183,11 +192,12 @@ opaque `contact.id`, and publishes only a complete snapshot.
 
 Before any Acessórias Request operation, the terminal cycle retains only the
 canonical ticket `data.contact.id` and the worker runs the durable sequence
-`contact.id` → identity resolution → department-mapping snapshot → Request
-operation → provider POST. A message sender `contactId`, group participant,
+`contact.id` → identity resolution → department-mapping snapshot → confidence
+gate → Request operation → provider POST. A message sender `contactId`, group participant,
 name, phone, or fallback metadata cannot replace the ticket contact. Missing,
-unconfirmed, ambiguous, conflicting, or invalid preparation facts fail closed
-without a provider POST.
+unconfirmed, ambiguous, conflicting, or invalid preparation facts, as well as
+confidence below `0.50` or invalid confidence, fail closed without a provider
+POST.
 
 The local Acessórias directory durably retains companies (active and inactive),
 company contacts, departments, and current company-department relationships.
@@ -195,15 +205,22 @@ Raw and normalized phone/email values are both preserved.
 PostgreSQL is the local durable authority; Redis is never the identity or
 directory authority.
 
-Issue 0038 implements the read-only first slice of SPEC-0012. The three
-`/admin/acessorias` GET routes expose bounded PostgreSQL projections for
-identity-link triage, one canonical contact, and present/active companies. They
-use opaque scope-bound cursors and return only stable IDs, safe display names,
-states, availability, evidence categories/counts/timestamps, and transition
-metadata. They do not expose phone/email/evidence values and do not call
-providers, Redis, discovery, hydration, synchronization, or Request code.
-Confirmation, rejection, and discovery commands remain separate follow-up
-increments.
+Issues 0038–0040 implement the complete six-operation SPEC-0012 surface under
+`/admin/acessorias`: three bounded GET projections for identity-link triage, one
+canonical contact, and present/active companies; idempotent confirmation and
+rejection commands; and deterministic identity discovery. The routes require
+Bearer `ADMIN_API_TOKEN`, use opaque scope-bound cursors where applicable, and
+return only stable IDs, safe display names, states, availability, evidence
+categories/counts/timestamps, and transition metadata. They do not expose
+phone/email/evidence values or call providers, Redis, discovery from reads,
+hydration, synchronization, or Request code. PostgreSQL is authoritative for
+command idempotency: same-key retries converge, incompatible key reuse is a
+conflict, and contact serialization prevents duplicate transitions under
+concurrency. Administrative discovery does not call providers or Redis, create
+Requests, or mutate historical cycle resolution. Product authorization is
+granted for adoption and issue decomposition of SPEC-0013. Issue 0042
+implements only its local shell, login/logout, signed session, and in-process
+BFF boundary; the read and command UI increments remain unimplemented.
 
 Identity distinguishes technical match evidence, persisted contact-company
 links, audited link transitions, and the resolution used by a conversation/
@@ -225,9 +242,13 @@ Current company departments are directory state, not a constraint that
 invalidates historical external Requests; a later evaluation may record a new
 outcome without rewriting a terminal snapshot.
 
-Issues 0017–0019, 0021–0022 and 0026 implement the durable Request boundary. A terminal eligible cycle
+Issues 0017–0019, 0021–0022, 0026 and 0047 implement the durable Request boundary. A terminal eligible cycle
 with one confirmed company and a current valid mapped department creates at
-most one PostgreSQL operation and one multipart `POST /requests`. Only a
+most one PostgreSQL operation and one multipart `POST /requests`, and only when
+the persisted confidence normalized from `0..1` to `0..10` is at least `5.0`.
+Exactly `0.50` persisted is accepted; null, malformed, non-finite, out-of-range
+and lower values are blocked as a sanitized durable outcome. Every automatic
+POST uses `tipo=I`, so this is always an internal Request. Only a
 non-empty provider `id` becomes the persisted `SolID`; only an explicitly proven
 pre-send transport failure may retry, while ordinary connection, timeout, and
 protocol failures require `manual_db` reconciliation. A `429` without a
@@ -281,6 +302,12 @@ The application, not the model, adds `department`, `agent`, `protocol`,
 protocol exists, `display_title` follows `[{protocol}] - {title}` without
 changing `title`.
 
+The IA `confidence` field remains persisted and exposed on the existing `0..1`
+scale. The Acessórias Request policy interprets it separately on a business
+`0..10` scale (`confidence * 10`) and requires `5.0`/`0.50` or higher before an
+automatic internal Request can be opened. This gate does not alter the model
+contract or trigger a reclassification.
+
 Incomplete or truncated model responses must not be persisted as valid
 classifications. Parser recovery diagnostics may expose only a safe outcome or
 category and bounded structural metadata; they must not log the raw or partial
@@ -300,10 +327,18 @@ The current HTTP surface is:
 | `GET /conversations/{conversation_id}/cycles` | List persistent cycles for a conversation. |
 | `GET /cycles/{cycle_id}/status` | Return a persistent cycle record. |
 | `GET /cycles/{cycle_id}/result` | Return a persistent cycle result. |
+| `GET /admin/acessorias/identity-links` | Authenticated identity-link triage projection. |
+| `GET /admin/acessorias/contacts/{digisac_contact_external_id}/identity` | Authenticated canonical-contact identity projection. |
+| `GET /admin/acessorias/companies` | Authenticated present/active company search. |
+| `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/confirm` | Authenticated idempotent confirmation of one explicit pair. |
+| `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-links/{acessorias_company_external_id}/reject` | Authenticated idempotent rejection with audit history. |
+| `POST /admin/acessorias/contacts/{digisac_contact_external_id}/identity-discovery` | Authenticated idempotent deterministic discovery over local facts. |
 
 The mounted conversation and cycle query routes are currently unversioned.
 `/v1/` and `/v2/` remain future compatibility policy only; they are not aliases
-or implemented routes in this checkout.
+or implemented routes in this checkout. The first eight rows are the original
+operational HTTP surface; the six `/admin/acessorias` rows are internal and
+Bearer-protected, not public API operations.
 
 Normal webhook processing returns `202`. Safely ignored events return `200` with
 an ignore reason. Missing conversations, cycles, or unavailable results return
@@ -336,9 +371,14 @@ defined by the schema.
 - Leases and claims prevent concurrent workers from processing the same durable
   job.
 - Retry scheduling must not republish work before `next_attempt_at`.
-- A terminal image failure must prevent incomplete classification.
-- A terminal audio failure must remain visible as a safe warning/marker.
+- A terminal audio or image failure must prevent incomplete classification.
+- Only completed media with non-empty extracted text may enter context rendering
+  and classification.
 - Targeted recovery must not remove unrelated dead-letter entries.
+- Automatic Acessórias Requests require the persisted classification confidence
+  gate (`0..1` normalized to `0..10`, minimum `5.0`/`0.50`) before provider
+  admission and use `tipo=I` exclusively; blocked confidence is recorded without
+  a provider side effect.
 
 ### Security and privacy boundaries
 
@@ -374,18 +414,19 @@ defined by the schema.
 The source, migrations, configuration, Compose topology, checked-in tests, and
 `scripts/verify.py` establish the implementation baseline. Issues `0001` and
 `0002` completed tracked test isolation and the disposable PostgreSQL runner;
-issues `0012`–`0022`, `0026`, and `0038` added the Acessórias directory, DigiSac contact identity
+issues `0012`–`0022`, `0026`, and `0038`–`0040` added the Acessórias directory, DigiSac contact identity
 foundation, complete Contacts backfill, conservative cross-system identity
-resolution, stable-ID department mapping, and conservative Request transport
-classification. The observed local runner evidence on 2026-08-17 is:
+resolution, stable-ID department mapping, conservative Request transport
+classification, and the issue 0047 confidence/internal-type gate. The earlier
+observed local runner evidence on 2026-08-21 is:
 
 - compileall: passed;
 - strict Pyright: 0 errors, 0 warnings, 0 informations;
-- offline pytest: 203 passed, 68 skipped (the skips are deliberately absent
+- offline pytest: 238 passed, 76 skipped (the skips are deliberately absent
   `CAI_TEST_DATABASE_URL` prerequisites in that stage);
-- Alembic: `0020_cycle_contact_provenance` applied and verified on the runner target;
+- Alembic: `0022_identity_discovery_command` applied and verified on the runner target;
   and
-- PostgreSQL pytest: 68 passed, 203 deselected, with no prerequisite skips. The
+- PostgreSQL pytest: 76 passed, 238 deselected, with no prerequisite skips. The
   additional operational slice covers durable cycle publication recovery,
   due-only media recovery, queue deduplication, dependent image wake-up, and
   stable-ID department mapping with cycle-scoped audited snapshots, plus durable
@@ -405,6 +446,14 @@ response logging from parser diagnostics, and issue `0025` removes raw values
 from normal webhook extraction logs; local tests verify sanitized metadata
 without making a provider-backed quality or production logging claim.
 
+The current issue 0047 validation on 2026-08-26 passed compileall, strict
+Pyright, **269 passed, 82 skipped** offline, Alembic
+`0023_manual_reconciliation`, and **82 passed, 269 deselected** in disposable
+PostgreSQL 16. It covers the normalized confidence threshold, fail-closed
+blocked operations, final pre-POST protection, and the mandatory internal
+`tipo=I` payload. This remains local/disposable evidence and does not prove
+provider, Redis, credentials, deployment, or production readiness.
+
 ## 10. Product decisions
 
 The product owner has decided the following policies:
@@ -420,7 +469,28 @@ The product owner has decided the following policies:
 | Canonical CI and release-verification matrix | Determines what evidence is required before release. | Decided — commit tests, use a local canonical runner, compileall, zero-diagnostic Pyright, offline tests, and isolated PostgreSQL 16 tests; external CI is optional later. |
 | Business personas and success metrics | Determines product value measurement beyond technical processing success. | Decided — one internal operator; measure classification quality, history completeness, AI evolution/corpus growth, and approved Acessórias integration value when delivered. |
 | Acessórias directory and identity foundation | Determines how CAI discovers companies before any external action. | Directory, contact identity, and conservative cross-system resolution are implemented locally under SPEC-0007–0009 and issues 0012–0015; confirmation remains explicit/manual with many-to-many links. |
-| Acessórias department and Request flow | Determines safe routing and external side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022 and 0026 with canonical preparation, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
+| Acessórias department and Request flow | Determines safe routing and provider side effects. | Department mapping is implemented under SPEC-0010/issues 0016, 0020 and 0026 with cycle-scoped assignment selection; Request creation is implemented under SPEC-0011/issues 0017–0019, 0021–0022, 0026 and 0047 with canonical preparation, the persisted confidence gate (`0.50`/`5.0`), mandatory internal `tipo=I`, durable one-cycle uniqueness, pre-POST payload safety, shared in-process rate admission, explicit-proof-only retry, conservative `429` reconciliation, and manual reconciliation. |
+
+SPEC-0013 product authorization is also decided. The approved contract for its
+future issue decomposition is:
+
+- adoption of the administrative identity-link review UI is authorized;
+- the stack is HTML served by FastAPI, local CSS, modular JavaScript without a
+  required bundler, and `fetch` against SPEC-0012 routes; Jinja2 is optional
+  only when server rendering is needed, and React/Vite are not used at this
+  stage;
+- the UI uses an in-process BFF in the same FastAPI process, with a signed
+  `HttpOnly` cookie session, `Secure` in production, `SameSite=Strict`, and a
+  fixed 60-minute expiration without a sliding window; signing may use
+  Starlette `SessionMiddleware` or `itsdangerous`;
+- CSRF protection for this version is `SameSite=Strict`; no additional CSRF
+  token is required;
+- `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD`, and `ADMIN_SESSION_SECRET` must all
+  be securely provisioned with the same level of care and never exposed to the
+  browser, logs, metrics, or cache;
+- session bootstrap is a single operator-password login compared securely
+  with `ADMIN_UI_PASSWORD`, with no user registration, RBAC, or IdP at this
+  stage.
 
 ## 11. Source traceability
 
@@ -432,7 +502,11 @@ The PRD is derived from:
   `src/core/message_filter.py`, `src/core/media.py`, and
   `src/core/finalization.py`;
 - persistence and durable state: `src/core/db.py` and Alembic revisions
-  `0001_initial` through `0020_cycle_contact_provenance`;
+  `0001_initial` through `0022_identity_discovery_command`;
+- authenticated identity administration: `src/api/admin_routes.py`,
+  `src/core/identity_admin.py`, `src/core/identity_resolution.py`, Alembic
+  revisions `0021_identity_admin_commands` and `0022_identity_discovery_command`,
+  and SPEC-0012;
 - Acessórias provider adapters and transient coordination:
   `src/core/acessorias_directory.py`, `src/core/acessorias_requests.py`, and
   `src/core/provider_coordination.py`;

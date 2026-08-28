@@ -499,15 +499,18 @@ class IAWorker:
                     "lease_expires_at": None,
                     "error_phase": "media",
                     "error_message": (
-                        "image extraction requires intervention: "
-                        + ",".join(sorted(blocked))
+                        "media extraction requires intervention: "
+                        + ",".join(
+                            f"{states.get(message_id, {}).get('kind', 'media')}:{message_id}"
+                            for message_id in sorted(blocked)
+                        )
                     ),
                 },
             )
             if changed:
                 logger.warning(
-                    "Cycle blocked by failed image extraction: "
-                    "cycle_id=%s conversation_id=%s image_ids=%s",
+                    "Cycle blocked by failed media extraction: "
+                    "cycle_id=%s conversation_id=%s media_ids=%s",
                     cycle_id,
                     conversation_id,
                     sorted(blocked),

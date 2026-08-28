@@ -8,20 +8,37 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | --- | --- | --- | --- | --- | --- |
 | SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.5; boundaries estruturais 0032, 0033 e 0035; auditoria Redis 0037 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações, fronteiras de privacidade e limpeza manual allowlisted de resíduos Redis. |
 | SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.5; boundaries estruturais 0030 e 0033 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; não há superfície de diagnóstico de webhook. |
-| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.6; boundaries estruturais 0029, 0031 e 0035; auditoria Redis 0037 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; áudio transitório além do limite IA e dead-letter seguro; limites persistidos consumidos por roteamento; resíduos legados tratados sem tocar estado ativo. |
-| SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.6 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
-| SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.3 | P1 / reconciliação documental | SPEC-0002–0004 | Corrige a documentação ativa sobre fluxo persistente único, rotas sem versão, OpenAPI publicado e a evidência de verificação registrada. |
-| SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.1 | P1 / documentação de compatibilidade | SPEC-0001–0005 | Publica OpenAPI/Swagger/ReDoc e introdução para consumidores a partir das oito rotas HTTP atualmente montadas. |
-| SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.1; issue 0012; boundary estrutural 0034 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com reconciliação completa paginada, retry e segurança; não cria Request nem identidade DigiSac. |
-| SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.4; issues 0013, 0014 e 0026; boundary estrutural 0028 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, provenance canônica do contato no ciclo, hydration individual e full backfill idempotentes; sem resolução de empresa. |
-| SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.2; issues 0015 e 0026 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência e candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e gate de preparação; confirmação é manual, nunca automática. |
+| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.7; gate compartilhado de áudio/imagem no issue 0046; boundaries estruturais 0029, 0031 e 0035; auditoria Redis 0037 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; mídia pendente espera, mídia terminal bloqueia e somente conteúdo não vazio concluído habilita classificação; resíduos legados tratados sem tocar estado ativo. |
+| SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.7 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
+| SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.4; issue 0041 | P1 / reconciliação documental | SPEC-0002–0004, SPEC-0006, SPEC-0012 | Reconciliou PRD/arquitetura/rastreabilidade com `0022`/`238+76` e a API administrativa, sem alegar UI. |
+| SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.2 | P1 / documentação de compatibilidade | SPEC-0001–0005, SPEC-0012 | Publica OpenAPI/Swagger/ReDoc para as oito rotas originais e as seis rotas administrativas internas montadas. |
+| SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.2; issues 0012, 0034 e 0045 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com delta manual seguro; `ListAll` inclui todos os status sem filtro `ativa`; não cria Request nem identidade DigiSac. |
+| SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.5; issues 0013, 0014, 0026 e 0045; boundary estrutural 0028 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, provenance canônica do contato no ciclo, hydration, full backfill e consumo pela reconciliação manual; sem deleção por ausência. |
+| SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.3; issues 0015, 0026 e 0045 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência/candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e redescoberta manual em lote; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
-| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.4; issues 0017–0019, 0021–0022 e 0026; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart externa (`tipo=E`) durável, preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
-| SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Implementado localmente v1.1; issues 0038, 0039 e 0040 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir vínculos auditáveis; não cria Request nem reavalia ciclos históricos. |
+| SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.5; issues 0017–0019, 0021–0022, 0026 e 0047; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart interna (`tipo=I`) durável, gate de confidence `0..10`/mínimo `5.0` (`0..1`/`0.50` persistido), preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
+| SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Implementado localmente v1.2; issues 0038, 0039, 0040 e 0045 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir um contato; a reconciliação manual em lote é uma fronteira separada e não usa o ledger por contato. |
+| SPEC-0013 | [Interface web administrativa para conciliação de identidade](0013-administrative-identity-link-review-ui.md) | Implementado localmente v1.5; issues 0042–0044 | P1 / Milestone C.2 | SPEC-0012; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` em ambiente protegido | Fundação FastAPI com login/logout, sessão assinada, fila, detalhe, busca e ações de confirmação/rejeição/discovery via BFF local; sem matching no frontend ou acesso direto ao banco. |
 
-A evidência mais recente registrada para o runner de SPEC-0004 é **238 passed,
-76 skipped** na etapa offline e **76 passed, 238 deselected** na etapa
-PostgreSQL descartável (issue 0040, migration `0022_identity_discovery_command`).
+A evidência mais recente registrada para o runner de SPEC-0004 é **269 passed,
+82 skipped** na etapa offline e **82 passed, 269 deselected** na etapa
+PostgreSQL descartável (issue 0047, sem nova migration; head
+`0023_manual_reconciliation`). As execuções anteriores permanecem registradas
+abaixo como evidência histórica datada.
+
+O issue 0045 acrescenta a migration `0023_manual_reconciliation`
+e a fronteira manual incremental. Em 2026-08-25, a execução canônica com
+`APP_TIMEZONE=UTC` passou **255 passed, 77 skipped** offline e **77 passed, 255
+deselected** no PostgreSQL descartável; seus testes não comprovam disponibilidade
+live do provider ou aceitação de produção.
+
+Em 2026-08-26, a execução canônica do issue 0047 passou compileall, Pyright
+estrito, **269 passed, 82 skipped** offline, Alembic
+`0023_manual_reconciliation` e **82 passed, 269 deselected** no PostgreSQL
+descartável. A cobertura inclui o gate `confidence * 10 >= 5.0`, aceitação da
+fronteira `0.50`, bloqueio fail-closed e payload interno `tipo=I`; a evidência
+continua local/descartável e não comprova provider, credenciais, deployment ou
+produção.
 A evidência anterior de issue 0036 foi **224 passed, 69 skipped** na etapa
 offline e **69 passed, 224 deselected** no PostgreSQL. A evidência anterior de
 issue 0033 foi **220 passed,
@@ -104,6 +121,15 @@ adapters. O issue 0036 separou o transporte HTTP em
 `src/core/acessorias_request_provider.py` e manteve a operação durável e os
 imports compatíveis em `src/core/acessorias_requests.py`, sem alterar o
 contrato do Request.
+O delta documental v1.4 da SPEC-0005 foi implementado pelo issue 0041. Ele
+alcançou somente a reconciliação de PRD, arquitetura e rastreabilidade com o
+baseline implementado `0022`/`238+76` e a superfície administrativa da
+SPEC-0012; o issue 0041 não alterou código, migration, UI ou alegação de
+produção. O issue 0042 implementa o shell/sessão/BFF, o issue 0043 implementa o
+incremento de leitura e o issue 0044 implementa as ações de confirmação,
+rejeição e discovery da SPEC-0013. A entrega local não representa aceitação de
+produção nem provisionamento dos segredos administrativos.
+
 Milestone F continua fora do conjunto: exige decisão de produto após a criação
 de Request ser comprovada. Não alterar as SPEC-0001–0006 concluídas para
 atribuir retroativamente esses comportamentos; elas continuam descrevendo
@@ -111,10 +137,14 @@ somente os contratos já estabelecidos.
 
 ## Arquivos não ativos
 
-Não há especificações superseded, deprecated ou template neste conjunto. Um contrato que vier a ser substituído deve ser preservado com status apropriado, apontar ao sucessor canônico e sair da tabela de ativos sem apagar seu histórico.
+Não há arquivos não ativos neste conjunto.
+
+Não há especificações superseded, deprecated ou template. Um contrato que vier a
+ser substituído deve ser preservado com status apropriado, apontar ao sucessor
+canônico e sair da tabela de ativos sem apagar seu histórico.
 
 ## Fluxo
 
 1. Planejamento referencia a especificação aplicável e registra dependências/decisões abertas.
 2. A passagem de issues decompõe somente especificações prontas, sem redefinir seus contratos.
-3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. O isolamento da suíte (issue 0001), o runner descartável (0002), a verificação operacional (0004), a remoção das superfícies de diagnóstico (0006), a reconciliação documental (0007 e 0009), a publicação de SPEC-0006 (0008), o Milestone A de SPEC-0007 (0012), o Milestone B de SPEC-0008 (0013, 0014 e 0026), o Milestone C de SPEC-0009 (0015 e 0026), o Milestone D de SPEC-0010 (0016, 0020 e 0026) e a preparação/recuperação do Milestone E (0026) estão implementados.
+3. Build implementa issues aprovadas, executa a verificação exigida e atualiza o status da especificação com evidência. O isolamento da suíte (issue 0001), o runner descartável (0002), a verificação operacional (0004), a remoção das superfícies de diagnóstico (0006), a reconciliação documental v1.3 (0007 e 0009), a publicação de SPEC-0006 (0008), o Milestone A de SPEC-0007 (0012), o Milestone B de SPEC-0008 (0013, 0014 e 0026), o Milestone C de SPEC-0009 (0015 e 0026), o Milestone D de SPEC-0010 (0016, 0020 e 0026) e a preparação/recuperação do Milestone E (0026) estão implementados. O delta v1.4 da SPEC-0005 foi concluído pelo issue 0041; o shell/sessão/BFF, a leitura e as ações da SPEC-0013 foram implementados pelos issues 0042–0044.

@@ -9,10 +9,12 @@ classification and an external side effect.
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import Any, Literal, Mapping, cast
 
 import psycopg
 from psycopg.rows import dict_row
@@ -37,6 +39,48 @@ from src.core.config import settings
 from src.core.db import get_database_pool
 SAFE_REASON = re.compile(r"^[a-z0-9_:-]{1,120}$")
 SAFE_OPERATION_KEY = re.compile(r"^[a-zA-Z0-9_.:@-]{1,240}$")
+REQUEST_CONFIDENCE_SCALE_MAX = 10.0
+REQUEST_CONFIDENCE_MINIMUM_10 = 5.0
+REQUEST_CONFIDENCE_MINIMUM = (
+    REQUEST_CONFIDENCE_MINIMUM_10 / REQUEST_CONFIDENCE_SCALE_MAX
+)
+
+
+@dataclass(frozen=True)
+class RequestConfidenceDecision:
+    """Safe decision for the Request confidence gate."""
+
+    state: Literal["allowed", "below_threshold", "invalid"]
+    reason: str
+    score_10: float | None = None
+
+
+def evaluate_request_confidence(value: Any) -> RequestConfidenceDecision:
+    """Evaluate persisted IA confidence without changing its 0..1 contract."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return RequestConfidenceDecision("invalid", "confidence_invalid")
+    normalized = float(value)
+    if not math.isfinite(normalized) or not 0.0 <= normalized <= 1.0:
+        return RequestConfidenceDecision("invalid", "confidence_invalid")
+    score_10 = normalized * REQUEST_CONFIDENCE_SCALE_MAX
+    if normalized < REQUEST_CONFIDENCE_MINIMUM:
+        return RequestConfidenceDecision(
+            "below_threshold", "confidence_below_threshold", score_10
+        )
+    return RequestConfidenceDecision("allowed", "confidence_accepted", score_10)
+
+
+def _confidence_gate_metadata(
+    decision: RequestConfidenceDecision,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "scale": "0_10",
+        "threshold": REQUEST_CONFIDENCE_MINIMUM_10,
+        "decision": decision.state,
+    }
+    if decision.score_10 is not None:
+        metadata["score"] = decision.score_10
+    return metadata
 
 
 class AcessoriasRequestError(RuntimeError):
@@ -100,7 +144,8 @@ def _cycle_snapshot(connection: psycopg.Connection[Any], cycle_public_id: str) -
             """
             SELECT cycle.id, cycle.public_id, cycle.conversation_id, cycle.status,
                    cycle.warning_count, cycle.classification_id, cycle.protocol,
-                   classification.title, classification.description
+                   classification.confidence, classification.title,
+                   classification.description
             FROM conversation_processing_cycles AS cycle
             LEFT JOIN ia_classifications AS classification
               ON classification.id = cycle.classification_id
@@ -139,6 +184,9 @@ def _operation_state(
         return "definitive_failure", "cycle_not_eligible", None, None
     if classification_id is None:
         return "definitive_failure", "classification_missing", None, None
+    confidence = evaluate_request_confidence(cycle.get("confidence"))
+    if confidence.state != "allowed":
+        return "definitive_failure", confidence.reason, None, None
     title = cycle.get("title")
     description = cycle.get("description")
     if not isinstance(title, str) or not title.strip():
@@ -215,6 +263,12 @@ def _ensure_operation_sync(cycle_public_id: str) -> dict[str, Any]:
             mapping = _mapping_snapshot(connection, int(cycle["id"]))
             state, reason, facts, payload = _operation_state(connection, cycle, mapping)
             metadata = payload.metadata if payload is not None else {}
+            if cycle.get("classification_id") is not None:
+                confidence = evaluate_request_confidence(cycle.get("confidence"))
+                metadata = {
+                    **metadata,
+                    "confidence_gate": _confidence_gate_metadata(confidence),
+                }
             fingerprint = payload.fingerprint if payload is not None else None
             with connection.cursor(row_factory=dict_row) as cursor:
                 row = cursor.execute(
@@ -528,9 +582,143 @@ def _load_payload_sync(operation_id: int) -> AcessoriasRequestPayload:
     )
 
 
+def _request_confidence_for_operation_sync(
+    operation_id: int,
+) -> RequestConfidenceDecision:
+    with get_database_pool().connection() as connection:
+        row = connection.execute(
+            """
+            SELECT classification.confidence
+            FROM acessorias_request_operations AS operation
+            LEFT JOIN ia_classifications AS classification
+              ON classification.id = operation.source_classification_id
+            WHERE operation.id = %s
+            """,
+            (operation_id,),
+        ).fetchone()
+    return evaluate_request_confidence(None if row is None else row[0])
+
+
+def _finish_confidence_blocked_sync(
+    operation_id: int,
+    owner: str,
+    decision: RequestConfidenceDecision,
+) -> dict[str, Any]:
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    UPDATE acessorias_request_operations
+                    SET state = 'definitive_failure',
+                        failure_category = %s,
+                        failure_message = %s,
+                        payload_metadata_json = payload_metadata_json || %s,
+                        claim_owner = NULL,
+                        claim_expires_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                      AND state = 'attempting'
+                      AND claim_owner = %s
+                      AND post_started_at IS NULL
+                    RETURNING *
+                    """,
+                    (
+                        decision.reason,
+                        decision.reason,
+                        Jsonb({"confidence_gate": _confidence_gate_metadata(decision)}),
+                        operation_id,
+                        owner,
+                    ),
+                ).fetchone()
+            if row is None:
+                with connection.cursor(row_factory=dict_row) as cursor:
+                    row = cursor.execute(
+                        "SELECT * FROM acessorias_request_operations WHERE id = %s",
+                        (operation_id,),
+                    ).fetchone()
+    return _serialize_operation(cast(Mapping[str, Any] | None, row))
+
+
+def _refresh_payload_metadata_sync(
+    operation_id: int,
+    owner: str,
+    payload: AcessoriasRequestPayload,
+    decision: RequestConfidenceDecision,
+) -> bool:
+    metadata = {
+        **payload.metadata,
+        "confidence_gate": _confidence_gate_metadata(decision),
+    }
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            row = connection.execute(
+                """
+                UPDATE acessorias_request_operations
+                SET payload_fingerprint = %s,
+                    payload_metadata_json = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                  AND state = 'attempting'
+                  AND claim_owner = %s
+                  AND post_started_at IS NULL
+                RETURNING id
+                """,
+                (payload.fingerprint, Jsonb(metadata), operation_id, owner),
+            ).fetchone()
+    return row is not None
+
+
 def _mark_post_started_sync(operation_id: int, owner: str) -> bool:
     with get_database_pool().connection() as connection:
         with connection.transaction():
+            operation = connection.execute(
+                """
+                SELECT source_classification_id
+                FROM acessorias_request_operations
+                WHERE id = %s AND state = 'attempting' AND claim_owner = %s
+                FOR UPDATE
+                """,
+                (operation_id, owner),
+            ).fetchone()
+            if operation is None:
+                return False
+            confidence_row = connection.execute(
+                """
+                SELECT confidence
+                FROM ia_classifications
+                WHERE id = %s
+                """,
+                (operation[0],),
+            ).fetchone()
+            decision = evaluate_request_confidence(
+                None if confidence_row is None else confidence_row[0]
+            )
+            if decision.state != "allowed":
+                connection.execute(
+                    """
+                    UPDATE acessorias_request_operations
+                    SET state = 'definitive_failure',
+                        failure_category = %s,
+                        failure_message = %s,
+                        payload_metadata_json = payload_metadata_json || %s,
+                        claim_owner = NULL,
+                        claim_expires_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                      AND state = 'attempting'
+                      AND claim_owner = %s
+                      AND post_started_at IS NULL
+                    """,
+                    (
+                        decision.reason,
+                        decision.reason,
+                        Jsonb({"confidence_gate": _confidence_gate_metadata(decision)}),
+                        operation_id,
+                        owner,
+                    ),
+                )
+                return False
             row = connection.execute(
                 """
                 UPDATE acessorias_request_operations
@@ -642,6 +830,23 @@ async def create_request_for_cycle(
             claim_owner,
             AcessoriasRequestOutcome.retryable("payload_load_failed"),
         )
+    confidence = await asyncio.to_thread(
+        _request_confidence_for_operation_sync, operation_id
+    )
+    if confidence.state != "allowed":
+        return await asyncio.to_thread(
+            _finish_confidence_blocked_sync,
+            operation_id,
+            claim_owner,
+            confidence,
+        )
+    await asyncio.to_thread(
+        _refresh_payload_metadata_sync,
+        operation_id,
+        claim_owner,
+        payload,
+        confidence,
+    )
     try:
         request_provider = provider or AcessoriasRequestAdapter()
     except Exception:
@@ -652,7 +857,7 @@ async def create_request_for_cycle(
             AcessoriasRequestOutcome.retryable("provider_setup_failed"),
         )
     if not await asyncio.to_thread(_mark_post_started_sync, operation_id, claim_owner):
-        return claimed
+        return await asyncio.to_thread(_get_operation_for_cycle_sync, cycle_public_id)
     try:
         outcome = await asyncio.to_thread(request_provider.create_request, payload)
     except Exception:

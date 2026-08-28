@@ -20,7 +20,7 @@ from src.core.config import settings
 from src.core.digisac_client import DigisacContact
 
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0022_identity_discovery_command"
+CURRENT_SCHEMA_REVISION = "0023_manual_reconciliation"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -115,12 +115,14 @@ def _configure_connection_sync(connection: psycopg.Connection[Any]) -> None:
         SELECT
             set_config('statement_timeout', %s, false),
             set_config('lock_timeout', %s, false),
-            set_config('idle_in_transaction_session_timeout', %s, false)
+            set_config('idle_in_transaction_session_timeout', %s, false),
+            set_config('timezone', %s, false)
         """,
         (
             f"{settings.database_statement_timeout_ms}ms",
             f"{settings.database_lock_timeout_ms}ms",
             f"{settings.database_idle_transaction_timeout_ms}ms",
+            settings.app_timezone,
         ),
     )
     connection.commit()

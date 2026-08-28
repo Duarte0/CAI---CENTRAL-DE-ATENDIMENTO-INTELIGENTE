@@ -1,7 +1,7 @@
 # SPEC-0012 — Administração de vínculos contato DigiSac–empresa Acessórias
 
-- **Status:** leitura, confirmação/rejeição e redescoberta implementadas localmente nos issues 0038, 0039 e 0040
-- **Versão:** 1.1
+- **Status:** leitura, confirmação/rejeição e redescoberta implementadas localmente nos issues 0038, 0039, 0040 e 0045
+- **Versão:** 1.2
 - **Prioridade/Fase:** P1 / Milestone C.1 — operação administrativa de identidade
 - **Rastreabilidade:** PRD §§4, 5.2, 5.5, 8 e 10; ARCHITECTURE §§2.1, 3 e 13; `IMPLEMENTATION_PLAN.md`; SPEC-0001, SPEC-0006–0011
 - **Dependências:** SPEC-0001, SPEC-0006, SPEC-0007, SPEC-0008 e SPEC-0009; diretório Acessórias sincronizado; `ADMIN_API_TOKEN` configurado com segurança
@@ -220,6 +220,13 @@ rodar SQL. Ela requer que contato e diretório já estejam disponíveis; não ch
 providers DigiSac/Acessórias, não realiza backfill e não altera confirmação
 válida. Retorna `200` com o resultado de discovery e `409` para chave
 incompatível ou concorrência não resolvida.
+
+O issue 0045 adiciona uma fronteira distinta: a reconciliação manual
+`src/utils/reconcile_digisac_acessorias.py` não usa estas rotas como atalho em
+lote. O comando tem seu próprio registro operacional, lock e rematch de
+domínio; a API continua limitada ao contato explicitamente solicitado pelo
+operador. Nenhuma das duas superfícies cria Request, usa Redis como autoridade
+ou reescreve resoluções históricas de ciclo.
 
 ## Construção e fronteiras de implementação
 

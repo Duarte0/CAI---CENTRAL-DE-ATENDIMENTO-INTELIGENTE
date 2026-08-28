@@ -1,7 +1,7 @@
 # SPEC-0009 — Resolução de identidade DigiSac–Acessórias
 
-- **Status:** implementado localmente pelos issues 0015 e 0026; evidência descartável, sem provider/produção
-- **Versão:** 1.2 (issue 0026 conecta a resolução ao limite de preparação do worker)
+- **Status:** implementado localmente pelos issues 0015, 0026 e 0045; evidência descartável, sem provider/produção
+- **Versão:** 1.3 (issue 0045 adiciona redescoberta manual em lote)
 - **Prioridade/Fase:** P1 / Milestone C — DigiSac ↔ Acessórias Identity Resolution
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone C; SPEC-0001, SPEC-0004, SPEC-0007 e SPEC-0008
 - **Dependências:** SPEC-0001, SPEC-0004, SPEC-0007 e SPEC-0008 implementadas; nenhum blocker de decisão de produto permanece neste milestone
@@ -200,6 +200,17 @@ de confirmação deve executar transação controlada que:
    doubles.
 
 ## Decisões abertas e bloqueios
+
+### Redescoberta após reconciliação manual (issue 0045)
+
+Após a publicação atômica dos snapshots, `discover_all_identities()` percorre
+os contatos locais em ordem estável e reutiliza somente as regras desta SPEC:
+telefone exato, email exato e a variante brasileira 8↔9 aprovada. A fronteira
+é de domínio e PostgreSQL; não chama o ledger administrativo, provider, Redis,
+Request, mapping ou resolução de ciclo. Evidência nova pode criar candidato e
+permanecer junto da evidência antiga, mas não confirma, rejeita, rebaixa ou
+substitui um vínculo confirmado. Uma falha do lote é reportada como
+`matching_failed` e pode ser retomada por nova execução manual.
 
 Não permanece blocker material de produto para a decomposição de implementação
 do Milestone C. A regra de variante móvel brasileira e a semântica de ator

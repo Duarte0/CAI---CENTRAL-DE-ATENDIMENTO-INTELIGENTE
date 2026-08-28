@@ -1,10 +1,12 @@
 # SPEC-0006 — Documentação da API HTTP e contrato OpenAPI
 
-- **Status:** implementado em 2026-08-13; contrato OpenAPI e introdução HTTP publicados, sem mudança de comportamento HTTP
-- **Versão:** 1.1
+- **Status:** implementado; delta v1.2 documenta a superfície administrativa autenticada já montada, sem mudança de comportamento HTTP
+- **Versão:** 1.2
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
-- **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13; `IMPLEMENTATION_PLAN.md` baseline concluído e limitações HTTP registradas; SPEC-0001–0005
-- **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004 e SPEC-0005
+- **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13;
+  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012
+- **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004, SPEC-0005 e
+  SPEC-0012
 
 ## Objetivo e não objetivos
 
@@ -14,7 +16,8 @@ Esta SPEC não implementa documentação, não altera handlers, regras de negóc
 
 ## Estado de referência e superfície confirmada
 
-`src/api/routes.py` monta exatamente as oito operações de negócio abaixo, sem prefixo de versão:
+`src/api/routes.py` monta as oito operações de negócio originais abaixo, sem
+prefixo de versão:
 
 | Tag futura | Método e path | Fonte de resposta atual | Finalidade |
 | --- | --- | --- | --- |
@@ -27,6 +30,12 @@ Esta SPEC não implementa documentação, não altera handlers, regras de negóc
 | Ciclos | `GET /cycles/{cycle_id}/status` | linha de ciclo completa | Registro persistente de um ciclo. |
 | Ciclos | `GET /cycles/{cycle_id}/result` | linha de resultado projetada pelo banco | Classificação de um ciclo. |
 
+Além delas, o router separado da SPEC-0012 monta seis operações internas sob
+`/admin/acessorias`: triagem de vínculos, detalhe de identidade, busca de
+empresas, confirmação, rejeição e redescoberta. Elas usam Bearer
+`ADMIN_API_TOKEN`, são descritas pelo OpenAPI como administrativas internas e
+não mudam a ausência de autenticação nas consultas operacionais originais.
+
 A criação atual de `FastAPI` não sobrescreve as URLs-padrão: `GET /openapi.json`, `GET /docs` (Swagger UI) e `GET /redoc` (ReDoc) já são rotas auxiliares do framework. Não são endpoints de negócio adicionais. A composição publicada em `src/api/openapi.py` preserva essas URLs, fornece servidor de desenvolvimento, esquema HMAC condicional e projeções de resposta. Mudança futura deve preservar essas garantias, salvo uma mudança de API aprovada em SPEC distinta. A ausência de `response_model` explícito na maioria dos handlers continua sendo uma limitação de enforcement, não uma lacuna do documento publicado.
 
 O código é a fonte de verdade para este contrato. Em particular, `ConversationProcessing` é o único `response_model` atual; `GET /queues`, webhook, resultados e registros de ciclo devolvem dicionários. A implementação de documentação **must** compor modelos/esquemas de documentação que representem fielmente esses JSONs, sem mudar os corpos, códigos ou semântica dos handlers. Onde uma linha persistida é devolvida com `SELECT *`, somente os campos realmente serializados por esse endpoint podem entrar no schema público; tabelas, campos e chaves que não são devolvidos **must not** ser promovidos a contrato público.
@@ -36,12 +45,17 @@ O código é a fonte de verdade para este contrato. Em particular, `Conversation
 1. A aplicação **must** gerar OpenAPI 3.x válido a partir da aplicação FastAPI e, quando necessário, de composição próxima aos seus modelos/contratos reais; uma cópia manual desconectada de handlers e Pydantic **must not** tornar-se fonte concorrente de verdade.
 2. O documento **must** conter `info`, `servers`, `tags`, `paths`, parâmetros, `requestBody`, responses, `components/schemas`, `components/securitySchemes`, `security` e exemplos sempre que aplicáveis. `info` **must** refletir o título e versão efetivos da aplicação ou uma fonte única que os alimente; não inventar versão sem relação com o runtime.
 3. `servers` **must** usar apenas valores seguros e verificáveis. A página introdutória **must** identificar `http://localhost:8000` como base URL de desenvolvimento, coerente com `WEBHOOK_URL` padrão; ela **must not** declarar uma URL de produção sem configuração/autoridade correspondente.
-4. Tags **must** separar `Webhook DigiSac`, `Operações`, `Conversas` e `Ciclos`. O OpenAPI **must** apresentar cada operação de negócio confirmada exatamente uma vez e **must not** apresentar `/v1/...`, `/v2/...`, diagnósticos de webhook removidos, nem rotas não montadas como implementadas.
+4. Tags **must** separar `Webhook DigiSac`, `Operações`, `Conversas`, `Ciclos`
+   e `Administração`. O OpenAPI **must** apresentar cada operação
+   montada exatamente uma vez: as oito operações de negócio originais e as seis
+   rotas administrativas internas da SPEC-0012. Ele **must not** apresentar
+   `/v1/...`, `/v2/...`, diagnósticos de webhook removidos, UI administrativa ou
+   rotas não montadas como implementadas.
 5. Estruturas repetidas **must** usar `components/schemas` e `$ref` quando isto não ocultar uma variação real. Candidatas incluem classificação, status de processamento, resumo/registro de ciclo, resultado, métricas, respostas de webhook e erros por formato real.
 6. Como o contrato de erro atual não é uniforme, a documentação **must not** inventar um `Error` universal. Ela **must** documentar separadamente o objeto `{"detail": "..."}` dos `HTTPException` conhecidos e o formato padrão FastAPI de erro de validação (`422`) quando ele ocorrer; falhas não mapeadas pelo código permanecem resposta de servidor, sem formato de negócio prometido.
 7. O OpenAPI **must** usar exemplos fictícios, sanitizados e consistentes com seus schemas. Nenhum exemplo, descrição ou metadado **must not** conter segredo, token, URL assinada/de download, cabeçalho/corpo bruto de webhook ou mídia binária.
 
-Como o repositório concentra documentação de consumidor no `README.md` e não possui uma árvore `docs/`, a seção “API HTTP” publicada deve permanecer a introdução concisa para propósito, `http://localhost:8000` em desenvolvimento, superfície suportada, HMAC do webhook, ausência atual de autenticação nas consultas internas, formato geral de resultados, erros, estados de processamento, links para `/openapi.json`, `/docs` e `/redoc`, e o aviso de versionamento sem prefixo. A referência detalhada permanece no OpenAPI/UI.
+Como o repositório concentra documentação de consumidor no `README.md` e não possui uma árvore `docs/`, a seção “API HTTP” publicada deve permanecer a introdução concisa para propósito, `http://localhost:8000` em desenvolvimento, superfície suportada, HMAC do webhook, ausência atual de autenticação nas consultas internas, Bearer `ADMIN_API_TOKEN` somente na administração interna, formato geral de resultados, erros, estados de processamento, links para `/openapi.json`, `/docs` e `/redoc`, e o aviso de versionamento sem prefixo. A referência detalhada permanece no OpenAPI, Swagger UI e ReDoc; isso não autoriza uma UI administrativa.
 
 ## Contratos por endpoint
 
@@ -74,13 +88,23 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
 
 ## Segurança, privacidade e compatibilidade
 
-1. O OpenAPI **must** conter um `securityScheme` de HMAC/header para o webhook e aplicá-lo somente de modo condicional à operação DigiSac, com explicação de `WEBHOOK_SECRET`. Ele **must not** modelar API key, Bearer/JWT, login ou autorização nos endpoints de consulta, pois não existem no contrato atual.
+1. O OpenAPI **must** conter um `securityScheme` de HMAC/header para o webhook
+   e aplicá-lo somente de modo condicional à operação DigiSac, com explicação de
+   `WEBHOOK_SECRET`. Ele **must** conter também o esquema Bearer opaco da
+   administração e aplicá-lo somente às seis rotas `/admin/acessorias` da
+   SPEC-0012. Ele **must not** modelar API key, Bearer/JWT, login ou autorização
+   nos endpoints de consulta operacionais, pois não existem nesse contrato.
 2. Documentação, UI e exemplos **must not** exibir corpos brutos de webhook, segredos, tokens, headers recebidos, URLs assinadas/de download ou mídia binária. Não existe endpoint de diagnóstico de webhook e `/webhook/debug` **must not** aparecer.
 3. As rotas implementadas permanecem sem prefixo. A documentação **must** usar os paths exatamente como montados e explicar que `/v1/`/`/v2/` são apenas política futura possível, não superfície disponível. Mudança de versão, autenticação, rate limiting, schemas de resposta ou URLs de documentação requer SPEC/issue separada quando alterar comportamento.
 
 ## Testes, validação e aceitação de regressão
 
-1. Os testes do documento gerado **must** comprovar OpenAPI 3.x válido, título/versão corretos, presença única das oito operações e ausência de `/v1`, `/v2` e diagnósticos removidos. O teste **must** conferir métodos, tags, paths, parâmetros path e `limit`, responses relevantes, `$ref` reutilizáveis e exemplos válidos contra seus schemas.
+1. Os testes do documento gerado **must** comprovar OpenAPI 3.x válido,
+   título/versão corretos, presença única das oito operações originais e das
+   seis operações administrativas, e ausência de `/v1`, `/v2`, diagnósticos
+   removidos e UI não montada. O teste **must** conferir métodos, tags, paths,
+   parâmetros path e `limit`, responses relevantes, `$ref` reutilizáveis e
+   exemplos válidos contra seus schemas.
 2. Os testes **must** verificar segurança do webhook: header e explicação HMAC condicional, `401` antes de parse, ausência de segredo nos exemplos/documento e nenhuma security scheme fictícia em consultas. Também **must** verificar `400`, `200` ignorado, `202` aceito/duplicado, `404` de entidade/resultado, `422` de `limit`, `503` de banco em health e a distinção entre falha de Redis não mapeada e contrato `503` do banco.
 3. Os schemas de resposta **must** ser comparados contra `ConversationProcessing`, a projeção de `get_cycle_result`, a linha exposta por `get_cycle`/`list_cycles` e o dicionário real de `queue_metrics`; mudanças em handler, modelo ou migration que alterem resposta **must** atualizar a documentação e seus testes no mesmo change.
 4. Testes de UI/endpoints de documentação **must** confirmar que `/openapi.json`, `/docs` e `/redoc` respondem corretamente. A página de `README.md` **must** apontar apenas para esses paths e base URL de desenvolvimento confirmados.
@@ -102,15 +126,16 @@ Não há decisão de produto pendente para a publicação concluída. Permanecem
 Em 2026-08-13, o contrato foi publicado por uma composição gerada a partir das
 rotas FastAPI em `src/api/openapi.py`, mantendo os handlers, os códigos de
 resposta e a serialização existentes. O documento contém as oito operações
-montadas, servidor de desenvolvimento, quatro tags, o esquema HMAC condicional
-do webhook, projeções de filas/ciclos/resultados, exemplos sanitizados e as
-URLs padrão `/openapi.json`, `/docs` e `/redoc`. O README foi atualizado com a
-introdução para consumidores internos.
+originais e, após os issues 0038–0040, as seis operações administrativas
+internas da SPEC-0012, servidor de desenvolvimento, cinco tags, os esquemas
+HMAC e Bearer condicionais, projeções sanitizadas e as URLs padrão
+`/openapi.json`, `/docs` e `/redoc`. O README foi atualizado com a introdução
+para consumidores internos; nenhuma UI administrativa foi adicionada.
 
 Os testes focados do contrato e dos endpoints de documentação passaram (**5
-passed**, evidência de 2026-08-13); a matriz canônica mais recente, executada
-em 2026-08-14 após issue 0012, passou com **143 passed, 36 skipped** na etapa
-offline e **36 passed, 143 deselected** no PostgreSQL 16 descartável.
-Compileall, Pyright estrito, buscas direcionadas, `git diff --check` e
-`graphify update .` também passaram. Os skips e a matriz descartável não
-comprovam Redis, DigiSac, Groq, réplicas, deployment ou produção.
+passed**, evidência de 2026-08-13). A evidência canônica mais recente, registrada
+no issue 0040 e conferida nesta reconciliação com `APP_TIMEZONE=UTC`, passou
+compileall, Pyright estrito, **238 passed, 76 skipped** offline, Alembic
+`0022_identity_discovery_command` e **76 passed, 238 deselected** no PostgreSQL
+16 descartável. Os skips e a matriz descartável não comprovam Redis, DigiSac,
+Groq, secret manager, réplicas, deployment ou produção.
