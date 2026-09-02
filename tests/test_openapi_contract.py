@@ -243,7 +243,17 @@ def test_openapi_projects_queries_and_operational_errors() -> None:
     assert set(document["paths"]["/health"]["get"]["responses"]) == {"200", "503"}
     assert set(document["paths"]["/queues"]["get"]["responses"]) == {"200"}
     queue_metrics = schemas["QueueMetrics"]
-    assert {"ia_due", "ia_scheduled", "ia_leased"}.issubset(
+    assert {
+        "ia_due",
+        "ia_scheduled",
+        "ia_leased",
+        "audio_due",
+        "audio_scheduled",
+        "audio_leased",
+        "audio_stale",
+        "audio_completed",
+        "audio_failed",
+    }.issubset(
         queue_metrics["required"]
     )
 

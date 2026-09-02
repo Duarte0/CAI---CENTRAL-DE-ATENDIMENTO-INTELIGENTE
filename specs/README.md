@@ -6,9 +6,9 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 
 | ID | Especificação | Status | Prioridade/Fase | Dependências | Resumo |
 | --- | --- | --- | --- | --- | --- |
-| SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.5; finalização IA PostgreSQL no issue 0048; boundaries estruturais 0032, 0033 e 0035; auditoria Redis 0037 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações, fronteiras de privacidade e limpeza manual allowlisted de resíduos Redis. |
+| SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.5; finalização IA PostgreSQL no issue 0048; transcrição de áudio PostgreSQL no issue 0049; boundaries estruturais 0032, 0033 e 0035; auditoria Redis 0037 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações, fronteiras de privacidade e limpeza manual allowlisted de resíduos Redis. |
 | SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.5; boundaries estruturais 0030 e 0033 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; não há superfície de diagnóstico de webhook. |
-| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.8; polling/lease PostgreSQL da IA no issue 0048; gate compartilhado de áudio/imagem no issue 0046; boundaries estruturais 0029, 0031 e 0035; auditoria Redis 0037 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; finalização IA sem fila Redis persistente, mídia pendente espera, mídia terminal bloqueia e somente conteúdo não vazio concluído habilita classificação; resíduos legados tratados sem tocar estado ativo. |
+| SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v1.9; polling/lease PostgreSQL da IA e do áudio nos issues 0048–0049; gate compartilhado de áudio/imagem no issue 0046; boundaries estruturais 0029, 0031 e 0035; auditoria Redis 0037 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; finalização IA e transcrição de áudio sem transporte Redis ativo, imagem pendente ainda usa fila legada até 0050, mídia terminal bloqueia e somente conteúdo não vazio concluído habilita classificação; resíduos legados tratados sem tocar estado ativo. |
 | SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.7 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
 | SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.4; issue 0041 | P1 / reconciliação documental | SPEC-0002–0004, SPEC-0006, SPEC-0012 | Reconciliou PRD/arquitetura/rastreabilidade com `0022`/`238+76` e a API administrativa, sem alegar UI. |
 | SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.2 | P1 / documentação de compatibilidade | SPEC-0001–0005, SPEC-0012 | Publica OpenAPI/Swagger/ReDoc para as oito rotas originais e as seis rotas administrativas internas montadas. |
@@ -20,11 +20,13 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0012 | [Administração de vínculos contato DigiSac–empresa Acessórias](0012-administrative-contact-company-link-management.md) | Implementado localmente v1.2; issues 0038, 0039, 0040 e 0045 | P1 / Milestone C.1 | SPEC-0001, SPEC-0006–0009; `ADMIN_API_TOKEN` em secret manager/ambiente protegido | API interna autenticada para listar, consultar, confirmar, rejeitar e redescobrir um contato; a reconciliação manual em lote é uma fronteira separada e não usa o ledger por contato. |
 | SPEC-0013 | [Interface web administrativa para conciliação de identidade](0013-administrative-identity-link-review-ui.md) | Implementado localmente v1.5; issues 0042–0044 | P1 / Milestone C.2 | SPEC-0012; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` em ambiente protegido | Fundação FastAPI com login/logout, sessão assinada, fila, detalhe, busca e ações de confirmação/rejeição/discovery via BFF local; sem matching no frontend ou acesso direto ao banco. |
 
-A evidência mais recente registrada para o runner de SPEC-0004 é **269 passed,
-82 skipped** na etapa offline e **82 passed, 269 deselected** na etapa
-PostgreSQL descartável (issue 0047, sem nova migration; head
-`0023_manual_reconciliation`). As execuções anteriores permanecem registradas
-abaixo como evidência histórica datada.
+A evidência mais recente registrada para o runner de SPEC-0004 é **273 passed,
+82 skipped** na etapa offline. A validação PostgreSQL focada do issue 0049 passou
+**19 testes** após aplicar a migration `0024_durable_media_leases`, cobrindo
+claim, agenda futura, lease expirado, ownership e a recuperação de imagem. Essa
+execução foi descartável e não substitui evidência de provider ou produção. A
+execução anterior de issue 0047, antes da migration 0024, permanece registrada
+abaixo como evidência histórica com head `0023_manual_reconciliation`.
 
 O issue 0045 acrescenta a migration `0023_manual_reconciliation`
 e a fronteira manual incremental. Em 2026-08-25, a execução canônica com

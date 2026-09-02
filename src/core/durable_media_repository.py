@@ -28,10 +28,16 @@ def _validate_content_table(table: str) -> None:
 
 
 def _reserve_content_sync(
-    table: str, message_id: str, conversation_id: str | None, model: str
+    table: str,
+    message_id: str,
+    conversation_id: str | None,
+    model: str,
+    *,
+    legacy_publication_marker: bool,
 ) -> bool:
     _validate_content_table(table)
     now = datetime.now(timezone.utc)
+    publication_marker = now if legacy_publication_marker else None
     with get_database_pool().connection() as connection:
         with connection.transaction():
             row = connection.execute(
@@ -53,7 +59,15 @@ def _reserve_content_sync(
                 RETURNING message_id
                 """
                 ).format(table_name=sql.Identifier(table)),
-                (message_id, conversation_id, model, now, now, now, now),
+                (
+                    message_id,
+                    conversation_id,
+                    model,
+                    now,
+                    publication_marker,
+                    now,
+                    now,
+                ),
             ).fetchone()
             return row is not None
 
@@ -67,6 +81,7 @@ async def reserve_transcription(
         message_id,
         conversation_id,
         model,
+        legacy_publication_marker=False,
     )
 
 
@@ -81,6 +96,7 @@ def _set_content_status_sync(
     next_attempt_at: datetime | None = None,
     expected_statuses: Sequence[str] | None = None,
     expected_updated_at: datetime | None = None,
+    expected_lease_owner: str | None = None,
 ) -> datetime | None:
     _validate_content_table(table)
     if status not in {"pending", "processing", "completed", "failed"}:
@@ -106,10 +122,19 @@ def _set_content_status_sync(
                         ELSE NULL
                     END,
                     enqueued_at = NULL,
+                    lease_owner = CASE
+                        WHEN %s::text IS NULL THEN lease_owner
+                        ELSE NULL
+                    END,
+                    lease_expires_at = CASE
+                        WHEN %s::text IS NULL THEN lease_expires_at
+                        ELSE NULL
+                    END,
                     updated_at = CURRENT_TIMESTAMP, completed_at = %s
                 WHERE message_id = %s
                   AND status = ANY(%s)
                   AND (%s::timestamptz IS NULL OR updated_at = %s)
+                  AND (%s::text IS NULL OR lease_owner = %s::text)
                 RETURNING updated_at
                 """
                 ).format(table_name=sql.Identifier(table)),
@@ -120,11 +145,15 @@ def _set_content_status_sync(
                     int(increment_attempt),
                     status,
                     next_attempt_at,
+                    expected_lease_owner,
+                    expected_lease_owner,
                     completed_at,
                     message_id,
                     list(expected_statuses),
                     expected_updated_at,
                     expected_updated_at,
+                    expected_lease_owner,
+                    expected_lease_owner,
                 ),
             ).fetchone()
     return row[0] if row else None
@@ -140,6 +169,7 @@ async def set_transcription_status(
     next_attempt_at: datetime | None = None,
     expected_statuses: Sequence[str] | None = None,
     expected_updated_at: datetime | None = None,
+    expected_lease_owner: str | None = None,
 ) -> datetime | None:
     return await asyncio.to_thread(
         _set_content_status_sync,
@@ -152,6 +182,94 @@ async def set_transcription_status(
         next_attempt_at=next_attempt_at,
         expected_statuses=expected_statuses,
         expected_updated_at=expected_updated_at,
+        expected_lease_owner=expected_lease_owner,
+    )
+
+
+def _claim_content_sync(
+    table: str,
+    *,
+    owner: str,
+    lease_seconds: int,
+    message_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Atomically claim one due media row for a polling worker."""
+    _validate_content_table(table)
+    normalized_owner = owner.strip()
+    if not normalized_owner:
+        raise ValueError("A media lease owner is required")
+    if lease_seconds < 1:
+        raise ValueError("Media lease duration must be positive")
+
+    message_filter = sql.SQL("")
+    parameters: list[Any] = []
+    if message_id is not None:
+        message_filter = sql.SQL("AND message_id = %s")
+        parameters.append(message_id)
+    parameters.extend([normalized_owner, lease_seconds])
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    sql.SQL(
+                        """
+                    WITH candidate AS (
+                        SELECT message_id, status AS previous_status
+                        FROM {table_name}
+                        WHERE (
+                            (
+                                status = 'pending'
+                                AND (next_attempt_at IS NULL
+                                     OR next_attempt_at <= CURRENT_TIMESTAMP)
+                            )
+                            OR (
+                                status = 'processing'
+                                AND (lease_expires_at IS NULL
+                                     OR lease_expires_at <= CURRENT_TIMESTAMP)
+                            )
+                        )
+                        {message_filter}
+                        ORDER BY COALESCE(next_attempt_at, updated_at), message_id
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    UPDATE {table_name} AS content
+                    SET status = 'processing',
+                        attempt_count = content.attempt_count + 1,
+                        error_message = CASE
+                            WHEN candidate.previous_status = 'processing'
+                            THEN 'recovered after processing lease expired'
+                            ELSE content.error_message
+                        END,
+                        next_attempt_at = NULL,
+                        enqueued_at = NULL,
+                        lease_owner = %s,
+                        lease_expires_at = CURRENT_TIMESTAMP
+                            + (%s * INTERVAL '1 second'),
+                        completed_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    FROM candidate
+                    WHERE content.message_id = candidate.message_id
+                    RETURNING content.*, candidate.previous_status
+                    """
+                    ).format(
+                        table_name=sql.Identifier(table),
+                        message_filter=message_filter,
+                    ),
+                    parameters,
+                ).fetchone()
+    return _row_dict(row)
+
+
+async def claim_next_transcription(
+    *, owner: str, lease_seconds: int, message_id: str | None = None
+) -> dict[str, Any] | None:
+    return await asyncio.to_thread(
+        _claim_content_sync,
+        "message_transcriptions",
+        owner=owner,
+        lease_seconds=lease_seconds,
+        message_id=message_id,
     )
 
 
@@ -171,6 +289,62 @@ def _get_content_sync(table: str, message_id: str) -> dict[str, Any] | None:
 async def get_transcription(message_id: str) -> dict[str, Any] | None:
     return await asyncio.to_thread(
         _get_content_sync, "message_transcriptions", message_id
+    )
+
+
+def _content_work_metrics_sync(table: str) -> dict[str, int]:
+    _validate_content_table(table)
+    with get_database_pool().connection() as connection:
+        row = connection.execute(
+            sql.SQL(
+                """
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE status = 'pending'
+                          AND (next_attempt_at IS NULL
+                               OR next_attempt_at <= CURRENT_TIMESTAMP)
+                    ) AS due,
+                    COUNT(*) FILTER (
+                        WHERE status = 'pending'
+                          AND next_attempt_at > CURRENT_TIMESTAMP
+                    ) AS scheduled,
+                    COUNT(*) FILTER (
+                        WHERE status = 'processing'
+                          AND lease_expires_at > CURRENT_TIMESTAMP
+                    ) AS leased,
+                    COUNT(*) FILTER (
+                        WHERE status = 'processing'
+                          AND (lease_expires_at IS NULL
+                               OR lease_expires_at <= CURRENT_TIMESTAMP)
+                    ) AS stale,
+                    COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                    COUNT(*) FILTER (WHERE status = 'failed') AS failed
+                FROM {table_name}
+                """
+            ).format(table_name=sql.Identifier(table))
+        ).fetchone()
+    if row is None:
+        return {
+            "due": 0,
+            "scheduled": 0,
+            "leased": 0,
+            "stale": 0,
+            "completed": 0,
+            "failed": 0,
+        }
+    return {
+        "due": int(row[0]),
+        "scheduled": int(row[1]),
+        "leased": int(row[2]),
+        "stale": int(row[3]),
+        "completed": int(row[4]),
+        "failed": int(row[5]),
+    }
+
+
+async def get_transcription_work_metrics() -> dict[str, int]:
+    return await asyncio.to_thread(
+        _content_work_metrics_sync, "message_transcriptions"
     )
 
 
@@ -214,6 +388,7 @@ async def reserve_image_extraction(
         message_id,
         conversation_id,
         model,
+        legacy_publication_marker=True,
     )
 
 

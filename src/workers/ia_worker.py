@@ -23,7 +23,6 @@ from src.core.db import (  # noqa: F401
     reserve_image_extraction,
     reserve_transcription,
     release_image_publication,
-    release_transcription_publication,
     resolve_user_names,
     resolve_ticket_assignments,
     save_cycle_messages,
@@ -200,18 +199,23 @@ class IAWorker:
                     conversation_id,
                     settings.audio_transcription_model,
                 )
-                queue = "audio_transcription_queue"
-            else:
-                reserved = await reserve_image_extraction(
-                    message_id,
-                    conversation_id,
-                    settings.image_vision_model,
-                )
-                queue = "image_extraction_queue"
+                if reserved:
+                    logger.info(
+                        "Audio transcription admitted to PostgreSQL polling: "
+                        "message_id=%s conversation_id=%s",
+                        message_id,
+                        conversation_id,
+                    )
+                continue
+            reserved = await reserve_image_extraction(
+                message_id,
+                conversation_id,
+                settings.image_vision_model,
+            )
             if reserved:
                 try:
                     await self.redis.rpush(
-                        queue,
+                        "image_extraction_queue",
                         json.dumps(
                             {
                                 "message_id": message_id,
@@ -225,13 +229,9 @@ class IAWorker:
                         ),
                     )
                 except Exception as exc:
-                    error = f"queue publish failed: {exc}"
-                    if message_type in AUDIO_TYPES:
-                        await release_transcription_publication(
-                            message_id, error
-                        )
-                    else:
-                        await release_image_publication(message_id, error)
+                    await release_image_publication(
+                        message_id, f"queue publish failed: {exc}"
+                    )
                     raise
 
     def _next_media_check_at(

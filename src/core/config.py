@@ -58,7 +58,6 @@ class Settings(BaseSettings):
     audio_retry_base_seconds: float = 2.0
     audio_retry_max_delay_seconds: float = 15 * 60
     audio_retry_provider_margin_seconds: float = 1.0
-    audio_dead_letter_recovery_interval_seconds: float = 60.0
     image_vision_model: str = "qwen/qwen3.6-27b"
     image_vision_max_completion_tokens: int = 5000
     image_max_bytes: int = 4 * 1024 * 1024
@@ -165,7 +164,6 @@ class Settings(BaseSettings):
         "audio_retry_base_seconds",
         "audio_retry_max_delay_seconds",
         "audio_retry_provider_margin_seconds",
-        "audio_dead_letter_recovery_interval_seconds",
         "image_retry_base_seconds",
         "image_retry_max_delay_seconds",
         "image_retry_provider_margin_seconds",

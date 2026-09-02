@@ -1,9 +1,9 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; decisões de produto registradas abaixo
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issue 0049 retirou o transporte Redis ativo de transcrição de áudio; decisões de produto registradas abaixo
 - **Versão:** 1.5
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035 e 0037
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0024_durable_media_leases`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037 e 0049
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
@@ -56,9 +56,16 @@ reconciliação PostgreSQL; sua allowlist remove apenas famílias órfãs revisa
 retém `ia_processing` inconclusivo e não toca `processed:*`, resultados
 transitórios, filas, dead-letters ou registros PostgreSQL.
 
+**Transcrição durável (2026-09-02):** o issue 0049 estende a fronteira: a
+reserva, agenda, owner, lease, retry e resultado de áudio vivem em
+`message_transcriptions`; `audio_worker` não precisa de Redis nem publica listas.
+Redis permanece permitido para coordenação temporária, status/resultados TTL e
+extração de imagem até sua migração específica. Listas legadas de áudio são
+somente evidência de cutover e não podem ser usadas como fonte de backlog.
+
 ## Contrato de dados e integridade
 
-1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. O ciclo IA elegível **deve** ser reclamado por lease PostgreSQL; Redis limita-se às filas de mídia ainda ativas, idempotência temporária e status/resultados com TTL.
+1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. O ciclo IA e a transcrição de áudio elegíveis **devem** ser reclamados por lease PostgreSQL; Redis limita-se à fila de imagem ainda ativa, idempotência temporária e status/resultados com TTL.
 2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos.
 3. `classification_messages` e `conversation_cycle_messages` **devem** preservar a ordem que fundamenta o resultado. Um vínculo de mensagem e sua posição **devem** ser únicos dentro da classificação ou ciclo correspondente. Uma mensagem **não pode** pertencer a dois ciclos persistentes.
 4. Timestamps duráveis **devem** usar `TIMESTAMPTZ`; listas e snapshots estruturados **devem** usar JSONB onde o schema o define. Identificadores externos não resolvidos **devem** permanecer preservados, sem nomes ou transferências inventados.

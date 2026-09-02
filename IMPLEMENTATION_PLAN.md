@@ -14,9 +14,11 @@ complete locally; production acceptance remains separate._
   history reconstruction, Groq classification, PostgreSQL polling/lease for IA
   finalization, Redis coordination where still required, and
   separate durable audio/image processing are implemented. PostgreSQL state is
-  reserved before media queue publication; lease, due-retry, reconciliation, and
-  idempotency paths recover interrupted work. Terminal image failure blocks
-  only dependent cycles; terminal audio failure becomes a warning.
+  reserved before media transport; IA finalization and audio transcription are
+  claimed by PostgreSQL polling/lease, while image remains on Redis until issue
+  0050. Lease, due-retry, reconciliation, and idempotency paths recover
+  interrupted work. Terminal image failure blocks only dependent cycles; terminal
+  audio failure also remains blocked by the media gate.
 - **[completed] Persistent-only finalization and privacy hardening**
   (SPEC-0001–0003; issues 0005, 0024, 0025, 0048). The legacy Redis
   buffer/debounce mode and raw-payload diagnostic routes are removed. Parser
@@ -26,11 +28,11 @@ complete locally; production acceptance remains separate._
   claimed directly in PostgreSQL, while a bounded manual inventory retires only
   validated legacy queue entries.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
-  issues 0004, 0027–0033, 0037). Alembic owns the schema through
-  `0022_identity_discovery_command`; persistence boundaries for contacts,
-  cycles, assignments, media, classifications, and DigiSac directory state are
-  isolated behind repositories. Audio transient retry parity and bounded Redis
-  residue cleanup are implemented with recovery coverage.
+  issues 0004, 0027–0033, 0037, 0049). Alembic owns the schema through
+  `0024_durable_media_leases`; persistence boundaries for contacts, cycles,
+  assignments, media, classifications, and DigiSac directory state are isolated
+  behind repositories. Audio transient retry parity, PostgreSQL polling/lease,
+  and bounded legacy-list cutover are implemented with recovery coverage.
 - **[completed] Acessórias directory through Request creation**
   (SPEC-0007–0011; issues 0012–0022, 0026, 0034, 0036). Directory sync,
   canonical ticket `contact.id`, conservative identity candidates/manual
@@ -45,13 +47,18 @@ complete locally; production acceptance remains separate._
   rediscovery. It uses `ADMIN_API_TOKEN`, PostgreSQL command idempotency, and
   Alembic `0021`/`0022`; it neither calls providers nor changes historical
   cycle resolution or Request state.
-- **[completed | current checkout] Offline verification.** On 2026-08-21,
+- **[historical | 2026-08-21] Offline verification.**
   `PYTHONPATH=/app python -m pytest -q` passed **238** and skipped **76**.
-  The skips are the intentionally unconfigured `CAI_TEST_DATABASE_URL`
-  PostgreSQL family. The most recent recorded disposable runner evidence is
-  compileall and strict Pyright clean, Alembic head `0022`, and PostgreSQL
-  pytest **76 passed, 238 deselected** (issue 0040). The opt-in local webhook
-  smoke remains import-safe and outside canonical automation.
+  The skips were the intentionally unconfigured `CAI_TEST_DATABASE_URL`
+  PostgreSQL family. The opt-in local webhook smoke remains import-safe and
+  outside canonical automation.
+- **[completed | current checkout | 2026-09-02] Issue 0049 verification.** The
+  full offline suite passed **273 passed, 82 skipped**. A disposable PostgreSQL
+  database applied Alembic head `0024_durable_media_leases` and passed **19
+  focused tests** for atomic audio claims, due scheduling, stale leases,
+  lease-owner completion and existing image recovery. Compileall and diff
+  checks also passed; this is local evidence, not provider or production
+  acceptance.
 
 ### Implemented with bounded evidence
 
@@ -69,10 +76,10 @@ complete locally; production acceptance remains separate._
 
 ### Approved follow-up backlog
 
-- **[open | coordinated migration]** Issues 0049 and 0050 migrate the still
-  Redis-backed audio and image transports after the IA PostgreSQL claim pattern
-  is stable. Issue 0051 preserves hydration backoff; it is already DB-only and
-  is not part of queue removal.
+- **[open | coordinated migration]** Issue 0050 migrates the remaining
+  Redis-backed image transport using the shared durable-media lease pattern.
+  Issue 0051 preserves hydration backoff; it is already DB-only and is not part
+  of queue removal.
 
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
@@ -80,7 +87,8 @@ complete locally; production acceptance remains separate._
   database prerequisite policy.
 - **[superseded/deprecated]** Issue 0023 is deprecated: its active/inactive
   directory concern was superseded by the later directory-contract alignment,
-  not an open duplicate build item. Issues 0001–0022 and 0024–0041 are closed.
+  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0048–0049
+  are closed.
 
 ## Priority plan
 
@@ -191,8 +199,9 @@ complete locally; production acceptance remains separate._
   OpenAPI baseline work (0007–0011), Acessórias Milestones A–E (0012–0022,
   0026), audio retry parity (0027), persistence/provider boundary refactors
   (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
-  slices (0038–0040), the documentation reconciliation (0041), and PostgreSQL
-  polling/lease for persistent IA finalization (0048).
+  slices (0038–0040), the documentation reconciliation (0041), PostgreSQL
+  polling/lease for persistent IA finalization (0048), and PostgreSQL polling
+  for audio transcription (0049).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -201,7 +210,8 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issue 0048 is complete
-locally and leaves 0049–0051 as explicitly scoped follow-up work. Request
+shell/session/BFF, read, and command-action increments. Issues 0048 and 0049 are
+complete locally; issue 0050 remains the explicitly scoped image follow-up.
+Request
 lifecycle, broader IA policy, and production acceptance remain separate blocked
 plan items.

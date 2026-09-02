@@ -102,8 +102,9 @@ def _schemas() -> dict[str, JsonSchema]:
         "QueueMetrics": {
             "title": "Queue metrics",
             "description": (
-                "Legacy Redis queue/dead-letter counts plus durable IA work counts. "
-                "ia_due, ia_scheduled, and ia_leased are derived from PostgreSQL; "
+                "Legacy Redis queue/dead-letter counts plus durable IA and audio "
+                "work counts. ia_due, ia_scheduled, ia_leased and audio_* work "
+                "counts are derived from PostgreSQL; "
                 "conversation_cycles is an empty map when cycle metrics are unavailable."
             ),
             "type": "object",
@@ -112,6 +113,12 @@ def _schemas() -> dict[str, JsonSchema]:
                 "ia_dead_letter",
                 "audio_transcription_queue",
                 "audio_transcription_dead_letter",
+                "audio_due",
+                "audio_scheduled",
+                "audio_leased",
+                "audio_stale",
+                "audio_completed",
+                "audio_failed",
                 "image_extraction_queue",
                 "image_extraction_dead_letter",
                 "ia_due",
@@ -138,7 +145,17 @@ def _schemas() -> dict[str, JsonSchema]:
             }
             | {
                 name: {"type": "integer", "minimum": 0}
-                for name in ("ia_due", "ia_scheduled", "ia_leased")
+                for name in (
+                    "ia_due",
+                    "ia_scheduled",
+                    "ia_leased",
+                    "audio_due",
+                    "audio_scheduled",
+                    "audio_leased",
+                    "audio_stale",
+                    "audio_completed",
+                    "audio_failed",
+                )
             },
             "additionalProperties": False,
             "example": {
@@ -146,6 +163,12 @@ def _schemas() -> dict[str, JsonSchema]:
                 "ia_dead_letter": 0,
                 "audio_transcription_queue": 1,
                 "audio_transcription_dead_letter": 0,
+                "audio_due": 1,
+                "audio_scheduled": 0,
+                "audio_leased": 1,
+                "audio_stale": 0,
+                "audio_completed": 12,
+                "audio_failed": 1,
                 "image_extraction_queue": 0,
                 "image_extraction_dead_letter": 1,
                 "ia_due": 2,
@@ -535,7 +558,8 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         summary="Inspect queue counts",
         description=(
             "Returns legacy Redis queue/dead-letter counts, PostgreSQL-derived IA "
-            "due/scheduled/leased counts, and grouped cycle status counts. "
+            "and audio due/scheduled/leased/recovery counts, and grouped cycle "
+            "status counts. "
             "No authentication is currently configured for internal query operations, "
             "and unmapped Redis failures remain server failures without a stable body."
         ),
@@ -549,6 +573,12 @@ def _decorate_operations(document: dict[str, Any]) -> None:
                         "ia_dead_letter": 0,
                         "audio_transcription_queue": 1,
                         "audio_transcription_dead_letter": 0,
+                        "audio_due": 1,
+                        "audio_scheduled": 0,
+                        "audio_leased": 1,
+                        "audio_stale": 0,
+                        "audio_completed": 12,
+                        "audio_failed": 1,
                         "image_extraction_queue": 0,
                         "image_extraction_dead_letter": 1,
                         "ia_due": 2,

@@ -29,13 +29,13 @@ from src.core.db import (
     get_cycle,
     get_cycle_metrics,
     get_cycle_work_metrics,
+    get_transcription_work_metrics,
     get_cycle_result,
     get_latest_cycle,
     initialize_database,
     list_cycles,
     record_ticket_assignment,
     release_image_publication,
-    release_transcription_publication,
     reserve_transcription,
     reserve_image_extraction,
     transition_cycle,
@@ -258,7 +258,8 @@ async def capture_contact_snapshot(
 async def enqueue_audio_transcription(
     redis: AsyncRedis, message: DigisacMessage
 ) -> bool:
-    """Persist a durable reservation before publishing the lightweight job."""
+    """Persist an idempotent audio reservation for PostgreSQL polling."""
+    del redis  # retained in the signature for webhook/test compatibility
     if message.message_type not in AUDIO_MESSAGE_TYPES or not message.message_id:
         return False
     reserved = await reserve_transcription(
@@ -268,22 +269,6 @@ async def enqueue_audio_transcription(
     )
     if not reserved:
         return False
-    try:
-        await redis.rpush(
-            "audio_transcription_queue",
-            json.dumps(
-                {
-                    "message_id": message.message_id,
-                    "conversation_id": message.conversation_id,
-                    "attempt": 0,
-                }
-            ),
-        )
-    except Exception as exc:
-        await release_transcription_publication(
-            message.message_id, f"queue publish failed: {exc}"
-        )
-        raise
     return True
 
 
@@ -382,7 +367,7 @@ async def health(redis: AsyncRedis = Depends(get_redis)) -> dict[str, str]:
 async def queue_metrics(
     redis: AsyncRedis = Depends(get_redis),
 ) -> dict[str, Any]:
-    """Operational view of legacy Redis lists and durable work counts."""
+    """Operational view of legacy lists and durable PostgreSQL work counts."""
     (
         ia_queue,
         dead_letter,
@@ -391,6 +376,7 @@ async def queue_metrics(
         image_queue,
         image_dead_letter,
         cycle_work,
+        audio_work,
     ) = await asyncio.gather(
         redis.llen("ia_queue"),
         redis.llen("ia_dead_letter"),
@@ -399,12 +385,19 @@ async def queue_metrics(
         redis.llen("image_extraction_queue"),
         redis.llen("image_extraction_dead_letter"),
         get_cycle_work_metrics(),
+        get_transcription_work_metrics(),
     )
     result: dict[str, Any] = {
         "ia_queue": ia_queue,
         "ia_dead_letter": dead_letter,
         "audio_transcription_queue": audio_queue,
         "audio_transcription_dead_letter": audio_dead_letter,
+        "audio_due": audio_work["due"],
+        "audio_scheduled": audio_work["scheduled"],
+        "audio_leased": audio_work["leased"],
+        "audio_stale": audio_work["stale"],
+        "audio_completed": audio_work["completed"],
+        "audio_failed": audio_work["failed"],
         "image_extraction_queue": image_queue,
         "image_extraction_dead_letter": image_dead_letter,
         "ia_due": cycle_work["due"],
@@ -672,8 +665,8 @@ async def digisac_webhook(
     }
     idempotency = IdempotencyService(redis)
     event_id = idempotency.generate_event_id(idempotency_data)
-    # Reserve/enqueue before event idempotency: if Redis publishing fails, the
-    # failed DB row can be reserved again when DigiSac retries the same webhook.
+    # Reserve before event idempotency so a duplicate webhook cannot erase a
+    # durable media row. Audio admission itself does not publish to Redis.
     transcription_queued = await enqueue_audio_transcription(redis, message)
     image_extraction_queued = await enqueue_image_extraction(redis, message)
     if not await idempotency.try_mark_processed(event_id):

@@ -10,14 +10,11 @@ from src.core.db import (
     close_cycle,
     get_cycle,
     get_image_extraction,
-    get_transcription,
     reserve_image_extraction,
-    reserve_transcription,
     save_cycle_messages,
     set_image_extraction_status,
-    set_transcription_status,
 )
-from src.workers import audio_worker, ia_worker, image_worker
+from src.workers import ia_worker, image_worker
 
 
 pytestmark = pytest.mark.postgres
@@ -74,47 +71,29 @@ def make_ia_worker(queue: QueueTransport) -> ia_worker.IAWorker:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["audio", "image"])
+@pytest.mark.parametrize("kind", ["image"])
 async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
     message_ids = {
         "due": f"{kind}-recovery-due",
         "queued": f"{kind}-recovery-queued",
         "future": f"{kind}-recovery-future",
     }
-    if kind == "audio":
-        reserve = reserve_transcription
-        set_status = set_transcription_status
-        get_content = get_transcription
-        table = "message_transcriptions"
-        worker: Any = audio_worker.AudioTranscriptionWorker(
-            QueueTransport(
-                [
-                    {
-                        "message_id": message_ids["queued"],
-                        "conversation_id": "safe-ticket",
-                        "attempt": 1,
-                    }
-                ],
-                queued_queue="audio_transcription_queue",
-            )
+    reserve = reserve_image_extraction
+    set_status = set_image_extraction_status
+    get_content = get_image_extraction
+    table = "message_image_extractions"
+    worker: Any = image_worker.ImageExtractionWorker(
+        QueueTransport(
+            [
+                {
+                    "message_id": message_ids["queued"],
+                    "conversation_id": "safe-ticket",
+                    "attempt": 1,
+                }
+            ],
+            queued_queue="image_extraction_queue",
         )
-    else:
-        reserve = reserve_image_extraction
-        set_status = set_image_extraction_status
-        get_content = get_image_extraction
-        table = "message_image_extractions"
-        worker = image_worker.ImageExtractionWorker(
-            QueueTransport(
-                [
-                    {
-                        "message_id": message_ids["queued"],
-                        "conversation_id": "safe-ticket",
-                        "attempt": 1,
-                    }
-                ],
-                queued_queue="image_extraction_queue",
-            )
-        )
+    )
 
     for message_id in message_ids.values():
         assert await reserve(message_id, "safe-ticket", "test-model")
@@ -149,43 +128,6 @@ async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
     assert future_row is not None
     assert future_row["status"] == "pending"
     assert future_row["next_attempt_at"] is not None
-
-
-@pytest.mark.asyncio
-async def test_audio_transient_dead_letter_recovery_keeps_postgres_pending_and_safety_copy():
-    message_id = "audio-transient-dead-letter-db"
-    assert await reserve_transcription(message_id, "safe-ticket", "test-model")
-    assert await set_transcription_status(
-        message_id,
-        "failed",
-        error_message="transient_audio_failure:http_429",
-        expected_statuses=("pending",),
-    )
-
-    dead_letter = json.dumps(
-        {
-            "message_id": message_id,
-            "conversation_id": "safe-ticket",
-            "attempt": 3,
-        }
-    )
-    queue = QueueTransport(
-        [{"message_id": message_id, "conversation_id": "safe-ticket", "attempt": 3}],
-        queued_queue="audio_transcription_dead_letter",
-    )
-    queue.queues["audio_transcription_dead_letter"] = [dead_letter]
-    worker = audio_worker.AudioTranscriptionWorker(queue)
-
-    assert await worker.recover_transient_dead_letters() == 1
-    row = await get_transcription(message_id)
-    assert row is not None
-    assert row["status"] == "pending"
-    assert row["next_attempt_at"] is not None
-    assert {
-        json.loads(raw)["message_id"]
-        for raw in await queue.lrange("audio_transcription_queue", 0, -1)
-    } == {message_id}
-    assert await queue.lrange("audio_transcription_dead_letter", 0, -1) == [dead_letter]
 
 
 @pytest.mark.asyncio

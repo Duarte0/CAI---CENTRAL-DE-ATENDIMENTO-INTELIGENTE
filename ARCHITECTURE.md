@@ -53,7 +53,7 @@ flowchart LR
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
-| \`audio_worker\` | Downloads audio from DigiSac, calls Groq transcription, and persists status/result. | PostgreSQL reservation/status; Redis queue and dead letter. |
+| \`audio_worker\` | Polls due audio rows, downloads audio from DigiSac, calls Groq transcription, and persists status/result. | PostgreSQL reservation, schedule, claim, lease, retry and result; no Redis dependency. |
 | \`image_worker\` | Downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation/status; Redis queue and dead letter. |
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
 | \`acessorias_directory\` | Acquires and reconciles the Acessórias company, contact, department, and relationship directory. | PostgreSQL snapshot and synchronization executions; provider access is configuration-backed. |
@@ -181,9 +181,13 @@ sequenceDiagram
     D->>A: signed webhook event
     A->>A: verify HMAC and parse envelope
     A->>A: normalize and filter event/message
-    alt human audio or image
+    alt human audio
         A->>P: reserve media row
-        A->>R: publish media job
+        W->>P: poll and claim audio row
+        W->>P: persist transcription/retry/lease
+    else human image
+        A->>P: reserve media row
+        A->>R: publish image job
     else text, document, or ticket lifecycle
         A->>P: maintain ticket/cycle state
     end
@@ -226,7 +230,7 @@ record.
 | Queue | Producer | Consumer | Dead letter |
 | --- | --- | --- | --- |
 | legacy \`ia_queue\` | none | none | legacy \`ia_dead_letter\` |
-| \`audio_transcription_queue\` | API/recovery | \`audio_worker\` | \`audio_transcription_dead_letter\` |
+| legacy \`audio_transcription_queue\` | none after issue 0049 | none | legacy \`audio_transcription_dead_letter\` |
 | \`image_extraction_queue\` | API/recovery | \`image_worker\` | \`image_extraction_dead_letter\` |
 
 Persistent IA finalization work is selected and leased directly from
@@ -235,7 +239,8 @@ lease expires; `next_attempt_at` remains the only schedule authority. The
 legacy IA lists have no active producer or consumer and are inventoried by
 `scripts/retire_legacy_ia_queue.py`; its apply mode removes only a bounded,
 validated snapshot and retains malformed/unknown entries. Audio and image
-remain Redis-backed until their separate migrations.
+audio lists are inventoried by `scripts/retire_legacy_audio_queue.py` and are
+not active work; image remains Redis-backed until issue 0050.
 
 ### Transient keys
 
@@ -320,21 +325,22 @@ status checks and leases. Concurrent claimers use row locking and
 
 ## 7. Media processing
 
-Media work is reserved durably before it is published to Redis. If publication
-fails, the reservation is released so a repeated webhook or reconciler can
+Media work is reserved durably before any transport. Audio is discovered by
+PostgreSQL polling; image is published to Redis until issue 0050. A failed image
+publication releases its reservation so a repeated webhook or reconciler can
 retry it.
 
 ### Audio
 
-\`audio_worker\` downloads the DigiSac file, sends it to the configured Groq
-transcription model, and updates \`message_transcriptions\`. Transient provider
-failures honor \`Retry-After\` and durable backoff, remaining \`pending\` beyond
-the classification worker's attempt limit. Permanent audio failures go to the
-dead-letter and only persisted transient failures are recovered automatically.
-Queue and dead-letter entries are deduplicated by message ID; recovery retains
-one safety copy until a non-empty transcription is persisted. Failure logs and
-retry metadata use sanitized categories rather than provider bodies or signed
-URLs.
+\`audio_worker\` polls \`message_transcriptions\` and claims one due row with
+\`FOR UPDATE SKIP LOCKED\`, an owner, and an expiring lease. It then downloads
+the DigiSac file, sends it to the configured Groq transcription model, and
+persists the result. Transient provider failures honor \`Retry-After\` and
+durable backoff, remaining \`pending\` beyond the classification worker's
+attempt limit. Permanent failures remain \`failed\` in PostgreSQL. A worker
+crash is recovered by lease expiry; no audio Redis list or dead-letter is
+needed. Completion is valid only with nonempty text. Failure logs and retry
+metadata use sanitized categories rather than provider bodies or signed URLs.
 Terminal audio failure places dependent cycles in \`media_blocked\`; it does not
 create a context marker or allow \`completed_with_warnings\` to bypass the
 media dependency.
@@ -391,13 +397,13 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0023_manual_reconciliation\`. The main data groups
+Alembic owns the schema through \`0024_durable_media_leases\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
 | --- | --- | --- |
 | Analysis | \`ia_classifications\`, \`classification_messages\` | Classification identity, result, full context, and ordered supporting messages. |
-| Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, and extracted text. |
+| Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, extracted text, and media leases. |
 | Assignment | \`ticket_assignment_history\`, \`ticket_assignment_event_keys\` | Chronological, idempotent ticket assignment history. |
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
 | DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
@@ -427,7 +433,7 @@ Bearer `ADMIN_API_TOKEN`; they are not public API operations.
 | --- | --- |
 | \`POST /webhook/digisac\` | Authenticated production webhook ingestion. |
 | \`GET /health\` | PostgreSQL and Redis readiness. |
-| \`GET /queues\` | Redis queue and dead-letter metrics. |
+| \`GET /queues\` | Legacy Redis visibility plus PostgreSQL-derived IA/audio work metrics. |
 | \`GET /conversations/{conversation_id}/status\` | Conversation processing status. |
 | \`GET /conversations/{conversation_id}/result\` | Latest conversation result. |
 | \`GET /conversations/{conversation_id}/cycles\` | Persistent cycle list. |
@@ -520,11 +526,11 @@ records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
   PostgreSQL baseline on a disposable target. Its current recorded 2026-08-26
-  evidence is Alembic `0023_manual_reconciliation`, **269 passed, 82
-  skipped** offline, and **82 passed, 269 deselected** in PostgreSQL; static and
-  disposable evidence does not prove Redis, DigiSac, Groq, secret-manager
-  provisioning, replicas, deployment, or production availability or release
-  readiness. The older `0020`/`203+68` result is historical evidence only.
+  evidence is now superseded by the issue 0049 validation on Alembic
+  `0024_durable_media_leases`; static and disposable evidence does not prove
+  Redis, DigiSac, Groq, secret-manager provisioning, replicas, deployment, or
+  production availability or release readiness. The older `0023` evidence is
+  historical only.
 - The runner's offline stage does not select a finalization setting and removes
   the test database prerequisite before execution; only the PostgreSQL stage
   receives the runner-owned disposable database URL.
@@ -646,6 +652,10 @@ they limit release verification and future evolution decisions.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.
+- Durable audio polling schema: Alembic revision
+  `0024_durable_media_leases.py` adds media lease ownership and expiry fields;
+  `src/core/durable_media_repository.py` owns the atomic audio claim and
+  `src/workers/audio_worker.py` owns provider execution and durable outcomes.
 - DigiSac–Acessórias identity resolution: \`src/core/identity_resolution.py\`
   and Alembic \`0017_digisac_acessorias_identity.py\`.
 - Authenticated identity triage, commands, discovery, and UI shell/session: \`src/api/admin_routes.py\`,

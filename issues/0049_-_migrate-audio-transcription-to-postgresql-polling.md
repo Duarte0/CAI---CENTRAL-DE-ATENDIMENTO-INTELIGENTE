@@ -2,12 +2,12 @@
 id: 0049
 title: "Migrate audio transcription work from Redis queue to PostgreSQL polling"
 type: refactor
-status: open
+status: closed
 priority: high
 phase: 5
 created_at: 2026-09-02
 updated_at: 2026-09-02
-closed_at: ~
+closed_at: 2026-09-02
 related_issues: ["0027", "0037", "0048", "0050"]
 blocked_by: ["0048"]
 affects:
@@ -15,16 +15,21 @@ affects:
   - src/workers/ia_worker.py
   - src/workers/audio_worker.py
   - src/core/durable_media_repository.py
-  - src/core/redis_client.py
+  - src/core/db.py
   - src/core/config.py
-  - alembic/versions/0013_conversation_cycles.py
+  - alembic/versions/0024_durable_media_leases.py
+  - docker-compose.yml
+  - scripts/retire_legacy_audio_queue.py
   - tests/test_audio_worker.py
+  - tests/test_retire_legacy_audio_queue.py
   - tests/test_media_scheduling.py
   - tests/test_operational_recovery_db.py
   - tests/test_webhook_adapter.py
   - README.md
   - ARCHITECTURE.md
-  - specs/0001-ia-classification.md
+  - specs/0001-shared-data-and-analysis-contract.md
+  - specs/0003-durable-finalization-and-media.md
+  - specs/0006-api-documentation-and-openapi-contract.md
 ---
 
 ## Description
@@ -130,14 +135,14 @@ The current runtime snapshot did not show an audio queue backlog, but an empty q
 
 ## Acceptance Criteria
 
-- [ ] Audio work is claimed and scheduled entirely through PostgreSQL.
-- [ ] API, IA wake-up, retry and recovery paths no longer publish active audio work to Redis.
-- [ ] Provider cooldown, due scheduling, lease expiry, duplicate reservations and worker crashes are covered by tests.
-- [ ] Completed audio is usable only with `completed` status and nonempty text.
-- [ ] The legacy audio queue/dead-letter contents have a dry-run and idempotent retirement procedure.
-- [ ] Metrics and documentation describe PostgreSQL as the audio work authority.
-- [ ] Issue 0027’s retry contract is preserved and its tests assert the new transport behavior.
-- [ ] No unrelated Redis keys or queues are deleted.
+- [x] Audio work is claimed and scheduled entirely through PostgreSQL.
+- [x] API, IA wake-up, retry and recovery paths no longer publish active audio work to Redis.
+- [x] Provider cooldown, due scheduling, lease expiry, duplicate reservations and worker crashes are covered by tests.
+- [x] Completed audio is usable only with `completed` status and nonempty text.
+- [x] The legacy audio queue/dead-letter contents have a dry-run and idempotent retirement procedure.
+- [x] Metrics and documentation describe PostgreSQL as the audio work authority.
+- [x] Issue 0027’s retry contract is preserved and its tests assert the new transport behavior.
+- [x] No unrelated Redis keys or queues are deleted.
 
 ## References
 
@@ -152,4 +157,45 @@ The current runtime snapshot did not show an audio queue backlog, but an empty q
 
 ## Resolution
 
-<!-- Complete with the deployed worker topology, legacy-list inventory/cutover evidence and test commands. -->
+Implemented and rolled out the audio transport migration:
+
+- added Alembic `0024_durable_media_leases`, with explicit `lease_owner` and
+  `lease_expires_at` on durable media rows and polling indexes; pre-existing
+  audio `processing` rows are made recoverable from their last `updated_at`, and
+  legacy audio publication markers are cleared;
+- added an atomic `claim_next_transcription()` repository operation using
+  `FOR UPDATE SKIP LOCKED`, due scheduling, owner, lease expiry and stale-lease
+  recovery; completion/retry/failure transitions are lease-owner aware;
+- refactored `AudioTranscriptionWorker` to operate without a Redis client. It
+  checks provider cooldown before claim, persists transient retry timing in
+  `next_attempt_at`, records permanent failure in PostgreSQL, and never uses
+  `LPOP`, `LRANGE`, `RPUSH`, `LREM` or the audio dead-letter list;
+- changed API admission and IA media reconciliation to reserve audio only in
+  PostgreSQL. Image publication remains unchanged and is explicitly retained
+  for issue 0050;
+- added PostgreSQL-derived audio metrics to `GET /queues` and removed the audio
+  dead-letter recovery setting, because recovery is now performed by polling;
+- added `scripts/retire_legacy_audio_queue.py`. It inventories both legacy lists
+  with bounded dry-run semantics, groups duplicate IDs, retains malformed and
+  unknown entries, can explicitly import persisted transient dead-letter
+  evidence, and only retires validated safe entries with confirmation. No live
+  apply/deletion was run as part of this implementation;
+- synchronized SPEC-0001, SPEC-0003 v1.9, SPEC-0006, the specs index, README,
+  ARCHITECTURE, IMPLEMENTATION_PLAN and issue 0027's post-cutover contract.
+
+Validation:
+
+- focused audio/webhook/media/repository/cutover/OpenAPI suite: **42 passed**;
+- full offline suite: **273 passed, 82 skipped**;
+- PostgreSQL disposable suite after applying Alembic `0024_durable_media_leases`:
+  **19 passed**, covering repository claim, future schedule, stale lease,
+  lease-owner completion, concurrency and existing image recovery;
+- `python -m compileall -q src scripts tests alembic/versions` — passed;
+- `git diff --check` — passed;
+- `graphify update .` — passed and refreshed `graphify-out`;
+- implementation commit: this change set's Git commit is recorded in the final
+  handoff after validation;
+- Compose `cai`: `migrate` applied the new head, all application services were
+  rebuilt/recreated, API `/health` returned `{"status":"ok"}`, and
+  `audio_worker` started without Redis dependency. A live Groq 429 was
+  scheduled durably with a provider cooldown; no Redis audio republish occurred.

@@ -53,7 +53,7 @@ DigiSac
   │
   └─ message.created / message.updated
        ├─ texto/documento → ciclo persistente
-       ├─ áudio → reserva PostgreSQL → audio_transcription_queue
+       ├─ áudio → reserva + polling PostgreSQL → audio_worker
        └─ imagem → reserva PostgreSQL → image_extraction_queue
 
 audio_worker ── download DigiSac + Groq Whisper ──→ PostgreSQL
@@ -95,11 +95,12 @@ ou sem ciclo PostgreSQL correspondente.
 
 Falhas transitórias de áudio permanecem `pending` com `next_attempt_at` e
 backoff independente do limite `MAX_RETRY_ATTEMPTS` da classificação IA. O
-worker recupera dead-letters antigos somente quando o erro persistido é
-demonstravelmente transitório, deduplica filas por `message_id` e mantém uma
-cópia de segurança até a persistência de uma transcrição não vazia. Erros
-persistidos e logs usam apenas categorias seguras, sem corpo do provider ou
-URL assinada.
+`audio_worker` reclama linhas diretamente de `message_transcriptions` com
+`FOR UPDATE SKIP LOCKED`, owner e lease; não consome nem republica
+`audio_transcription_queue` e não cria dead-letter Redis. O script de cutover
+importa dead-letters antigas somente quando o erro persistido é demonstravelmente
+transitório. Erros persistidos e logs usam apenas categorias seguras, sem corpo
+do provider ou URL assinada.
 
 ## Integração Acessórias aprovada
 
@@ -203,7 +204,8 @@ Esse `/api/v1` pertence à DigiSac e não é uma rota de consulta montada pelo C
 Os estados do ciclo incluem, entre outros, espera por histórico, espera por
 mídia, bloqueio por mídia, classificação, conclusão, conclusão com avisos e
 falha. `next_attempt_at`, leases e claims no PostgreSQL permitem recuperar jobs
-mesmo se houver queda entre a persistência e a publicação no Redis.
+sem depender de uma publicação Redis. Áudio é reclamado diretamente por
+`audio_worker`; imagem continua na fila Redis até o issue 0050.
 
 - mídia pendente mantém o ciclo em espera até o horário real de nova tentativa;
 - falha terminal de áudio ou imagem bloqueia a classificação para não concluir
@@ -342,13 +344,12 @@ Variáveis principais:
 | `ADMIN_UI_PASSWORD` | Senha única de bootstrap da UI administrativa. | vazio; provisionar em ambiente protegido |
 | `ADMIN_SESSION_SECRET` | Chave de assinatura da sessão `HttpOnly` da UI. | vazio; provisionar em ambiente protegido |
 | `DATABASE_URL` | PostgreSQL da aplicação e Alembic. | obrigatório em execução |
-| `REDIS_URL` | Redis de filas e coordenação. | `redis://localhost:6379` |
+| `REDIS_URL` | Redis de filas/coordenação dos fluxos que ainda o usam; não é necessário para o `audio_worker`. | `redis://localhost:6379` |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
 | `AUDIO_TRANSCRIPTION_MODEL` | Modelo de transcrição. | `whisper-large-v3-turbo` |
 | `AUDIO_RETRY_BASE_SECONDS` | Backoff inicial de falhas transitórias de áudio. | `2` |
 | `AUDIO_RETRY_MAX_DELAY_SECONDS` | Teto do backoff local de áudio. | `900` |
 | `AUDIO_RETRY_PROVIDER_MARGIN_SECONDS` | Margem adicionada ao `Retry-After` do provider. | `1` |
-| `AUDIO_DEAD_LETTER_RECOVERY_INTERVAL_SECONDS` | Intervalo de recuperação de dead-letters transitórios de áudio. | `60` |
 | `IMAGE_VISION_MODEL` | Modelo multimodal. | `qwen/qwen3.6-27b` |
 | `IMAGE_VISION_MAX_COMPLETION_TOKENS` | Orçamento inicial da resposta visual. | `5000` |
 | `MAX_TOKENS` | Orçamento solicitado à classificação; o worker impõe mínimo efetivo de `1000`. | `500` no `.env.example`; `3000` se ausente |
@@ -381,7 +382,9 @@ docker compose -p cai logs -f api ia_worker audio_worker image_worker
 ```
 
 O Compose inicia PostgreSQL, Redis, aplica `alembic upgrade head` no serviço
-`migrate` e só então libera API e workers. A API fica em
+`migrate` e só então libera API e workers. O `audio_worker` depende somente de
+PostgreSQL e da migration; API, IA e imagem continuam usando Redis conforme seus
+contratos atuais. A API fica em
 `http://localhost:8000`; PostgreSQL e Redis também são publicados localmente no
 Compose atual.
 
@@ -390,7 +393,8 @@ há flag de finalização nem uma segunda fila de compatibilidade para alternar.
 
 ## Execução local
 
-Com PostgreSQL e Redis acessíveis por `DATABASE_URL` e `REDIS_URL`:
+Com PostgreSQL acessível por `DATABASE_URL` (e Redis disponível para API, IA e
+imagem):
 
 ```bash
 python -m venv .venv
@@ -722,9 +726,23 @@ curl -fsS http://localhost:8000/queues
 docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 ```
 
-Dead-letters indicam trabalho que exige diagnóstico. Reprocessamentos devem ser
-restritos ao ID afetado: reserve um item, evite duplicá-lo na fila, confirme o
-estado `completed` persistido e só então remova a dead-letter correspondente.
+O áudio não possui mais retry ou dead-letter ativo em Redis: `pending`,
+`next_attempt_at`, `processing`, lease, `completed` e `failed` ficam em
+`message_transcriptions`. Para auditar o legado antes de removê-lo, use o
+comando bounded abaixo; o padrão é dry-run e nenhum item desconhecido ou
+malformado é apagado:
+
+```bash
+PYTHONPATH=/app python -m scripts.retire_legacy_audio_queue --max-items 1000
+PYTHONPATH=/app python -m scripts.retire_legacy_audio_queue \
+  --recover-transient --max-items 1000
+```
+
+Somente após revisar o relatório, confirmar que o worker PostgreSQL está
+saudável e repetir uma fotografia completa, a retirada exige a confirmação
+explícita `--apply --confirm retire-legacy-audio-queue`. Dead-letters
+transitórios importados permanecem como evidência até a transcrição ser
+persistida com sucesso.
 
 Resíduos das antigas chaves Redis de buffer/debounce podem ser auditados e
 removidos somente por uma operação manual, limitada e revisada. O dry-run

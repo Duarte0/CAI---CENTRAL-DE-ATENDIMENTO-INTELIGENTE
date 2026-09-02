@@ -161,7 +161,7 @@ async def test_webhook_returns_400_only_when_data_is_not_an_object(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_audio_webhook_queues_transcription_for_both_authors(monkeypatch):
+async def test_audio_webhook_admits_transcription_without_redis_publication(monkeypatch):
     queued = []
 
     class Redis:
@@ -193,8 +193,7 @@ async def test_audio_webhook_queues_transcription_for_both_authors(monkeypatch):
     )
 
     assert body["transcription_queued"] is True
-    assert queued[0][0] == "audio_transcription_queue"
-    assert '"message_id": "audio-1"' in queued[0][1]
+    assert queued == []
 
 
 @pytest.mark.asyncio

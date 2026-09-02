@@ -1,6 +1,7 @@
-import json
+import inspect
 import subprocess
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -32,6 +33,19 @@ class Response:
             raise RuntimeError(self.status_code)
 
 
+def _claim(message_id: str, *, attempt_count: int = 1):
+    return {
+        "message_id": message_id,
+        "conversation_id": "ticket-1",
+        "model": "whisper-test",
+        "status": "processing",
+        "attempt_count": attempt_count,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "lease_owner": "test-owner",
+        "lease_expires_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def test_transcribe_message_calls_digisac_ffmpeg_and_groq(monkeypatch):
     monkeypatch.setattr(settings, "digisac_api_key", "digisac-test")
     monkeypatch.setattr(settings, "groq_api_key", "groq-test")
@@ -47,8 +61,8 @@ def test_transcribe_message_calls_digisac_ffmpeg_and_groq(monkeypatch):
         return Response(content=b"fake-oga")
 
     def fake_run(command, **_kwargs):
-        # ffmpeg is mocked, but its output must exist for the multipart upload.
-        open(command[-1], "wb").write(b"fake-wav")
+        with open(command[-1], "wb") as output:
+            output.write(b"fake-wav")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def fake_post(url, **kwargs):
@@ -83,15 +97,51 @@ def test_transient_http_error_does_not_include_provider_response_body():
 
 
 @pytest.mark.asyncio
-async def test_transient_retry_persists_only_safe_error_metadata(
-    monkeypatch, caplog
-):
+async def test_worker_claims_durable_row_without_redis(monkeypatch):
+    calls = []
+    claim = _claim("audio-safe-error", attempt_count=4)
+
+    async def claim_next(**kwargs):
+        calls.append(kwargs)
+        return claim
+
+    async def set_status(message_id, status, **kwargs):
+        calls.append((message_id, status, kwargs))
+        return object()
+
+    monkeypatch.setattr(audio_worker, "claim_next_transcription", claim_next)
+    monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
+    monkeypatch.setattr(
+        audio_worker,
+        "transcribe_message",
+        lambda _message_id: "safe transcript",
+    )
+
+    worker = audio_worker.AudioTranscriptionWorker(owner="test-owner")
+    assert not hasattr(worker, "redis")
+    await worker.process_job({"message_id": "audio-safe-error"})
+
+    assert calls[0] == {
+        "owner": "test-owner",
+        "lease_seconds": settings.content_recovery_lease_seconds,
+        "message_id": "audio-safe-error",
+    }
+    assert calls[1][0:2] == ("audio-safe-error", "completed")
+    assert calls[1][2]["expected_lease_owner"] == "test-owner"
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_persists_schedule_without_republication(monkeypatch):
     transitions = []
+
+    async def claim_next(**_kwargs):
+        return _claim("audio-rate-limit", attempt_count=4)
 
     async def set_status(message_id, status, **kwargs):
         transitions.append((message_id, status, kwargs))
         return object()
 
+    monkeypatch.setattr(audio_worker, "claim_next_transcription", claim_next)
     monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
     monkeypatch.setattr(
         audio_worker,
@@ -99,41 +149,40 @@ async def test_transient_retry_persists_only_safe_error_metadata(
         lambda _message_id: (_ for _ in ()).throw(
             audio_worker.TransientTranscriptionError(
                 "raw provider payload with secret-token",
-                retry_after_seconds=0,
+                retry_after_seconds=13.17,
             )
         ),
     )
+    monkeypatch.setattr(settings, "audio_retry_base_seconds", 2.0)
+    monkeypatch.setattr(settings, "audio_retry_max_delay_seconds", 900.0)
+    monkeypatch.setattr(settings, "audio_retry_provider_margin_seconds", 1.0)
 
-    class Redis:
-        async def lrange(self, *_args):
-            return []
+    worker = audio_worker.AudioTranscriptionWorker(owner="test-owner")
+    await worker.process_job({"message_id": "audio-rate-limit"})
 
-        async def lrem(self, *_args):
-            return 0
-
-        async def rpush(self, *_args):
-            return 1
-
-    await audio_worker.AudioTranscriptionWorker(Redis()).process_job(
-        {"message_id": "audio-safe-error", "attempt": 3}
-    )
-
-    error_message = transitions[1][2]["error_message"]
-    assert error_message.startswith("transient_audio_failure:")
-    assert "secret-token" not in error_message
-    assert "raw provider payload" not in caplog.text
+    assert transitions[0][0:2] == ("audio-rate-limit", "pending")
+    retry_at = transitions[0][2]["next_attempt_at"]
+    assert retry_at > datetime.now(timezone.utc)
+    assert transitions[0][2]["expected_lease_owner"] == "test-owner"
+    assert transitions[0][2]["error_message"] == "transient_audio_failure:transient_provider"
+    assert "secret-token" not in transitions[0][2]["error_message"]
+    assert worker.rate_limited_until > time.time()
 
 
 @pytest.mark.asyncio
-async def test_permanent_audio_failure_dead_letters_once_with_incremented_attempt(
+async def test_permanent_failure_is_durable_without_dead_letter_publication(
     monkeypatch,
 ):
     transitions = []
+
+    async def claim_next(**_kwargs):
+        return _claim("audio-permanent")
 
     async def set_status(message_id, status, **kwargs):
         transitions.append((message_id, status, kwargs))
         return object()
 
+    monkeypatch.setattr(audio_worker, "claim_next_transcription", claim_next)
     monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
     monkeypatch.setattr(
         audio_worker,
@@ -143,324 +192,60 @@ async def test_permanent_audio_failure_dead_letters_once_with_incremented_attemp
         ),
     )
 
-    class Redis:
-        def __init__(self):
-            self.dead_letters = []
-
-        async def lrange(self, queue, *_args):
-            if queue == "audio_transcription_dead_letter":
-                return list(self.dead_letters)
-            return []
-
-        async def lrem(self, queue, _count, raw):
-            if queue == "audio_transcription_dead_letter":
-                self.dead_letters = [item for item in self.dead_letters if item != raw]
-            return 0
-
-        async def rpush(self, queue, raw):
-            assert queue == "audio_transcription_dead_letter"
-            self.dead_letters.append(raw)
-            return len(self.dead_letters)
-
-    redis = Redis()
-    await audio_worker.AudioTranscriptionWorker(redis).process_job(
-        {"message_id": "audio-permanent", "attempt": 0}
+    await audio_worker.AudioTranscriptionWorker(owner="test-owner").process_job(
+        {"message_id": "audio-permanent"}
     )
 
-    assert transitions[1][1] == "failed"
-    assert transitions[1][2]["error_message"] == "audio_transcription_failed"
-    assert len(redis.dead_letters) == 1
-    assert json.loads(redis.dead_letters[0])["attempt"] == 1
+    assert transitions[0][1] == "failed"
+    assert transitions[0][2]["error_message"] == "audio_transcription_failed"
+    assert transitions[0][2]["expected_lease_owner"] == "test-owner"
 
 
 @pytest.mark.asyncio
-async def test_dead_letter_recovery_collapses_duplicate_queue_and_safety_entries(
-    monkeypatch,
-):
-    job = json.dumps(
-        {"message_id": "audio-duplicate", "conversation_id": "ticket-1", "attempt": 3}
-    )
+async def test_empty_transcription_is_failed_and_never_completed(monkeypatch):
     transitions = []
 
-    async def get_row(_message_id):
-        return {
-            "message_id": "audio-duplicate",
-            "conversation_id": "ticket-1",
-            "model": "whisper-test",
-            "status": "failed",
-            "error_message": "Groq transcription returned transient HTTP 429",
-        }
+    async def claim_next(**_kwargs):
+        return _claim("audio-empty")
 
     async def set_status(message_id, status, **kwargs):
         transitions.append((message_id, status, kwargs))
         return object()
 
-    monkeypatch.setattr(audio_worker, "get_transcription", get_row)
-    monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
-
-    class Redis:
-        def __init__(self):
-            self.queues = {"audio_transcription_queue": [job, job]}
-            self.queues["audio_transcription_dead_letter"] = [job, job]
-
-        async def lrange(self, queue, _start, _end):
-            return list(self.queues[queue])
-
-        async def lrem(self, queue, count, raw):
-            items = self.queues[queue]
-            removed = 0
-            remaining = []
-            for item in items:
-                if item == raw and (count == 0 or removed < count):
-                    removed += 1
-                else:
-                    remaining.append(item)
-            self.queues[queue] = remaining
-            return removed
-
-        async def rpush(self, queue, raw):
-            self.queues[queue].append(raw)
-            return len(self.queues[queue])
-
-    redis = Redis()
-    worker = audio_worker.AudioTranscriptionWorker(redis)
-
-    assert await worker.recover_transient_dead_letters() == 0
-    assert len(redis.queues["audio_transcription_queue"]) == 1
-    assert len(redis.queues["audio_transcription_dead_letter"]) == 1
-    assert transitions == []
-
-
-@pytest.mark.asyncio
-async def test_dead_letter_recovery_does_not_retry_non_transient_failure(monkeypatch):
-    dead_letter = json.dumps(
-        {"message_id": "audio-permanent-dead", "conversation_id": "ticket-1"}
-    )
-    transitions = []
-
-    async def get_row(_message_id):
-        return {
-            "message_id": "audio-permanent-dead",
-            "conversation_id": "ticket-1",
-            "model": "whisper-test",
-            "status": "failed",
-            "error_message": "audio_file_missing",
-        }
-
-    async def set_status(*args, **kwargs):
-        transitions.append((args, kwargs))
-        return object()
-
-    monkeypatch.setattr(audio_worker, "get_transcription", get_row)
-    monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
-
-    class Redis:
-        async def lrange(self, queue, *_args):
-            if queue == "audio_transcription_dead_letter":
-                return [dead_letter]
-            return []
-
-        async def lrem(self, *_args):
-            raise AssertionError("a non-transient dead-letter must be retained")
-
-        async def rpush(self, *_args):
-            raise AssertionError("a non-transient dead-letter must not be retried")
-
-    assert await audio_worker.AudioTranscriptionWorker(
-        Redis()
-    ).recover_transient_dead_letters() == 0
-    assert transitions == []
-
-
-@pytest.mark.asyncio
-async def test_success_removes_matching_dead_letter_after_persisted_completion(
-    monkeypatch,
-):
-    transitions = []
-    dead_letter = json.dumps({"message_id": "audio-recovered"})
-    unrelated = json.dumps({"message_id": "audio-other"})
-
-    async def set_status(message_id, status, **kwargs):
-        transitions.append((message_id, status, kwargs))
-        return object()
-
-    monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
-    monkeypatch.setattr(audio_worker, "transcribe_message", lambda _id: "persisted text")
-
-    class Redis:
-        def __init__(self):
-            self.dead_letters = [dead_letter, unrelated]
-
-        async def lrange(self, queue, *_args):
-            if queue == "audio_transcription_dead_letter":
-                return list(self.dead_letters)
-            return []
-
-        async def lrem(self, queue, _count, raw):
-            assert queue == "audio_transcription_dead_letter"
-            self.dead_letters = [item for item in self.dead_letters if item != raw]
-            return 1
-
-        async def rpush(self, *_args):
-            raise AssertionError("a successful transcription must not be dead-lettered")
-
-    redis = Redis()
-    await audio_worker.AudioTranscriptionWorker(redis).process_job(
-        {"message_id": "audio-recovered", "attempt": 4}
-    )
-
-    assert [status for _, status, _ in transitions] == ["processing", "completed"]
-    assert redis.dead_letters == [unrelated]
-
-
-@pytest.mark.asyncio
-async def test_empty_transcription_is_not_completed_or_removed_from_dead_letter(
-    monkeypatch,
-):
-    transitions = []
-    dead_letter = json.dumps({"message_id": "audio-empty"})
-
-    async def set_status(message_id, status, **kwargs):
-        transitions.append((message_id, status, kwargs))
-        return object()
-
+    monkeypatch.setattr(audio_worker, "claim_next_transcription", claim_next)
     monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
     monkeypatch.setattr(audio_worker, "transcribe_message", lambda _id: "  ")
 
-    class Redis:
-        def __init__(self):
-            self.dead_letters = [dead_letter]
-
-        async def lrange(self, queue, *_args):
-            if queue == "audio_transcription_dead_letter":
-                return list(self.dead_letters)
-            return []
-
-        async def lrem(self, queue, _count, raw):
-            assert queue == "audio_transcription_dead_letter"
-            self.dead_letters = [item for item in self.dead_letters if item != raw]
-            return 1
-
-        async def rpush(self, queue, raw):
-            assert queue == "audio_transcription_dead_letter"
-            self.dead_letters.append(raw)
-            return len(self.dead_letters)
-
-    redis = Redis()
-    await audio_worker.AudioTranscriptionWorker(redis).process_job(
-        {"message_id": "audio-empty", "attempt": 2}
+    await audio_worker.AudioTranscriptionWorker(owner="test-owner").process_job(
+        {"message_id": "audio-empty"}
     )
 
-    assert [status for _, status, _ in transitions] == ["processing", "failed"]
-    assert len(redis.dead_letters) == 1
+    assert [status for _message_id, status, _kwargs in transitions] == ["failed"]
+    assert transitions[0][2]["error_message"] == "audio_transcription_empty"
 
 
 @pytest.mark.asyncio
-async def test_transient_audio_failure_requeues_beyond_global_attempt_limit(monkeypatch):
-    transitions = []
+async def test_provider_cooldown_is_checked_before_claim(monkeypatch):
+    called = False
 
-    async def set_status(message_id, status, **kwargs):
-        transitions.append((message_id, status, kwargs))
-        return object()
+    async def claim_next(**_kwargs):
+        nonlocal called
+        called = True
+        return _claim("must-not-claim")
 
-    monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
-    monkeypatch.setattr(
-        audio_worker,
-        "transcribe_message",
-        lambda _message_id: (_ for _ in ()).throw(
-            audio_worker.TransientTranscriptionError(
-                "Groq transcription returned transient HTTP 429",
-                retry_after_seconds=13.17,
-            )
-        ),
-    )
-    monkeypatch.setattr(settings, "audio_retry_base_seconds", 2.0)
-    monkeypatch.setattr(settings, "audio_retry_max_delay_seconds", 900.0)
-    monkeypatch.setattr(settings, "audio_retry_provider_margin_seconds", 1.0)
+    monkeypatch.setattr(audio_worker, "claim_next_transcription", claim_next)
+    worker = audio_worker.AudioTranscriptionWorker(owner="test-owner")
+    worker.rate_limited_until = time.time() + 60
 
-    class Redis:
-        def __init__(self):
-            self.published = []
-
-        async def lrange(self, *_args):
-            return []
-
-        async def lrem(self, *_args):
-            return 0
-
-        async def rpush(self, queue, raw):
-            self.published.append((queue, json.loads(raw)))
-
-    redis = Redis()
-    worker = audio_worker.AudioTranscriptionWorker(redis)
-    before = time.time()
-    await worker.process_job(
-        {
-            "message_id": "audio-rate-limit",
-            "conversation_id": "ticket-1",
-            "attempt": settings.max_retry_attempts,
-        }
-    )
-
-    assert [item[1] for item in transitions] == ["processing", "pending"]
-    assert redis.published[0][0] == "audio_transcription_queue"
-    assert redis.published[0][1]["attempt"] == settings.max_retry_attempts + 1
-    assert transitions[1][2]["next_attempt_at"].timestamp() >= before + 14.17
+    assert await worker.poll_once() is False
+    assert called is False
 
 
-@pytest.mark.asyncio
-async def test_recovers_transient_audio_dead_letter_and_keeps_safety_copy(
-    monkeypatch,
-):
-    dead_letter = json.dumps(
-        {
-            "message_id": "audio-dead",
-            "conversation_id": "ticket-1",
-            "attempt": 3,
-        }
-    )
-    transitions = []
-
-    async def get_row(_message_id):
-        return {
-            "message_id": "audio-dead",
-            "conversation_id": "ticket-1",
-            "model": "whisper-test",
-            "status": "failed",
-            "error_message": "Groq transcription returned transient HTTP 429",
-        }
-
-    async def set_status(message_id, status, **kwargs):
-        transitions.append((message_id, status, kwargs))
-        return object()
-
-    monkeypatch.setattr(audio_worker, "get_transcription", get_row)
-    monkeypatch.setattr(audio_worker, "set_transcription_status", set_status)
-    monkeypatch.setattr(settings, "audio_retry_base_seconds", 2.0)
-    monkeypatch.setattr(settings, "audio_retry_provider_margin_seconds", 1.0)
-
-    class Redis:
-        def __init__(self):
-            self.published = []
-            self.removed = []
-
-        async def lrange(self, queue, _start, _end):
-            if queue == "audio_transcription_dead_letter":
-                return [dead_letter]
-            return []
-
-        async def rpush(self, queue, raw):
-            self.published.append((queue, json.loads(raw)))
-
-        async def lrem(self, *args):
-            self.removed.append(args)
-            return 1
-
-    redis = Redis()
-    worker = audio_worker.AudioTranscriptionWorker(redis)
-    assert await worker.recover_transient_dead_letters() == 1
-
-    assert transitions[0][0:2] == ("audio-dead", "pending")
-    assert redis.published[0][0] == "audio_transcription_queue"
-    assert redis.published[0][1]["attempt"] == 3
-    assert redis.removed == []
+def test_active_audio_worker_has_no_redis_list_operations():
+    source = inspect.getsource(audio_worker.AudioTranscriptionWorker)
+    assert "audio_transcription_queue" not in source
+    assert "audio_transcription_dead_letter" not in source
+    assert "lpop" not in source
+    assert "rpush" not in source
+    assert "lrange" not in source
+    assert "lrem" not in source

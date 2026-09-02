@@ -1,3 +1,4 @@
+import inspect
 import json
 
 import pytest
@@ -45,20 +46,6 @@ async def test_image_reconciler_does_not_republish_existing_job(monkeypatch):
     assert await worker.recover_stale_jobs() == 0
 
 
-@pytest.mark.asyncio
-async def test_audio_reconciler_does_not_republish_existing_job(monkeypatch):
-    async def claims(**_kwargs):
-        return [
-            {
-                "message_id": "audio",
-                "conversation_id": "ticket",
-                "attempt_count": 2,
-                "updated_at": "2026-07-28T12:00:00+00:00",
-            }
-        ]
-
-    monkeypatch.setattr(audio_worker, "recover_stale_transcriptions", claims)
-    worker = audio_worker.AudioTranscriptionWorker(
-        ExistingQueueRedis("audio_transcription_queue", "audio")
-    )
-    assert await worker.recover_stale_jobs() == 0
+def test_audio_reconciler_has_no_redis_transport_dependency():
+    source = inspect.getsource(audio_worker.AudioTranscriptionWorker)
+    assert "redis" not in source.lower()
