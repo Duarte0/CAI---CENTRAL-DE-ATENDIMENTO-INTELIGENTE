@@ -193,9 +193,11 @@ Validation:
 - `python -m compileall -q src scripts tests alembic/versions` — passed;
 - `git diff --check` — passed;
 - `graphify update .` — passed and refreshed `graphify-out`;
-- implementation commit: this change set's Git commit is recorded in the final
-  handoff after validation;
+- implementation commit: `92e41f7 fix: migrate audio transcription to
+  PostgreSQL polling`;
 - Compose `cai`: `migrate` applied the new head, all application services were
-  rebuilt/recreated, API `/health` returned `{"status":"ok"}`, and
-  `audio_worker` started without Redis dependency. A live Groq 429 was
-  scheduled durably with a provider cooldown; no Redis audio republish occurred.
+  rebuilt/recreated, the API returned `{"status":"ok"}` from inside the
+  container, `/queues` exposed the durable audio counters, and `audio_worker`
+  logged schema `0024_durable_media_leases` before starting without a Redis
+  client or audio-list operations. No live provider call was forced during the
+  rollout.
