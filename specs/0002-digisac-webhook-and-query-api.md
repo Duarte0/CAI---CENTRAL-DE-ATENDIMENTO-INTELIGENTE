@@ -1,9 +1,9 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
 - **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas sem versão
-- **Versão:** 1.6
+- **Versão:** 1.7
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001
+- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0050
 - **Dependências:** SPEC-0001
 
 ## Objetivo e não objetivos
@@ -31,7 +31,7 @@ inalterados.
 
 ## Idempotência, mídia e respostas
 
-1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da marcação transitória de idempotência e antes da publicação Redis. Falha de publicação **deve** liberar o marcador de publicação para repetição/reconciliação.
+1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da marcação transitória de idempotência. Esses workers não publicam trabalho ativo em Redis; falha de Redis em outros fluxos não pode apagar a reserva durável de mídia.
 2. Repetição **não pode** duplicar ciclo ou reserva; ciclo e reserva persistentes são a deduplicação de trabalho relevante. O webhook não publica `ia_queue`.
 3. A rota de produção normalmente retorna `202`; eventos seguramente ignorados retornam `200`.
 4. `GET /conversations/{conversation_id}/status`, `/result`, `/cycles` e `GET /cycles/{cycle_id}/status`, `/result` **devem** retornar o estado persistente por histórico. Conversa, ciclo ou resultado ausente **deve** retornar `404`.
@@ -40,7 +40,7 @@ inalterados.
 
 Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, valores extraídos de mensagem/contato, segredo, token ou URL assinada. O diagnóstico de extração do parser fica limitado a presença, tipo e caminho de origem. Não há autorização de leitura ou rate limit adicional para o operador interno; a integração Acessórias aprovada exigirá revisão de acesso em seu próprio contrato.
 
-Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes de idempotência, falha de publicação, fechamento/reabertura e `404` nas consultas. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto e que uma assinatura inválida não atinge o parse.
+Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes de idempotência, ausência de publicação Redis para áudio/imagem, fechamento/reabertura e `404` nas consultas. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto e que uma assinatura inválida não atinge o parse.
 
 - Repetição do webhook não produz fila, reserva ou ciclo duplicado.
 - PDF `document` não entra na fila visual; `document` MIME `image/*` entra uma única vez.

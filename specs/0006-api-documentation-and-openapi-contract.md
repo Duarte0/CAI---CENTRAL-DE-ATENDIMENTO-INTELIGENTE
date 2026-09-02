@@ -1,10 +1,10 @@
 # SPEC-0006 — Documentação da API HTTP e contrato OpenAPI
 
-- **Status:** implementado; delta v1.2 documenta a superfície administrativa autenticada já montada, sem mudança de comportamento HTTP
-- **Versão:** 1.2
+- **Status:** implementado; delta v1.4 documenta as métricas duráveis de áudio/imagem e a visibilidade transitória das listas legadas
+- **Versão:** 1.4
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
 - **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13;
-  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012
+  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012; issues 0049–0050
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004, SPEC-0005 e
   SPEC-0012
 
@@ -72,7 +72,7 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
 ### Operações — `GET /health` e `GET /queues`
 
 1. `GET /health` **must** documentar sucesso `200` como `{"status":"ok"}`. Se `database_is_ready()` retornar falso, o handler retorna `503` com `{"detail":"database unavailable"}`. Redis é testado antes disso; exceção de Redis não é convertida pelo handler em um `503` com corpo estável, portanto a documentação **must not** prometer um formato/código específico para essa falha não mapeada.
-2. `GET /queues` **must** documentar `200` com inteiros legados `ia_queue` e `ia_dead_letter`, listas legadas de mídia `audio_transcription_queue`, `audio_transcription_dead_letter`, `image_extraction_queue`, `image_extraction_dead_letter`, contadores PostgreSQL `ia_due`, `ia_scheduled`, `ia_leased`, `audio_due`, `audio_scheduled`, `audio_leased`, `audio_stale`, `audio_completed`, `audio_failed` e `conversation_cycles`. As listas `ia_*` e `audio_*` são visibilidade de resíduo de cutover, não backlog de trabalho ativo; os contadores duráveis são a visão operacional de finalização e transcrição. `conversation_cycles` é um mapa de contagens agrupadas por status e pode ser `{}` quando a capability de ciclos não estiver disponível; a especificação **must not** expor chaves Redis, mensagens ou detalhes de worker que a rota não devolve.
+2. `GET /queues` **must** documentar `200` com inteiros legados `ia_queue` e `ia_dead_letter`, listas legadas de mídia `audio_transcription_queue`, `audio_transcription_dead_letter`, `image_extraction_queue`, `image_extraction_dead_letter`, contadores PostgreSQL `ia_due`, `ia_scheduled`, `ia_leased`, `audio_due`, `audio_scheduled`, `audio_leased`, `audio_stale`, `audio_completed`, `audio_failed`, `image_due`, `image_scheduled`, `image_leased`, `image_stale`, `image_completed`, `image_failed` e `conversation_cycles`. As listas Redis de IA e mídia são visibilidade de resíduo de cutover, não backlog de trabalho ativo; os contadores duráveis são a visão operacional de finalização, transcrição e extração de imagem. `conversation_cycles` é um mapa de contagens agrupadas por status e pode ser `{}` quando a capability de ciclos não estiver disponível; a especificação **must not** expor chaves Redis, mensagens ou detalhes de worker que a rota não devolve.
 3. Ambas as operações não possuem autenticação/autorização adicional no código atual. Falhas não mapeadas de Redis/banco **must** ser descritas apenas como falhas de servidor quando necessário, sem criar contrato uniforme inexistente.
 
 ### Conversas e ciclos

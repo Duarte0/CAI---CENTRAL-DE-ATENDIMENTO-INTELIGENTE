@@ -22,7 +22,6 @@ from src.core.db import (  # noqa: F401
     claim_next_cycle,
     reserve_image_extraction,
     reserve_transcription,
-    release_image_publication,
     resolve_user_names,
     resolve_ticket_assignments,
     save_cycle_messages,
@@ -213,26 +212,12 @@ class IAWorker:
                 settings.image_vision_model,
             )
             if reserved:
-                try:
-                    await self.redis.rpush(
-                        "image_extraction_queue",
-                        json.dumps(
-                            {
-                                "message_id": message_id,
-                                "conversation_id": conversation_id,
-                                "attempt": (
-                                    int(state.get("attempt_count") or 0)
-                                    if state
-                                    else 0
-                                ),
-                            }
-                        ),
-                    )
-                except Exception as exc:
-                    await release_image_publication(
-                        message_id, f"queue publish failed: {exc}"
-                    )
-                    raise
+                logger.info(
+                    "Image extraction admitted to PostgreSQL polling: "
+                    "message_id=%s conversation_id=%s",
+                    message_id,
+                    conversation_id,
+                )
 
     def _next_media_check_at(
         self,

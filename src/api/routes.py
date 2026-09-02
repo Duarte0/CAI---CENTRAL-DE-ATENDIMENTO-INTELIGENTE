@@ -29,16 +29,15 @@ from src.core.db import (
     get_cycle,
     get_cycle_metrics,
     get_cycle_work_metrics,
+    get_image_extraction_work_metrics,
     get_transcription_work_metrics,
     get_cycle_result,
     get_latest_cycle,
     initialize_database,
     list_cycles,
     record_ticket_assignment,
-    release_image_publication,
     reserve_transcription,
     reserve_image_extraction,
-    transition_cycle,
     upsert_digisac_contact,
 )
 from src.core.digisac_contact_hydration import (
@@ -275,7 +274,8 @@ async def enqueue_audio_transcription(
 async def enqueue_image_extraction(
     redis: AsyncRedis, message: DigisacMessage
 ) -> bool:
-    """Persist an idempotent reservation before publishing a vision job."""
+    """Persist an idempotent image reservation for PostgreSQL polling."""
+    del redis  # retained in the signature for webhook/test compatibility
     if not is_image_message(message.message_type, message.file) or not message.message_id:
         return False
     reserved = await reserve_image_extraction(
@@ -285,22 +285,6 @@ async def enqueue_image_extraction(
     )
     if not reserved:
         return False
-    try:
-        await redis.rpush(
-            "image_extraction_queue",
-            json.dumps(
-                {
-                    "message_id": message.message_id,
-                    "conversation_id": message.conversation_id,
-                    "attempt": 0,
-                }
-            ),
-        )
-    except Exception as exc:
-        await release_image_publication(
-            message.message_id, f"queue publish failed: {exc}"
-        )
-        raise
     return True
 
 
@@ -368,24 +352,21 @@ async def queue_metrics(
     redis: AsyncRedis = Depends(get_redis),
 ) -> dict[str, Any]:
     """Operational view of legacy lists and durable PostgreSQL work counts."""
-    (
-        ia_queue,
-        dead_letter,
-        audio_queue,
-        audio_dead_letter,
-        image_queue,
-        image_dead_letter,
-        cycle_work,
-        audio_work,
-    ) = await asyncio.gather(
+    legacy_counts = await asyncio.gather(
         redis.llen("ia_queue"),
         redis.llen("ia_dead_letter"),
         redis.llen("audio_transcription_queue"),
         redis.llen("audio_transcription_dead_letter"),
         redis.llen("image_extraction_queue"),
         redis.llen("image_extraction_dead_letter"),
+    )
+    cycle_work, audio_work, image_work = await asyncio.gather(
         get_cycle_work_metrics(),
         get_transcription_work_metrics(),
+        get_image_extraction_work_metrics(),
+    )
+    ia_queue, dead_letter, audio_queue, audio_dead_letter, image_queue, image_dead_letter = (
+        legacy_counts
     )
     result: dict[str, Any] = {
         "ia_queue": ia_queue,
@@ -400,6 +381,12 @@ async def queue_metrics(
         "audio_failed": audio_work["failed"],
         "image_extraction_queue": image_queue,
         "image_extraction_dead_letter": image_dead_letter,
+        "image_due": image_work["due"],
+        "image_scheduled": image_work["scheduled"],
+        "image_leased": image_work["leased"],
+        "image_stale": image_work["stale"],
+        "image_completed": image_work["completed"],
+        "image_failed": image_work["failed"],
         "ia_due": cycle_work["due"],
         "ia_scheduled": cycle_work["scheduled"],
         "ia_leased": cycle_work["leased"],

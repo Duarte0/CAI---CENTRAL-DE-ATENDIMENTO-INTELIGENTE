@@ -135,13 +135,10 @@ services:
       target: api
     env_file: .env
     environment:
-      REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
       TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       migrate:

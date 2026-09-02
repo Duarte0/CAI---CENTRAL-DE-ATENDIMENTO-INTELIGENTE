@@ -7,6 +7,7 @@ import pytest
 
 from src.core.config import settings
 from src.core.db import (
+    claim_next_image_extraction,
     close_cycle,
     get_cycle,
     get_image_extraction,
@@ -72,7 +73,7 @@ def make_ia_worker(queue: QueueTransport) -> ia_worker.IAWorker:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["image"])
-async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
+async def test_image_polling_claim_is_due_only_and_lease_owned(kind: str):
     message_ids = {
         "due": f"{kind}-recovery-due",
         "queued": f"{kind}-recovery-queued",
@@ -82,19 +83,6 @@ async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
     set_status = set_image_extraction_status
     get_content = get_image_extraction
     table = "message_image_extractions"
-    worker: Any = image_worker.ImageExtractionWorker(
-        QueueTransport(
-            [
-                {
-                    "message_id": message_ids["queued"],
-                    "conversation_id": "safe-ticket",
-                    "attempt": 1,
-                }
-            ],
-            queued_queue="image_extraction_queue",
-        )
-    )
-
     for message_id in message_ids.values():
         assert await reserve(message_id, "safe-ticket", "test-model")
     with psycopg.connect(settings.database_url) as connection:
@@ -114,16 +102,32 @@ async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
         expected_statuses=("pending",),
     )
 
-    assert await worker.recover_stale_jobs() == 1
-    queue = worker.redis
-    queued_ids = {
-        json.loads(raw)["message_id"]
-        for raw in await queue.lrange(worker.queue, 0, -1)
-    }
-    assert queued_ids == {message_ids["due"], message_ids["queued"]}
-    assert (await get_content(message_ids["due"]))["enqueued_at"] is not None
-    assert (await get_content(message_ids["queued"]))["enqueued_at"] is not None
-    assert await worker.recover_stale_jobs() == 0
+    first = await claim_next_image_extraction(
+        owner="image-worker-a",
+        lease_seconds=300,
+        message_id=message_ids["due"],
+    )
+    assert first is not None
+    assert first["message_id"] == message_ids["due"]
+    assert first["lease_owner"] == "image-worker-a"
+    assert first["attempt_count"] == 1
+    assert (
+        await claim_next_image_extraction(
+            owner="image-worker-b",
+            lease_seconds=300,
+            message_id=message_ids["due"],
+        )
+        is None
+    )
+    assert (
+        await claim_next_image_extraction(
+            owner="image-worker-b",
+            lease_seconds=300,
+            message_id=message_ids["future"],
+        )
+        is None
+    )
+    assert (await get_content(message_ids["future"]))["status"] == "pending"
     future_row = await get_content(message_ids["future"])
     assert future_row is not None
     assert future_row["status"] == "pending"
@@ -198,7 +202,7 @@ async def test_successful_image_recovery_wakes_only_its_blocked_cycle_without_ia
         "extract_image_message",
         lambda _message_id: "safe recovered image text",
     )
-    await image_worker.ImageExtractionWorker(queue).process_job(
+    await image_worker.ImageExtractionWorker(owner="image-test").process_job(
         {
             "message_id": "image-recovery-target",
             "conversation_id": "recovery-image-target",

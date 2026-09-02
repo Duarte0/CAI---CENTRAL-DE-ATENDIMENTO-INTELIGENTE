@@ -253,6 +253,12 @@ def test_openapi_projects_queries_and_operational_errors() -> None:
         "audio_stale",
         "audio_completed",
         "audio_failed",
+        "image_due",
+        "image_scheduled",
+        "image_leased",
+        "image_stale",
+        "image_completed",
+        "image_failed",
     }.issubset(
         queue_metrics["required"]
     )

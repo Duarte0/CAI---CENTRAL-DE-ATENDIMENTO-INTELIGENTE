@@ -73,11 +73,8 @@ async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
         return True
 
     class Redis:
-        def __init__(self):
-            self.jobs: list[tuple[str, str]] = []
-
-        async def rpush(self, queue: str, job: str):
-            self.jobs.append((queue, job))
+        async def rpush(self, *_args):
+            raise AssertionError("image admission must not publish to Redis")
 
     monkeypatch.setattr(routes, "reserve_image_extraction", fake_reserve)
     redis = Redis()
@@ -91,7 +88,6 @@ async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
 
     assert await routes.enqueue_image_extraction(redis, message) is True
     assert reserved and reserved[0][:2] == ("image-document-id", "ticket-id")
-    assert redis.jobs[0][0] == "image_extraction_queue"
 
 
 def test_history_normalizes_image_document_and_blocks_failed_extraction():

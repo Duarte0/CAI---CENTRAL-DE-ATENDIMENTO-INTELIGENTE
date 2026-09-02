@@ -273,6 +273,18 @@ async def claim_next_transcription(
     )
 
 
+async def claim_next_image_extraction(
+    *, owner: str, lease_seconds: int, message_id: str | None = None
+) -> dict[str, Any] | None:
+    return await asyncio.to_thread(
+        _claim_content_sync,
+        "message_image_extractions",
+        owner=owner,
+        lease_seconds=lease_seconds,
+        message_id=message_id,
+    )
+
+
 def _get_content_sync(table: str, message_id: str) -> dict[str, Any] | None:
     _validate_content_table(table)
     with get_database_pool().connection() as connection:
@@ -348,6 +360,12 @@ async def get_transcription_work_metrics() -> dict[str, int]:
     )
 
 
+async def get_image_extraction_work_metrics() -> dict[str, int]:
+    return await asyncio.to_thread(
+        _content_work_metrics_sync, "message_image_extractions"
+    )
+
+
 def _get_completed_content_sync(
     table: str, message_ids: Sequence[str]
 ) -> dict[str, str]:
@@ -388,7 +406,7 @@ async def reserve_image_extraction(
         message_id,
         conversation_id,
         model,
-        legacy_publication_marker=True,
+        legacy_publication_marker=False,
     )
 
 
@@ -402,6 +420,7 @@ async def set_image_extraction_status(
     next_attempt_at: datetime | None = None,
     expected_statuses: Sequence[str] | None = None,
     expected_updated_at: datetime | None = None,
+    expected_lease_owner: str | None = None,
 ) -> datetime | None:
     return await asyncio.to_thread(
         _set_content_status_sync,
@@ -414,6 +433,7 @@ async def set_image_extraction_status(
         next_attempt_at=next_attempt_at,
         expected_statuses=expected_statuses,
         expected_updated_at=expected_updated_at,
+        expected_lease_owner=expected_lease_owner,
     )
 
 

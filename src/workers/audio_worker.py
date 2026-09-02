@@ -96,7 +96,9 @@ def _safe_audio_error(exc: BaseException) -> str:
     return "audio_transcription_failed"
 
 
-def _is_transient_failure_text(message: str | None) -> bool:
+def _is_transient_failure_text(  # pyright: ignore[reportUnusedFunction]
+    message: str | None,
+) -> bool:
     if not message:
         return False
     lowered = message.lower()
@@ -265,7 +267,9 @@ class AudioTranscriptionWorker:
     async def _process_claim(self, claim: dict[str, Any]) -> None:
         message_id = str(claim["message_id"])
         lease = claim.get("updated_at")
-        if not isinstance(lease, (str, datetime)):
+        if isinstance(lease, str):
+            lease = datetime.fromisoformat(lease.replace("Z", "+00:00"))
+        if not isinstance(lease, datetime):
             raise RuntimeError("Audio claim did not contain an updated_at token")
         attempt = int(claim.get("attempt_count") or 0)
         try:

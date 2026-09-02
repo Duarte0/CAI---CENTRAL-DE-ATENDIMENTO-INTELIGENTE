@@ -6,11 +6,15 @@ import pytest
 
 from src.core.config import settings
 from src.core.db import (
+    claim_next_image_extraction,
     claim_next_transcription,
+    get_image_extraction,
     get_transcription,
     insert_classification,
     recover_stale_transcriptions,
     reserve_transcription,
+    reserve_image_extraction,
+    set_image_extraction_status,
     set_transcription_status,
 )
 from src.utils.backfill_classification_messages import (
@@ -321,6 +325,66 @@ async def test_audio_completion_requires_current_lease_owner():
         is None
     )
     assert await set_transcription_status(
+        message_id,
+        "completed",
+        text="valid completion",
+        expected_updated_at=claim["updated_at"],
+        expected_lease_owner="current-worker",
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_polling_claim_is_atomic_due_aware_and_lease_owned():
+    message_id = "image-polling-concurrent"
+    assert await reserve_image_extraction(
+        message_id, "conversation-image-polling", "test-model"
+    )
+
+    claims = await asyncio.gather(
+        *[
+            claim_next_image_extraction(
+                owner=f"image-worker-{index}", lease_seconds=300
+            )
+            for index in range(10)
+        ]
+    )
+    received = [claim for claim in claims if claim is not None]
+    assert len(received) == 1
+    claimed = received[0]
+    assert claimed["message_id"] == message_id
+    assert claimed["status"] == "processing"
+    assert claimed["attempt_count"] == 1
+    assert claimed["lease_owner"].startswith("image-worker-")
+    assert claimed["lease_expires_at"] is not None
+    assert await claim_next_image_extraction(
+        owner="late-worker", lease_seconds=300
+    ) is None
+
+    row = await get_image_extraction(message_id)
+    assert row is not None
+    assert row["status"] == "processing"
+    assert row["enqueued_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_image_completion_requires_current_lease_owner():
+    message_id = "image-polling-owner"
+    assert await reserve_image_extraction(message_id, "conversation", "test-model")
+    claim = await claim_next_image_extraction(
+        owner="current-worker", lease_seconds=300
+    )
+    assert claim is not None
+    assert (
+        await set_image_extraction_status(
+            message_id,
+            "completed",
+            text="stale completion",
+            expected_updated_at=claim["updated_at"],
+            expected_lease_owner="other-worker",
+        )
+        is None
+    )
+    assert await set_image_extraction_status(
         message_id,
         "completed",
         text="valid completion",

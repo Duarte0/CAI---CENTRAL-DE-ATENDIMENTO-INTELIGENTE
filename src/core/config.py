@@ -66,7 +66,6 @@ class Settings(BaseSettings):
     image_retry_base_seconds: float = 2.0
     image_retry_max_delay_seconds: float = 15 * 60
     image_retry_provider_margin_seconds: float = 1.0
-    image_dead_letter_recovery_interval_seconds: float = 60.0
     ia_retry_base_seconds: float = 2.0
     ia_retry_max_delay_seconds: float = 15 * 60
     ia_retry_provider_margin_seconds: float = 1.0
@@ -167,7 +166,6 @@ class Settings(BaseSettings):
         "image_retry_base_seconds",
         "image_retry_max_delay_seconds",
         "image_retry_provider_margin_seconds",
-        "image_dead_letter_recovery_interval_seconds",
         "ia_retry_base_seconds",
         "ia_retry_max_delay_seconds",
         "ia_retry_provider_margin_seconds",

@@ -1,9 +1,9 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
 - **Status:** implementado; baseline canônico e verificação operacional concluídos
-- **Versão:** 1.7
+- **Versão:** 1.8
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
-- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003
+- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0050
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
@@ -72,6 +72,13 @@ imagem. O issue 0016 também confirmou a migration head
 `0018_department_mapping` e a cobertura de identidade, hydration, backfill de
 contatos, resolução conservadora e mapeamento departamental; isso não comprova
 Redis, fornecedores, réplicas ou produção.
+
+**Atualização do baseline (issue 0050, 2026-09-02):** compileall e Pyright
+estrito passaram; a etapa offline teve **280 passed, 84 skipped**; e a etapa
+PostgreSQL descartável, com Alembic head `0024_durable_media_leases`, teve
+**34 passed** nos grupos focados de mídia, ciclo, transcrição e concorrência.
+Os skips permanecem limitados à ausência intencional de
+`CAI_TEST_DATABASE_URL` na etapa offline.
 
 ## Objetivo e não objetivos
 

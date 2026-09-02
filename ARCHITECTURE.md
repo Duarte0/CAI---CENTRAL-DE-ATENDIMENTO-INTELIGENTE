@@ -29,8 +29,8 @@ flowchart LR
     API --> P[(PostgreSQL)]
     API --> D
     R --> IW[IA worker]
-    R --> AW[Audio worker]
-    R --> IMW[Image worker]
+    P --> AW[Audio worker]
+    P --> IMW[Image worker]
     AW --> D
     IMW --> D
     IW --> D
@@ -54,11 +54,11 @@ flowchart LR
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
 | \`audio_worker\` | Polls due audio rows, downloads audio from DigiSac, calls Groq transcription, and persists status/result. | PostgreSQL reservation, schedule, claim, lease, retry and result; no Redis dependency. |
-| \`image_worker\` | Downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation/status; Redis queue and dead letter. |
+| \`image_worker\` | Polls due image rows, downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation, schedule, claim, lease, retry and result; no Redis dependency. |
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
 | \`acessorias_directory\` | Acquires and reconciles the Acessórias company, contact, department, and relationship directory. | PostgreSQL snapshot and synchronization executions; provider access is configuration-backed. |
 | \`postgres\` | Source of truth for analysis, media state, assignment history, DigiSac/Acessórias directory data, and persistent cycles. | PostgreSQL 16, managed by Alembic. |
-| \`redis\` | Lightweight work transport and transient coordination. | Redis 7 with AOF in Compose. |
+| \`redis\` | Remaining transient work transport and coordination for API/IA flows. | Redis 7 with AOF in Compose; not required by audio/image workers. |
 | \`migrate\` | Applies the configured Alembic revision before application services start. | No application schema creation at runtime. |
 
 The application uses one PostgreSQL connection pool per process. Database
@@ -187,13 +187,13 @@ sequenceDiagram
         W->>P: persist transcription/retry/lease
     else human image
         A->>P: reserve media row
-        A->>R: publish image job
+        W->>P: poll and claim image row
+        W->>P: persist extraction/retry/lease
     else text, document, or ticket lifecycle
         A->>P: maintain ticket/cycle state
     end
     A-->>D: 202 accepted or 200 ignored
-    R->>W: consume durable/lightweight job
-    W->>P: persist processing result
+    R->>W: consume only remaining Redis-backed flows
 \`\`\`
 
 ### Authentication and normalization
@@ -231,16 +231,17 @@ record.
 | --- | --- | --- | --- |
 | legacy \`ia_queue\` | none | none | legacy \`ia_dead_letter\` |
 | legacy \`audio_transcription_queue\` | none after issue 0049 | none | legacy \`audio_transcription_dead_letter\` |
-| \`image_extraction_queue\` | API/recovery | \`image_worker\` | \`image_extraction_dead_letter\` |
+| legacy \`image_extraction_queue\` | none after issue 0050 | none | legacy \`image_extraction_dead_letter\` |
 
 Persistent IA finalization work is selected and leased directly from
 PostgreSQL with `FOR UPDATE SKIP LOCKED`. A worker crash is recovered after the
 lease expires; `next_attempt_at` remains the only schedule authority. The
 legacy IA lists have no active producer or consumer and are inventoried by
 `scripts/retire_legacy_ia_queue.py`; its apply mode removes only a bounded,
-validated snapshot and retains malformed/unknown entries. Audio and image
-audio lists are inventoried by `scripts/retire_legacy_audio_queue.py` and are
-not active work; image remains Redis-backed until issue 0050.
+validated snapshot and retains malformed/unknown entries. Audio lists are
+inventoried by `scripts/retire_legacy_audio_queue.py`; image lists are
+inventoried by `scripts/retire_legacy_image_queue.py`. Neither is active work;
+both workers poll PostgreSQL.
 
 ### Transient keys
 
@@ -325,10 +326,10 @@ status checks and leases. Concurrent claimers use row locking and
 
 ## 7. Media processing
 
-Media work is reserved durably before any transport. Audio is discovered by
-PostgreSQL polling; image is published to Redis until issue 0050. A failed image
-publication releases its reservation so a repeated webhook or reconciler can
-retry it.
+Media work is reserved durably before processing. Audio and image are discovered
+by PostgreSQL polling; neither active worker requires a Redis publication. A
+duplicate webhook or IA reconciliation observes the existing durable row without
+resetting a future retry schedule.
 
 ### Audio
 
@@ -349,8 +350,11 @@ media dependency.
 
 \`image_worker\` validates image data and MIME type, downloads and encodes the
 content, calls the configured vision model, and updates
-\`message_image_extractions\`. Truncated or invalid vision output is not treated
-as a successful extraction.
+\`message_image_extractions\`. It claims one due row with
+\`FOR UPDATE SKIP LOCKED\`, owner and expiring lease. Transient errors persist
+\`pending\` and \`next_attempt_at\`; permanent errors persist \`failed\` without
+an active dead-letter copy. Truncated or invalid vision output is not treated as
+a successful extraction.
 
 A terminal audio or image failure places a dependent persistent cycle in
 \`media_blocked\`; the IA worker must not classify incomplete context. A later
@@ -433,7 +437,7 @@ Bearer `ADMIN_API_TOKEN`; they are not public API operations.
 | --- | --- |
 | \`POST /webhook/digisac\` | Authenticated production webhook ingestion. |
 | \`GET /health\` | PostgreSQL and Redis readiness. |
-| \`GET /queues\` | Legacy Redis visibility plus PostgreSQL-derived IA/audio work metrics. |
+| \`GET /queues\` | Legacy Redis visibility plus PostgreSQL-derived IA/audio/image work metrics. |
 | \`GET /conversations/{conversation_id}/status\` | Conversation processing status. |
 | \`GET /conversations/{conversation_id}/result\` | Latest conversation result. |
 | \`GET /conversations/{conversation_id}/cycles\` | Persistent cycle list. |
@@ -464,8 +468,9 @@ implemented aliases or prefixes in this checkout.
 1. PostgreSQL 16.14 with a persistent volume and readiness check.
 2. Redis 7 with AOF persistence and readiness check.
 3. A one-shot \`migrate\` service running \`alembic upgrade\`.
-4. \`api\`, \`ia_worker\`, \`audio_worker\`, and \`image_worker\`, all gated on healthy
-   PostgreSQL, healthy Redis, and successful migration completion.
+4. \`api\` and \`ia_worker\`, gated on healthy PostgreSQL, healthy Redis, and
+   successful migration completion; \`audio_worker\` and \`image_worker\`, gated
+   only on healthy PostgreSQL and successful migration completion.
 5. An optional \`ralph\` development/verification service.
 
 The application requires Python 3.11+, PostgreSQL, Redis, DigiSac and Groq
@@ -483,9 +488,10 @@ application verifies that schema at startup and does not create or mutate it.
 
 ## 12. Reliability and recovery invariants
 
-- PostgreSQL persistence precedes media/cycle Redis publication.
+- PostgreSQL persistence precedes any Redis publication that remains part of an
+  active contract; audio and image processing do not publish work to Redis.
 - A failed Redis publication clears the corresponding PostgreSQL publication
-  marker so reconciliation can retry it.
+  marker for the remaining Redis-backed flows so reconciliation can retry it.
 - Persistent claims and leases recover work abandoned by process failure.
 - Media reservations are idempotent by message ID.
 - DigiSac contact identity is keyed only by provider \`contact.id\`; hydration
@@ -525,9 +531,10 @@ The architecture is implemented, but the repository's implementation plan
 records these delivery limitations:
 
 - The local canonical runner proves the tracked static, offline, migration, and
-  PostgreSQL baseline on a disposable target. Its current recorded 2026-08-26
-  evidence is now superseded by the issue 0049 validation on Alembic
-  `0024_durable_media_leases`; static and disposable evidence does not prove
+  PostgreSQL baseline on a disposable target. Its current recorded 2026-09-02
+  evidence is **280 passed, 84 skipped** offline and **34 focused PostgreSQL
+  tests** in the issue 0050 validation on Alembic `0024_durable_media_leases`;
+  static and disposable evidence does not prove
   Redis, DigiSac, Groq, secret-manager provisioning, replicas, deployment, or
   production availability or release readiness. The older `0023` evidence is
   historical only.
@@ -635,7 +642,7 @@ they limit release verification and future evolution decisions.
   retained by \`src/core/db.py\`.
 - Durable transcription and image-extraction persistence:
   \`src/core/durable_media_repository.py\`, with compatibility exports retained
-  by \`src/core/db.py\`.
+  by \`src/core/db.py\`; issue 0050 adds the image claim and work metrics.
 - Classification persistence, ordered message association, protocol metadata,
   and existence queries: \`src/core/classification_repository.py\`, with
   compatibility exports retained by \`src/core/db.py\`.
@@ -648,7 +655,7 @@ they limit release verification and future evolution decisions.
   \`src/core/digisac_directory.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0023_manual_digisac_acessorias_reconciliation.py\`.
+  \`0024_durable_media_leases.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.

@@ -6,6 +6,7 @@ from src.core import db, durable_media_repository
 def test_durable_media_persistence_is_owned_by_repository() -> None:
     public_operations = (
         "claim_next_transcription",
+        "claim_next_image_extraction",
         "reserve_transcription",
         "set_transcription_status",
         "get_transcription",
@@ -20,6 +21,7 @@ def test_durable_media_persistence_is_owned_by_repository() -> None:
         "release_image_publication",
         "get_pending_content_extractions",
         "get_transcription_work_metrics",
+        "get_image_extraction_work_metrics",
     )
 
     for name in public_operations:

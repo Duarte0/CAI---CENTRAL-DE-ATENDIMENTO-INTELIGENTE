@@ -198,7 +198,7 @@ async def test_audio_webhook_admits_transcription_without_redis_publication(monk
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_from_me", [False, True])
-async def test_image_webhook_queues_extraction_for_both_authors(
+async def test_image_webhook_admits_extraction_without_redis_publication(
     monkeypatch, is_from_me
 ):
     queued = []
@@ -233,5 +233,4 @@ async def test_image_webhook_queues_extraction_for_both_authors(
     )
 
     assert body["image_extraction_queued"] is True
-    assert queued[0][0] == "image_extraction_queue"
-    assert '"message_id": "image-1"' in queued[0][1]
+    assert queued == []

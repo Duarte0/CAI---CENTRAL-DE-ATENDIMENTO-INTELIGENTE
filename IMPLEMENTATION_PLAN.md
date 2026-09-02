@@ -14,11 +14,11 @@ complete locally; production acceptance remains separate._
   history reconstruction, Groq classification, PostgreSQL polling/lease for IA
   finalization, Redis coordination where still required, and
   separate durable audio/image processing are implemented. PostgreSQL state is
-  reserved before media transport; IA finalization and audio transcription are
-  claimed by PostgreSQL polling/lease, while image remains on Redis until issue
-  0050. Lease, due-retry, reconciliation, and idempotency paths recover
-  interrupted work. Terminal image failure blocks only dependent cycles; terminal
-  audio failure also remains blocked by the media gate.
+  reserved before media transport; IA finalization, audio transcription and
+  image extraction are claimed by PostgreSQL polling/lease. Lease, due-retry,
+  reconciliation, and idempotency paths recover interrupted work. Terminal image
+  failure blocks only dependent cycles; terminal audio failure also remains
+  blocked by the media gate.
 - **[completed] Persistent-only finalization and privacy hardening**
   (SPEC-0001–0003; issues 0005, 0024, 0025, 0048). The legacy Redis
   buffer/debounce mode and raw-payload diagnostic routes are removed. Parser
@@ -28,11 +28,13 @@ complete locally; production acceptance remains separate._
   claimed directly in PostgreSQL, while a bounded manual inventory retires only
   validated legacy queue entries.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
-  issues 0004, 0027–0033, 0037, 0049). Alembic owns the schema through
+  issues 0004, 0027–0033, 0037, 0049–0050). Alembic owns the schema through
   `0024_durable_media_leases`; persistence boundaries for contacts, cycles,
   assignments, media, classifications, and DigiSac directory state are isolated
   behind repositories. Audio transient retry parity, PostgreSQL polling/lease,
-  and bounded legacy-list cutover are implemented with recovery coverage.
+  and bounded legacy-list cutover for audio and image are implemented with
+  recovery coverage. Revision `0024_durable_media_leases` supplies the shared
+  media lease columns and indexes; issue 0050 required no additional migration.
 - **[completed] Acessórias directory through Request creation**
   (SPEC-0007–0011; issues 0012–0022, 0026, 0034, 0036). Directory sync,
   canonical ticket `contact.id`, conservative identity candidates/manual
@@ -59,6 +61,15 @@ complete locally; production acceptance remains separate._
   lease-owner completion and existing image recovery. Compileall and diff
   checks also passed; this is local evidence, not provider or production
   acceptance.
+- **[completed | current checkout | 2026-09-02] Issue 0050 verification.** The
+  full offline suite passed **280 passed, 84 skipped**. A disposable PostgreSQL
+  database applied Alembic head `0024_durable_media_leases` and passed **34
+  focused tests** covering atomic image claims, due scheduling, lease ownership,
+  retry persistence, media gating, webhook/IA admission and the audio/image
+  regression families. Compileall and diff checks also passed. Legacy image
+  lists were not deleted or replayed; the bounded inventory/apply script is
+  explicit and dry-run by default. This is local evidence, not provider or
+  production acceptance.
 
 ### Implemented with bounded evidence
 
@@ -76,18 +87,20 @@ complete locally; production acceptance remains separate._
 
 ### Approved follow-up backlog
 
-- **[open | coordinated migration]** Issue 0050 migrates the remaining
-  Redis-backed image transport using the shared durable-media lease pattern.
-  Issue 0051 preserves hydration backoff; it is already DB-only and is not part
-  of queue removal.
+- **[open | coordinated migration]** Issue 0051 preserves hydration backoff; it
+  is already DB-only and is not part of queue removal.
 
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
-  `pass` occurrences are exception-control flow; the 76 skips are the explicit
-  database prerequisite policy.
+  `pass` occurrences are exception-control flow; the current 84 skips are the
+  explicit database prerequisite policy.
+- **[completed]** Issue 0050 migrated image extraction to PostgreSQL polling and
+  left only bounded, manual visibility of legacy Redis lists. Issue 0051
+  preserves hydration backoff; it is already DB-only and is not part of queue
+  removal.
 - **[superseded/deprecated]** Issue 0023 is deprecated: its active/inactive
   directory concern was superseded by the later directory-contract alignment,
-  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0048–0049
+  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0048–0050
   are closed.
 
 ## Priority plan
@@ -201,7 +214,7 @@ complete locally; production acceptance remains separate._
   (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
   slices (0038–0040), the documentation reconciliation (0041), PostgreSQL
   polling/lease for persistent IA finalization (0048), and PostgreSQL polling
-  for audio transcription (0049).
+  for audio transcription (0049) and image extraction (0050).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -210,8 +223,9 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issues 0048 and 0049 are
-complete locally; issue 0050 remains the explicitly scoped image follow-up.
+shell/session/BFF, read, and command-action increments. Issues 0048–0050 are
+complete locally; issue 0051 remains the explicitly scoped hydration-backoff
+follow-up.
 Request
 lifecycle, broader IA policy, and production acceptance remain separate blocked
 plan items.

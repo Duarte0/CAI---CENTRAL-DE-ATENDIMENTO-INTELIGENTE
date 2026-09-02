@@ -449,9 +449,15 @@ get_pending_content_extractions = (
     _durable_media_repository.get_pending_content_extractions
 )
 claim_next_transcription = _durable_media_repository.claim_next_transcription
+claim_next_image_extraction = (
+    _durable_media_repository.claim_next_image_extraction
+)
 get_transcription = _durable_media_repository.get_transcription
 get_transcription_work_metrics = (
     _durable_media_repository.get_transcription_work_metrics
+)
+get_image_extraction_work_metrics = (
+    _durable_media_repository.get_image_extraction_work_metrics
 )
 recover_stale_image_extractions = (
     _durable_media_repository.recover_stale_image_extractions

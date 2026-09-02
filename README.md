@@ -54,7 +54,7 @@ DigiSac
   └─ message.created / message.updated
        ├─ texto/documento → ciclo persistente
        ├─ áudio → reserva + polling PostgreSQL → audio_worker
-       └─ imagem → reserva PostgreSQL → image_extraction_queue
+       └─ imagem → reserva + polling PostgreSQL → image_worker
 
 audio_worker ── download DigiSac + Groq Whisper ──→ PostgreSQL
 image_worker ── download DigiSac + Groq Vision  ──→ PostgreSQL
@@ -79,7 +79,7 @@ ia_worker
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
 | `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac e ciclos. |
-| `redis` | Filas de mídia ainda ativas, idempotência temporária, status e resultados com TTL; não é a fila persistente de finalização IA. |
+| `redis` | Idempotência temporária, status e resultados com TTL e filas de fluxos que ainda têm contrato Redis; não transporta mídia ativa nem é a fila persistente de finalização IA. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
@@ -101,6 +101,13 @@ backoff independente do limite `MAX_RETRY_ATTEMPTS` da classificação IA. O
 importa dead-letters antigas somente quando o erro persistido é demonstravelmente
 transitório. Erros persistidos e logs usam apenas categorias seguras, sem corpo
 do provider ou URL assinada.
+
+O mesmo contrato vale para imagens: `image_worker` reclama linhas due de
+`message_image_extractions` com `FOR UPDATE SKIP LOCKED`, owner e lease. Retry
+transitório permanece em `pending` com `next_attempt_at`; falha permanente fica
+em `failed` no PostgreSQL, sem `RPUSH`, `LPOP`, `LRANGE`, `LREM` ou dead-letter
+Redis no caminho ativo. As listas legadas são apenas evidência para o comando
+bounded `scripts.retire_legacy_image_queue`.
 
 ## Integração Acessórias aprovada
 
@@ -205,7 +212,7 @@ Os estados do ciclo incluem, entre outros, espera por histórico, espera por
 mídia, bloqueio por mídia, classificação, conclusão, conclusão com avisos e
 falha. `next_attempt_at`, leases e claims no PostgreSQL permitem recuperar jobs
 sem depender de uma publicação Redis. Áudio é reclamado diretamente por
-`audio_worker`; imagem continua na fila Redis até o issue 0050.
+`audio_worker` e `image_worker`; ambos reclamam mídia diretamente no PostgreSQL.
 
 - mídia pendente mantém o ciclo em espera até o horário real de nova tentativa;
 - falha terminal de áudio ou imagem bloqueia a classificação para não concluir
@@ -344,7 +351,7 @@ Variáveis principais:
 | `ADMIN_UI_PASSWORD` | Senha única de bootstrap da UI administrativa. | vazio; provisionar em ambiente protegido |
 | `ADMIN_SESSION_SECRET` | Chave de assinatura da sessão `HttpOnly` da UI. | vazio; provisionar em ambiente protegido |
 | `DATABASE_URL` | PostgreSQL da aplicação e Alembic. | obrigatório em execução |
-| `REDIS_URL` | Redis de filas/coordenação dos fluxos que ainda o usam; não é necessário para o `audio_worker`. | `redis://localhost:6379` |
+| `REDIS_URL` | Redis de filas/coordenação dos fluxos que ainda o usam; não é necessário para `audio_worker` ou `image_worker`. | `redis://localhost:6379` |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
 | `AUDIO_TRANSCRIPTION_MODEL` | Modelo de transcrição. | `whisper-large-v3-turbo` |
 | `AUDIO_RETRY_BASE_SECONDS` | Backoff inicial de falhas transitórias de áudio. | `2` |
@@ -382,9 +389,9 @@ docker compose -p cai logs -f api ia_worker audio_worker image_worker
 ```
 
 O Compose inicia PostgreSQL, Redis, aplica `alembic upgrade head` no serviço
-`migrate` e só então libera API e workers. O `audio_worker` depende somente de
-PostgreSQL e da migration; API, IA e imagem continuam usando Redis conforme seus
-contratos atuais. A API fica em
+`migrate` e só então libera API e workers. `audio_worker` e `image_worker`
+dependem somente de PostgreSQL e da migration; API e IA continuam usando Redis
+conforme seus contratos atuais. A API fica em
 `http://localhost:8000`; PostgreSQL e Redis também são publicados localmente no
 Compose atual.
 
@@ -393,8 +400,7 @@ há flag de finalização nem uma segunda fila de compatibilidade para alternar.
 
 ## Execução local
 
-Com PostgreSQL acessível por `DATABASE_URL` (e Redis disponível para API, IA e
-imagem):
+Com PostgreSQL acessível por `DATABASE_URL` (e Redis disponível para API e IA):
 
 ```bash
 python -m venv .venv
@@ -627,7 +633,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0023_manual_reconciliation` e só então
+ao destino, aplica e verifica Alembic head `0024_durable_media_leases` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -707,6 +713,13 @@ A cobertura valida o gate de confidence, a fronteira `0.50` e o payload interno
 `tipo=I`. O resultado é evidência local/descartável e não comprova provider live,
 Redis, credenciais, deployment ou produção.
 
+Na validação do issue 0050 em 2026-09-02, a suíte PostgreSQL descartável passou
+**34 testes**, incluindo claim concorrente de imagem, lease/ownership, mídia
+pendente, recuperação de ciclo bloqueado e regressões de transcrição. A suíte
+offline completa passou **280 testes, com 84 skips** restritos ao banco não
+configurado. A evidência é local/descartável e não comprova provider live,
+credenciais, deployment ou produção.
+
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
 estruturados e motivos sanitizados, nunca o corpo bruto da requisição ou a
@@ -726,10 +739,10 @@ curl -fsS http://localhost:8000/queues
 docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 ```
 
-O áudio não possui mais retry ou dead-letter ativo em Redis: `pending`,
+Áudio e imagem não possuem mais retry ou dead-letter ativo em Redis: `pending`,
 `next_attempt_at`, `processing`, lease, `completed` e `failed` ficam em
-`message_transcriptions`. Para auditar o legado antes de removê-lo, use o
-comando bounded abaixo; o padrão é dry-run e nenhum item desconhecido ou
+`message_transcriptions` e `message_image_extractions`. Para auditar o legado
+antes de removê-lo, use os comandos bounded abaixo; o padrão é dry-run e nenhum item desconhecido ou
 malformado é apagado:
 
 ```bash
@@ -743,6 +756,18 @@ saudável e repetir uma fotografia completa, a retirada exige a confirmação
 explícita `--apply --confirm retire-legacy-audio-queue`. Dead-letters
 transitórios importados permanecem como evidência até a transcrição ser
 persistida com sucesso.
+
+Para imagens, o procedimento equivalente é:
+
+```bash
+PYTHONPATH=/app python -m scripts.retire_legacy_image_queue --max-items 1000
+PYTHONPATH=/app python -m scripts.retire_legacy_image_queue \
+  --recover-transient --max-items 1000
+```
+
+Após revisar um inventário completo e confirmar o worker, a retirada exige
+`--apply --confirm retire-legacy-image-queue`; IDs desconhecidos, itens
+malformados e dead-letters transitórios não são apagados por inferência.
 
 Resíduos das antigas chaves Redis de buffer/debounce podem ser auditados e
 removidos somente por uma operação manual, limitada e revisada. O dry-run
