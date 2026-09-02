@@ -6,10 +6,10 @@ import pytest
 from src.core.config import settings
 from src.core.db import (
     claim_cycle,
+    claim_next_cycle,
     close_cycle,
     create_open_cycle,
     get_cycle,
-    get_recoverable_cycles,
     save_cycle_messages,
     wake_unblocked_media_cycles,
 )
@@ -126,7 +126,7 @@ async def test_cycle_claim_uses_lease():
 
 
 @pytest.mark.asyncio
-async def test_cycle_publication_claim_is_atomic():
+async def test_next_due_cycle_claim_is_atomic_and_ignores_legacy_marker():
     cycle, _ = await close_cycle(
         conversation_id="ticket-publication",
         protocol="123",
@@ -144,9 +144,41 @@ async def test_cycle_publication_claim_is_atomic():
             (cycle["public_id"],),
         )
     claims = await asyncio.gather(
-        *[get_recoverable_cycles(limit=10) for _ in range(5)]
+        *[
+            claim_next_cycle(owner=f"worker-{index}", lease_seconds=300)
+            for index in range(5)
+        ]
     )
-    assert sum(len(items) for items in claims) == 1
+    claimed = [item for item in claims if item is not None]
+    assert [str(item["public_id"]) for item in claimed] == [
+        str(cycle["public_id"])
+    ]
+    persisted = await get_cycle(str(cycle["public_id"]))
+    assert persisted is not None
+    assert persisted["enqueued_at"] is None
+    assert persisted["lease_owner"] is not None
+
+
+@pytest.mark.asyncio
+async def test_next_due_cycle_claim_respects_future_schedule():
+    cycle, _ = await close_cycle(
+        conversation_id="ticket-future-claim",
+        protocol="123",
+        closed_at="2026-07-28T12:00:00Z",
+        close_event_key="close-future-claim",
+    )
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE conversation_processing_cycles
+            SET next_attempt_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                lease_owner = NULL,
+                lease_expires_at = NULL
+            WHERE public_id = %s
+            """,
+            (cycle["public_id"],),
+        )
+    assert await claim_next_cycle(owner="worker-future", lease_seconds=300) is None
 
 
 @pytest.mark.asyncio

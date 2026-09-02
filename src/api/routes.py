@@ -28,6 +28,7 @@ from src.core.db import (
     database_is_ready,
     get_cycle,
     get_cycle_metrics,
+    get_cycle_work_metrics,
     get_cycle_result,
     get_latest_cycle,
     initialize_database,
@@ -170,52 +171,6 @@ def _cycle_event_key(
             default=str,
         )
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
-
-
-async def _publish_cycle(
-    redis: AsyncRedis, cycle: Mapping[str, Any], *, attempt: int = 0
-) -> None:
-    public_id = cycle.get("public_id")
-    conversation_id = cycle.get("conversation_id")
-    if not public_id or not conversation_id:
-        raise ValueError("cycle is missing its persistent identity")
-    status_value = str(cycle.get("status") or "pending")
-    marked = await transition_cycle(
-        str(public_id),
-        status_value,
-        expected_statuses=(status_value,),
-        fields={"enqueued_at": datetime.now(timezone.utc)},
-    )
-    if marked is None:
-        return
-    try:
-        await redis.rpush(
-            "ia_queue",
-            json.dumps(
-                {
-                    "cycle_id": str(public_id),
-                    "conversation_id": str(conversation_id),
-                    "protocol": cycle.get("protocol"),
-                    "attempt": attempt,
-                    "not_before": (
-                        datetime.fromisoformat(
-                            str(cycle["next_attempt_at"])
-                        ).timestamp()
-                        if cycle.get("next_attempt_at")
-                        else 0
-                    ),
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception:
-        await transition_cycle(
-            str(public_id),
-            status_value,
-            expected_statuses=(status_value,),
-            fields={"enqueued_at": None},
-        )
-        raise
 
 
 async def capture_ticket_assignment(
@@ -427,7 +382,7 @@ async def health(redis: AsyncRedis = Depends(get_redis)) -> dict[str, str]:
 async def queue_metrics(
     redis: AsyncRedis = Depends(get_redis),
 ) -> dict[str, Any]:
-    """Small operational view of the Redis-backed work queues."""
+    """Operational view of legacy Redis lists and durable work counts."""
     (
         ia_queue,
         dead_letter,
@@ -435,6 +390,7 @@ async def queue_metrics(
         audio_dead_letter,
         image_queue,
         image_dead_letter,
+        cycle_work,
     ) = await asyncio.gather(
         redis.llen("ia_queue"),
         redis.llen("ia_dead_letter"),
@@ -442,6 +398,7 @@ async def queue_metrics(
         redis.llen("audio_transcription_dead_letter"),
         redis.llen("image_extraction_queue"),
         redis.llen("image_extraction_dead_letter"),
+        get_cycle_work_metrics(),
     )
     result: dict[str, Any] = {
         "ia_queue": ia_queue,
@@ -450,6 +407,9 @@ async def queue_metrics(
         "audio_transcription_dead_letter": audio_dead_letter,
         "image_extraction_queue": image_queue,
         "image_extraction_dead_letter": image_dead_letter,
+        "ia_due": cycle_work["due"],
+        "ia_scheduled": cycle_work["scheduled"],
+        "ia_leased": cycle_work["leased"],
     }
     result["conversation_cycles"] = await get_cycle_metrics()
     return result
@@ -598,15 +558,12 @@ async def digisac_webhook(
             contact_external_id=_canonical_ticket_contact_external_id(data),
         )
         if created:
-            try:
-                await _publish_cycle(redis, cycle)
-            except Exception:
-                logger.exception(
-                    "Cycle persisted but queue publication failed: "
-                    "cycle_id=%s conversation_id=%s",
-                    cycle["public_id"],
-                    ticket_id,
-                )
+            logger.info(
+                "Cycle persisted for PostgreSQL finalization polling: "
+                "cycle_id=%s conversation_id=%s",
+                cycle["public_id"],
+                ticket_id,
+            )
         return {
             "status": "ticket_closed" if created else "ticket_already_closed",
             "conversation_id": ticket_id,

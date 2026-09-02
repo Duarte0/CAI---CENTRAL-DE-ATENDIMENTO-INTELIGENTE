@@ -27,12 +27,12 @@ inalterados.
 2. JSON inválido, payload não objeto ou `data` não objeto **deve** retornar `400`. Com `WEBHOOK_SECRET` configurado, a assinatura HMAC-SHA256 de `X-Digisac-Signature` sobre o corpo bruto **deve** ser validada antes da normalização; hex puro e `sha256=<hex>` são aceitos e assinatura ausente/inválida retorna `401`.
 3. O adaptador **deve** aceitar `chat`, `document`, `ptt`, `audio`, `voice` e `image`. Documento com MIME `image/*` **deve** tornar-se imagem internamente; documento não-imagem continua documento. Só `id`, nome, nome público, extensão e MIME seguros podem ser normalizados para trabalho posterior.
 4. Bot, `isFromMe`, tipo não suportado, chat vazio e mensagem sem ticket **devem** ser ignorados antes de reserva de mídia e idempotência. A resposta **deve** ser `200` com motivo seguro e não pode enfileirar ou criar trabalho de ciclo.
-5. `ticket.updated` **deve** capturar atribuições observadas idempotentemente. Fechamento sem protocolo válido **deve** ser ignorado com `200`; com protocolo, deve persistir e publicar um ciclo persistente. Abertura/reabertura cria ou recupera ciclo e não publica classificação na reabertura.
+5. `ticket.updated` **deve** capturar atribuições observadas idempotentemente. Fechamento sem protocolo válido **deve** ser ignorado com `200`; com protocolo, deve persistir um ciclo elegível para polling PostgreSQL. Abertura/reabertura cria ou recupera ciclo e não publica classificação na reabertura.
 
 ## Idempotência, mídia e respostas
 
 1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da marcação transitória de idempotência e antes da publicação Redis. Falha de publicação **deve** liberar o marcador de publicação para repetição/reconciliação.
-2. Repetição **não pode** duplicar ciclo, reserva ou publicação persistente; ciclo e reserva persistentes são a deduplicação de trabalho relevante.
+2. Repetição **não pode** duplicar ciclo ou reserva; ciclo e reserva persistentes são a deduplicação de trabalho relevante. O webhook não publica `ia_queue`.
 3. A rota de produção normalmente retorna `202`; eventos seguramente ignorados retornam `200`.
 4. `GET /conversations/{conversation_id}/status`, `/result`, `/cycles` e `GET /cycles/{cycle_id}/status`, `/result` **devem** retornar o estado persistente por histórico. Conversa, ciclo ou resultado ausente **deve** retornar `404`.
 

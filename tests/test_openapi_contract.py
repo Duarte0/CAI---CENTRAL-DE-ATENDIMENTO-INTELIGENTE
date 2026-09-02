@@ -242,6 +242,10 @@ def test_openapi_projects_queries_and_operational_errors() -> None:
     }.issubset(schemas)
     assert set(document["paths"]["/health"]["get"]["responses"]) == {"200", "503"}
     assert set(document["paths"]["/queues"]["get"]["responses"]) == {"200"}
+    queue_metrics = schemas["QueueMetrics"]
+    assert {"ia_due", "ia_scheduled", "ia_leased"}.issubset(
+        queue_metrics["required"]
+    )
 
     cycles = document["paths"]["/conversations/{conversation_id}/cycles"]["get"]
     limit = next(

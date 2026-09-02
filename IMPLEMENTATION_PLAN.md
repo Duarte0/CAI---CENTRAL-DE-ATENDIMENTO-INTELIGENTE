@@ -1,6 +1,6 @@
 # Implementation Plan
 
-_Planning baseline: 2026-08-21. Source, Alembic revisions, configuration, and
+_Planning baseline: 2026-09-02. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
 evidence, never production availability. The SPEC-0013 Phase 2 delivery is
 complete locally; production acceptance remains separate._
@@ -11,16 +11,20 @@ complete locally; production acceptance remains separate._
 
 - **[completed] Core durable CAI workflow** (PRD §§5–8; SPEC-0001–0004).
   FastAPI webhook ingestion, PostgreSQL-backed cycles, persistent DigiSac
-  history reconstruction, Groq classification, Redis coordination, and
+  history reconstruction, Groq classification, PostgreSQL polling/lease for IA
+  finalization, Redis coordination where still required, and
   separate durable audio/image processing are implemented. PostgreSQL state is
-  reserved before queue publication; lease, due-retry, reconciliation, and
+  reserved before media queue publication; lease, due-retry, reconciliation, and
   idempotency paths recover interrupted work. Terminal image failure blocks
   only dependent cycles; terminal audio failure becomes a warning.
 - **[completed] Persistent-only finalization and privacy hardening**
-  (SPEC-0001–0003; issues 0005, 0024, 0025). The legacy Redis
+  (SPEC-0001–0003; issues 0005, 0024, 0025, 0048). The legacy Redis
   buffer/debounce mode and raw-payload diagnostic routes are removed. Parser
   and webhook diagnostics retain bounded metadata without raw model output,
-  extracted customer values, secrets, or payload bodies.
+  extracted customer values, secrets, or payload bodies. Issue 0048 also
+  removed `ia_queue`/`ia_dead_letter` from the active IA path: due work is
+  claimed directly in PostgreSQL, while a bounded manual inventory retires only
+  validated legacy queue entries.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
   issues 0004, 0027–0033, 0037). Alembic owns the schema through
   `0022_identity_discovery_command`; persistence boundaries for contacts,
@@ -63,7 +67,12 @@ complete locally; production acceptance remains separate._
   Older `0020`/`203+68` results remain dated historical evidence only; no local
   or disposable result is production/provider/Redis acceptance.
 
-### No current implementation backlog signal
+### Approved follow-up backlog
+
+- **[open | coordinated migration]** Issues 0049 and 0050 migrate the still
+  Redis-backed audio and image transports after the IA PostgreSQL claim pattern
+  is stable. Issue 0051 preserves hydration backoff; it is already DB-only and
+  is not part of queue removal.
 
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
@@ -182,7 +191,8 @@ complete locally; production acceptance remains separate._
   OpenAPI baseline work (0007–0011), Acessórias Milestones A–E (0012–0022,
   0026), audio retry parity (0027), persistence/provider boundary refactors
   (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
-  slices (0038–0040), and the documentation reconciliation (0041).
+  slices (0038–0040), the documentation reconciliation (0041), and PostgreSQL
+  polling/lease for persistent IA finalization (0048).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -191,6 +201,7 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Request lifecycle,
-broader IA policy, and production acceptance remain separate blocked plan
-items.
+shell/session/BFF, read, and command-action increments. Issue 0048 is complete
+locally and leaves 0049–0051 as explicitly scoped follow-up work. Request
+lifecycle, broader IA policy, and production acceptance remain separate blocked
+plan items.

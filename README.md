@@ -49,7 +49,7 @@ DigiSac
   │
   ├─ ticket.created / ticket.updated
   │    ├─ histórico de departamento e atendente → PostgreSQL
-  │    └─ fechamento → ciclo persistente → ia_queue
+  │    └─ fechamento → ciclo persistente no PostgreSQL
   │
   └─ message.created / message.updated
        ├─ texto/documento → ciclo persistente
@@ -60,6 +60,7 @@ audio_worker ── download DigiSac + Groq Whisper ──→ PostgreSQL
 image_worker ── download DigiSac + Groq Vision  ──→ PostgreSQL
 
 ia_worker
+  ├─ consulta e reclama ciclos elegíveis diretamente no PostgreSQL
   ├─ recupera e normaliza o histórico do ticket
   ├─ reconcilia transcrições e extrações de imagem
   ├─ aguarda/reagenda mídias pendentes de forma durável
@@ -74,15 +75,23 @@ ia_worker
 | Componente | Responsabilidade |
 | --- | --- |
 | `api` | FastAPI, autenticação do webhook, normalização, reservas de mídia, abertura/fechamento de ciclos e consultas. |
-| `ia_worker` | Finalização da conversa, montagem do contexto, classificação e reconciliação de ciclos. |
+| `ia_worker` | Polling/lease PostgreSQL de finalização, montagem do contexto, classificação e despertar seletivo de ciclos bloqueados por mídia. |
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
 | `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac e ciclos. |
-| `redis` | Filas, locks, idempotência temporária, status e resultados com TTL. |
+| `redis` | Filas de mídia ainda ativas, idempotência temporária, status e resultados com TTL; não é a fila persistente de finalização IA. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação.
+
+O fechamento de ticket não publica `ia_queue`: o `ia_worker` reclama um ciclo
+elegível por lease diretamente no PostgreSQL. `GET /queues` expõe `ia_due`,
+`ia_scheduled` e `ia_leased` como métricas duráveis; os contadores
+`ia_queue`/`ia_dead_letter` permanecem somente como visibilidade de resíduos de
+cutover. Use `python -m scripts.retire_legacy_ia_queue` primeiro em dry run; o
+modo `--apply` exige confirmação explícita e nunca remove entradas malformadas
+ou sem ciclo PostgreSQL correspondente.
 
 Falhas transitórias de áudio permanecem `pending` com `next_attempt_at` e
 backoff independente do limite `MAX_RETRY_ATTEMPTS` da classificação IA. O

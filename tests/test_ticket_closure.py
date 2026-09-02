@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from fastapi import Response
 
@@ -156,7 +154,7 @@ async def test_invalid_closed_ticket_is_ignored(monkeypatch, payload, reason):
 
 
 @pytest.mark.asyncio
-async def test_close_persists_cycle_before_publishing_cycle_job(monkeypatch):
+async def test_close_persists_cycle_without_publishing_ia_queue(monkeypatch):
     redis = PersistentRedis()
     cycle = {
         "public_id": "cycle-public",
@@ -168,18 +166,12 @@ async def test_close_persists_cycle_before_publishing_cycle_job(monkeypatch):
         "next_attempt_at": None,
     }
     close_calls = []
-    transition_calls = []
 
     async def close(**kwargs):
         close_calls.append(kwargs)
         return cycle, True
 
-    async def transition(*args, **kwargs):
-        transition_calls.append((args, kwargs))
-        return cycle
-
     monkeypatch.setattr(routes, "close_cycle", close)
-    monkeypatch.setattr(routes, "transition_cycle", transition)
 
     result = await send(
         monkeypatch,
@@ -202,19 +194,11 @@ async def test_close_persists_cycle_before_publishing_cycle_job(monkeypatch):
         "cycle_id": "cycle-public",
         "queued": True,
     }
-    assert len(transition_calls) == 1
-    queued = json.loads(redis.queues["ia_queue"][0])
-    assert queued == {
-        "cycle_id": "cycle-public",
-        "conversation_id": "ticket",
-        "protocol": "123",
-        "attempt": 0,
-        "not_before": 0,
-    }
+    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
-async def test_duplicate_close_reuses_cycle_and_publishes_once(monkeypatch):
+async def test_duplicate_close_reuses_cycle_without_ia_publication(monkeypatch):
     redis = PersistentRedis()
     cycle = {
         "public_id": "cycle-public",
@@ -226,19 +210,13 @@ async def test_duplicate_close_reuses_cycle_and_publishes_once(monkeypatch):
         "next_attempt_at": None,
     }
     close_calls = 0
-    publish_calls = 0
 
     async def close(**_kwargs):
         nonlocal close_calls
         close_calls += 1
         return cycle, close_calls == 1
 
-    async def publish(*_args, **_kwargs):
-        nonlocal publish_calls
-        publish_calls += 1
-
     monkeypatch.setattr(routes, "close_cycle", close)
-    monkeypatch.setattr(routes, "_publish_cycle", publish)
     payload = {
         "event": "ticket.updated",
         "data": {
@@ -256,7 +234,7 @@ async def test_duplicate_close_reuses_cycle_and_publishes_once(monkeypatch):
     assert first["status"] == "ticket_closed"
     assert duplicate["status"] == "ticket_already_closed"
     assert close_calls == 2
-    assert publish_calls == 1
+    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
@@ -296,7 +274,7 @@ async def test_reopen_creates_cycle_without_classification_job(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_persisted_cycle_remains_recoverable_when_publication_fails(monkeypatch):
+async def test_persisted_cycle_does_not_require_ia_queue_publication(monkeypatch):
     redis = PersistentRedis()
     cycle = {
         "public_id": "cycle-recoverable",
@@ -313,11 +291,7 @@ async def test_persisted_cycle_remains_recoverable_when_publication_fails(monkey
         persisted.append(cycle)
         return cycle, True
 
-    async def fail_publish(*_args, **_kwargs):
-        raise RuntimeError("redis unavailable")
-
     monkeypatch.setattr(routes, "close_cycle", close)
-    monkeypatch.setattr(routes, "_publish_cycle", fail_publish)
 
     result = await send(
         monkeypatch,
@@ -332,6 +306,7 @@ async def test_persisted_cycle_remains_recoverable_when_publication_fails(monkey
     assert result["status"] == "ticket_closed"
     assert result["cycle_id"] == "cycle-recoverable"
     assert result["queued"] is True
+    assert redis.queues == {}
 
 
 async def _completed(value):

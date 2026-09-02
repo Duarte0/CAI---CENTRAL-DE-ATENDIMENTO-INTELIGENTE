@@ -225,14 +225,17 @@ record.
 
 | Queue | Producer | Consumer | Dead letter |
 | --- | --- | --- | --- |
-| \`ia_queue\` | API and reconcilers | \`ia_worker\` | \`ia_dead_letter\` |
+| legacy \`ia_queue\` | none | none | legacy \`ia_dead_letter\` |
 | \`audio_transcription_queue\` | API/recovery | \`audio_worker\` | \`audio_transcription_dead_letter\` |
 | \`image_extraction_queue\` | API/recovery | \`image_worker\` | \`image_extraction_dead_letter\` |
 
-Persistent jobs use PostgreSQL publication markers and leases so a failure
-between database persistence and Redis publication can be recovered. The worker
-does not require a second Redis processing queue: a popped job is recovered from
-its durable cycle marker by reconciliation after a process failure.
+Persistent IA finalization work is selected and leased directly from
+PostgreSQL with `FOR UPDATE SKIP LOCKED`. A worker crash is recovered after the
+lease expires; `next_attempt_at` remains the only schedule authority. The
+legacy IA lists have no active producer or consumer and are inventoried by
+`scripts/retire_legacy_ia_queue.py`; its apply mode removes only a bounded,
+validated snapshot and retains malformed/unknown entries. Audio and image
+remain Redis-backed until their separate migrations.
 
 ### Transient keys
 
@@ -252,14 +255,14 @@ remains available because migration/backfill code is not inferred to be dead.
 ## 5. Finalization modes
 
 Persistent DigiSac-history finalization is the only supported mode. Ticket
-open/reopen events create durable cycles, and closure persists a cycle before
-publishing its job.
+open/reopen events create durable cycles, and closure persists a cycle for the
+PostgreSQL poller.
 
 ### 5.1 Persistent DigiSac-history mode
 
 Each ticket opening/reopening creates or reuses a persistent
-conversation cycle. Closing a ticket persists the cycle before publishing its
-IA job.
+conversation cycle. Closing a ticket persists the cycle; it does not publish an
+IA Redis job.
 
 The IA worker then:
 
@@ -284,8 +287,10 @@ The IA worker then:
 15. claims or creates the durable internal Acessórias Request operation only
     when both preparation stages and the confidence gate are ready.
 
-Persistent cycle publication is guarded by \`enqueued_at\`. Reconcilers only
-republish due work and recover jobs whose publication/lease has expired.
+`next_attempt_at` and the PostgreSQL lease control eligibility. `enqueued_at`
+is retained only as a legacy compatibility/observability field and is cleared
+on claim; it is no longer a publication gate. Provider cooldown is checked
+before the worker reconciles media or claims another cycle.
 
 ## 6. Persistent cycle state machine
 

@@ -13,12 +13,15 @@ def test_cycle_persistence_implementation_is_owned_by_repository() -> None:
         "list_cycles",
         "transition_cycle",
         "claim_cycle",
+        "claim_next_cycle",
+        "get_cycles_by_public_ids",
         "get_recoverable_cycles",
         "release_cycle_publication",
         "wake_unblocked_media_cycles",
         "save_cycle_messages",
         "get_content_states",
         "get_cycle_metrics",
+        "get_cycle_work_metrics",
         "get_cycle_result",
     )
 

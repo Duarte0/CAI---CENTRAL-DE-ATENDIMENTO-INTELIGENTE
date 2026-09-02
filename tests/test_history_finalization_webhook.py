@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from fastapi import Response
 
@@ -61,7 +59,7 @@ async def test_text_webhook_does_not_publish_an_ia_cycle(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_close_persists_cycle_before_publishing(monkeypatch):
+async def test_close_persists_cycle_without_ia_queue_publication(monkeypatch):
     redis = Redis()
     monkeypatch.setattr(
         routes, "capture_ticket_assignment", lambda *_args: _async(False)
@@ -81,11 +79,7 @@ async def test_close_persists_cycle_before_publishing(monkeypatch):
         calls.append(kwargs)
         return cycle, True
 
-    async def transition(*_args, **_kwargs):
-        return cycle
-
     monkeypatch.setattr(routes, "close_cycle", close)
-    monkeypatch.setattr(routes, "transition_cycle", transition)
     result = await send(
         monkeypatch,
         redis,
@@ -100,8 +94,8 @@ async def test_close_persists_cycle_before_publishing(monkeypatch):
         },
     )
     assert calls and calls[0]["conversation_id"] == "ticket"
-    assert json.loads(redis.queues["ia_queue"][0])["cycle_id"] == "cycle-public"
     assert result["cycle_id"] == "cycle-public"
+    assert redis.queues == {}
 
 
 @pytest.mark.asyncio

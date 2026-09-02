@@ -8,7 +8,7 @@
 
 ## Objetivo e não objetivos
 
-Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte e coordenação transitória.
+Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte/coordenação transitória onde um fluxo ainda o requer e não é a fila persistente de finalização IA.
 
 Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados. O issue 0037 adiciona somente uma auditoria manual, bounded e repetível para famílias Redis órfãs, sem apagar dados duráveis nem transformar a operação em job de retenção.
 
@@ -58,7 +58,7 @@ transitórios, filas, dead-letters ou registros PostgreSQL.
 
 ## Contrato de dados e integridade
 
-1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. Redis **deve** limitar-se a filas, locks, idempotência temporária e status/resultados com TTL.
+1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. O ciclo IA elegível **deve** ser reclamado por lease PostgreSQL; Redis limita-se às filas de mídia ainda ativas, idempotência temporária e status/resultados com TTL.
 2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos.
 3. `classification_messages` e `conversation_cycle_messages` **devem** preservar a ordem que fundamenta o resultado. Um vínculo de mensagem e sua posição **devem** ser únicos dentro da classificação ou ciclo correspondente. Uma mensagem **não pode** pertencer a dois ciclos persistentes.
 4. Timestamps duráveis **devem** usar `TIMESTAMPTZ`; listas e snapshots estruturados **devem** usar JSONB onde o schema o define. Identificadores externos não resolvidos **devem** permanecer preservados, sem nomes ou transferências inventados.
