@@ -192,7 +192,7 @@ the maintenance scripts.
 - [ ] All source and known operational consumers of `ia_status:*` and
   `ia_result:*` are inventoried; unknown external readers are an explicit
   rollout blocker.
-- [ ] Historical Redis results have a documented disposition and sanitized
+- [x] Historical Redis results have a documented disposition and sanitized
   dry-run evidence; no valid unaccounted result is discarded.
 - [x] IA worker writes canonical state to PostgreSQL and no longer creates new
   `ia_status:*` or `ia_result:*` keys after the coordinated cutover.
@@ -208,8 +208,8 @@ the maintenance scripts.
 
 ## References
 
-- `src/workers/ia_worker.py`: canonical PostgreSQL completion followed by
-  Redis compatibility writes.
+- `src/workers/ia_worker.py`: canonical PostgreSQL completion without Redis
+  compatibility writes after the cutover.
 - `src/api/routes.py`: PostgreSQL-backed status/result response paths.
 - `src/utils/backfill_redis_history.py`: historical `ia_result:*` importer.
 - `scripts/redis_residue_cleanup.py`: allowlisted key-family inventory and
@@ -245,3 +245,21 @@ The issue remains open: the named runtime must still complete the external
 consumer confirmation, the full TTL/client observation, and the explicit
 allowlisted apply. Until then both compatibility families and all unrelated
 Redis/PostgreSQL data remain retained. No migration was required.
+
+Runtime handoff evidence (named Compose project `cai`, 2026-09-03): the old IA
+worker was stopped before the new image started. `api`, `ia_worker`,
+`audio_worker` and `image_worker` were rebuilt from commit `81b89d1`; PostgreSQL
+verified head `0025_webhook_event_keys`, the internal API health returned
+`{"status":"ok"}`, and the IA worker log showed the PostgreSQL poller without
+Redis initialization. The maintenance dry-run found 80 `ia_status:*` keys and
+80 `ia_result:*` keys; all 80 result payloads were valid and matched a durable
+classification, with zero missing matches. Both families had 77 keys in the
+1-hour-to-24-hour TTL bucket and 3 under one hour. The sanitized report digest
+was `527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`.
+After 30 seconds, both counts remained 80 and no new compatibility write was
+observed. `/queues` reported zero entries in the six retired legacy lists;
+`ia_processing` remained present and `processed:*` remained retained (its live
+count naturally changed from 67 to 55 during TTL expiry, without deletion by
+this issue). A Groq rate-limit retry was persisted by the worker during the
+check; it did not change the Redis retirement decision. The required
+86400-second observation and destructive apply are intentionally still pending.

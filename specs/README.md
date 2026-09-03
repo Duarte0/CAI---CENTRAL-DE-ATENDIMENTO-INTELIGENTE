@@ -71,10 +71,13 @@ Na implementação do issue 0054 em 2026-09-03, `ia_worker` deixou de depender d
 Redis e de criar `ia_status:*`/`ia_result:*`; as rotas públicas mantiveram suas
 respostas PostgreSQL. O inventário bounded foi isolado no comando de manutenção
 `scripts.retire_ia_redis_compatibility`, que registra somente contagens, buckets
-de TTL, digests e matches duráveis. O importador histórico permanece no perfil
-`maintenance`; nenhuma chave foi removida antes da janela de observação de
-86400 segundos e da revisão histórica explícita. A evidência é específica do
-checkout/runtime nomeado e não é uma alegação de produção ampla.
+de TTL, digests e matches duráveis. No runtime `cai`, o dry-run encontrou 80
+chaves de cada família, com 80 matches duráveis e zero resultado válido sem
+correspondência; após 30 segundos as contagens permaneceram 80/80. O importador
+histórico permanece no perfil `maintenance`; nenhuma chave foi removida antes da
+janela de observação de 86400 segundos e da revisão histórica explícita. A
+evidência é específica do checkout/runtime nomeado e não é uma alegação de
+produção ampla.
 
 O issue 0045 acrescenta a migration `0023_manual_reconciliation`
 e a fronteira manual incremental. Em 2026-08-25, a execução canônica com

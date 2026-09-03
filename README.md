@@ -788,12 +788,16 @@ Redis permaneceram retidos. Checksums e o recovery point estão na issue 0053.
 Na implementação do issue 0054 em 2026-09-03, o `ia_worker` deixou de depender
 do Redis e de publicar `ia_status:*`/`ia_result:*`; a classificação e o estado
 terminal continuam sendo persistidos no PostgreSQL antes da disponibilidade por
-API. O inventário e a eventual retirada dessas duas famílias foram isolados no
-comando de manutenção `scripts.retire_ia_redis_compatibility`, com digests de
-entrada, buckets de TTL, reconciliação de resultado durável, confirmação exata e
-janela obrigatória de 86400 segundos. A implementação passou os testes focados;
-o apply permanece deliberadamente pendente até a janela completa e não removeu
-`processed:*`, filas, `ia_processing` ou dados PostgreSQL.
+API. No runtime `cai`, o dry-run encontrou 80 chaves de cada família e os 80
+resultados tinham match durável; uma segunda contagem após 30 segundos permaneceu
+em 80/80. O relatório sanitizado tinha digest
+`527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`. O inventário
+e a eventual retirada dessas duas famílias foram isolados no comando de
+manutenção `scripts.retire_ia_redis_compatibility`, com digests de entrada,
+buckets de TTL, reconciliação de resultado durável, confirmação exata e janela
+obrigatória de 86400 segundos. O apply permanece deliberadamente pendente até a
+janela completa e não removeu `processed:*`, filas, `ia_processing` ou dados
+PostgreSQL.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

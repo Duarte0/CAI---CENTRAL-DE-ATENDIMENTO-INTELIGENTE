@@ -108,7 +108,9 @@ views e o worker IA não depende mais de Redis. O comando
 `maintenance`, com inventário bounded, buckets de TTL, digests sem valores,
 reconciliação com classificação durável e apply condicionado a decisão histórica,
 segunda fotografia e janela completa de TTL. A operação de remoção ainda não foi
-executada; filas legadas, `processed:*`, `ia_processing` e dados PostgreSQL estão
+executada; no runtime `cai`, o dry-run encontrou 80 chaves em cada família e
+todos os 80 resultados tiveram match durável, sem crescimento observado após 30
+segundos. Filas legadas, `processed:*`, `ia_processing` e dados PostgreSQL estão
 fora da fronteira.
 
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,

@@ -106,9 +106,10 @@ complete locally; production acceptance remains separate._
   maintenance-only `scripts.retire_ia_redis_compatibility` command inventories
   only `ia_status:*`/`ia_result:*`, records sanitized TTL/value digests and
   durable matches, and requires a full 86400-second observation window plus an
-  explicit historical decision before deletion. The implementation is ready
-  for the named runtime handoff, but the issue remains open until that window
-  and the bounded apply are verified.
+  explicit historical decision before deletion. In the named `cai` runtime,
+  the dry-run found 80 keys in each family and 80 durable result matches; both
+  counts stayed at 80 after 30 seconds. The implementation is deployed, but
+  the issue remains open until the full window and bounded apply are verified.
 
 ### Implemented with bounded evidence
 

@@ -114,8 +114,13 @@ Redis do serviço IA. As rotas públicas continuam consultando os repositórios
 PostgreSQL. O comando `scripts.retire_ia_redis_compatibility` faz inventário
 bounded com buckets de TTL, digests de entrada e matches duráveis sem expor
 valores; o importador histórico foi mantido somente no perfil `maintenance`.
-Nenhuma chave foi removida nesta etapa: o apply requer decisão histórica,
-segunda fotografia e uma janela completa de 86400 segundos.
+No runtime `cai`, o dry-run encontrou 80 chaves de cada família, 80 resultados
+com match durável e zero resultado válido sem correspondência; o relatório
+sanitizado foi identificado pelo digest
+`527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`. Após 30
+segundos, as contagens permaneceram 80/80. Nenhuma chave foi removida nesta
+etapa: o apply requer decisão histórica, segunda fotografia e uma janela
+completa de 86400 segundos.
 
 ## Contrato de dados e integridade
 
