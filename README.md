@@ -117,7 +117,10 @@ resolução conservadora de identidade e o mapeamento departamental por IDs
 estáveis. O contato é persistido
 por `contact.id`, snapshots de ticket são reconciliados no PostgreSQL e
 referências `contactId` de mensagens apenas registram hydration individual
-deduplicada para execução posterior. A resolução preserva evidência
+deduplicada para execução posterior. O issue 0051 preserva o
+`next_attempt_at` futuro quando mensagens repetem a referência: o poller
+continua dono da tentativa devida, sem fila Redis ou retry imediato forçado. A
+resolução preserva evidência
 fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
 imutável por ciclo; confirmação continua exclusivamente manual.
 
@@ -256,7 +259,8 @@ de execução. As principais estruturas são:
 - `digisac_departments`, `digisac_users` e
   `digisac_directory_sync_state`: diretório local para resolução de nomes;
 - `digisac_contacts` e `digisac_contact_hydrations`: identidade DigiSac por
-  `contact.id`, metadata observada e claims/retries duráveis de hydration;
+  `contact.id`, metadata observada e claims/retries duráveis de hydration; uma
+  referência repetida não limpa um backoff futuro;
 - `conversation_processing_cycles` e `conversation_cycle_messages`: estado,
   snapshot, proveniência canônica do contato, leases, agendamento e auditoria
   da finalização persistente.
@@ -314,7 +318,8 @@ retenção ou arquivamento devem ser definidos como política operacional explí
 - Filas de mídia e ciclos usam reservas/claims persistentes para evitar
   publicações concorrentes e recuperar trabalho abandonado.
 - A identidade de contato usa somente `contact.id`; hydration individual é
-  deduplicada no PostgreSQL e nunca é chamada em linha pelo webhook.
+  deduplicada no PostgreSQL, nunca é chamada em linha pelo webhook e nunca
+  antecipa `next_attempt_at` em uma referência repetida.
 - Retries transitórios respeitam `Retry-After`, backoff e limites configurados.
 - O histórico de atribuições nunca inventa transferências. IDs desconhecidos são
   preservados e os nomes só vêm dos endpoints de departamentos e usuários.
@@ -719,6 +724,16 @@ pendente, recuperação de ciclo bloqueado e regressões de transcrição. A su�
 offline completa passou **280 testes, com 84 skips** restritos ao banco não
 configurado. A evidência é local/descartável e não comprova provider live,
 credenciais, deployment ou produção.
+
+Na validação do issue 0051 em 2026-09-03, compileall, Pyright e o runner
+descartável passaram; a suíte offline teve **280 passed, 86 skipped** e a
+etapa PostgreSQL teve **86 passed, 280 deselected** com head
+`0024_durable_media_leases` (o override `APP_TIMEZONE=UTC` evita o failure
+histórico de timezone de `test_department_mapping.py`). Os testes de
+identidade/hydration provaram decisões concorrentes durante backoff futuro,
+preservação exata de `next_attempt_at`, handoff de falha devida ao poller e
+no-op de hydration sucedida/current. Não houve migration nova nem dependência
+Redis adicionada; essa evidência continua local/descartável.
 
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos

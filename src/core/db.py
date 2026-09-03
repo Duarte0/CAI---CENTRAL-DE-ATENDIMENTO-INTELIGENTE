@@ -6,18 +6,23 @@ creation is deliberately not performed here; deploys must apply Alembic
 migrations before starting the application.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import psycopg
 from psycopg_pool import ConnectionPool
 
 from src.core.config import settings
 from src.core.digisac_client import DigisacContact
+
+if TYPE_CHECKING:
+    from src.core.digisac_contact_repository import ContactHydrationRequestResult
 
 logger = logging.getLogger(__name__)
 CURRENT_SCHEMA_REVISION = "0024_durable_media_leases"
@@ -329,6 +334,18 @@ async def request_digisac_contact_hydration(
     )
 
     return await repository_request_digisac_contact_hydration(
+        external_id, requested_at=requested_at
+    )
+
+
+async def request_digisac_contact_hydration_result(
+    external_id: str, *, requested_at: str | datetime | None = None
+) -> ContactHydrationRequestResult:
+    from src.core.digisac_contact_repository import (
+        request_digisac_contact_hydration_result as repository_request_digisac_contact_hydration_result,
+    )
+
+    return await repository_request_digisac_contact_hydration_result(
         external_id, requested_at=requested_at
     )
 

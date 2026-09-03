@@ -1,7 +1,7 @@
 # SPEC-0008 — Fundação de identidade de contato DigiSac
 
-- **Status:** implementada localmente pelos issues 0013, 0014, 0026 e 0045
-- **Versão:** 1.5 (issue 0045 adiciona a reconciliação manual incremental)
+- **Status:** implementada localmente pelos issues 0013, 0014, 0026, 0045 e 0051
+- **Versão:** 1.6 (issue 0051 preserva o backoff de hydration)
 - **Prioridade/Fase:** P0 / Milestone B — DigiSac Contact Identity Foundation
 - **Rastreabilidade:** PRD §§4, 5.5, 8 e 10; ARCHITECTURE §2.1; `IMPLEMENTATION_PLAN.md` Milestone B; SPEC-0001, SPEC-0002, SPEC-0004 e SPEC-0007
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0004 e SPEC-0007
@@ -39,6 +39,14 @@ participantes de grupo e metadata derivada não podem substituí-lo. A execuçã
 local descartável passou compileall, Pyright estrito, **203 passed, 68 skipped**
 offline e **68 passed, 203 deselected** em PostgreSQL 16; isso não comprova
 DigiSac, provider ou produção.
+
+**Preservação de backoff (2026-09-03):** issue 0051 corrigiu a solicitação
+normal disparada por referências repetidas de mensagens. O PostgreSQL continua
+sendo a autoridade de estado: a decisão agora é observável como `requested`,
+`pending_duplicate`, `running_duplicate`, `failed_backoff_preserved`,
+`failed_due`, `succeeded_current` ou `invalid_contact`, sem expor payload do
+provider ou PII. Não houve migration; a fachada booleana assíncrona existente
+permanece compatível.
 
 ## Objetivo e não objetivos
 
@@ -84,7 +92,7 @@ ou estendida coerentemente.
 ## Ingestão, hydration, precedência e backfill
 
 1. Um snapshot válido de `data.contact` em evento de ticket **deve** efetuar upsert idempotente por `contact.id`. Replay, concorrência e eventos fora de ordem não podem duplicar contato nem apagar atributo mais novo conhecido.
-2. Mensagem com apenas `contactId` pode registrar necessidade de hydration deduplicada quando a metadata local for ausente ou insuficiente segundo regra documentada. Ela não pode consultar Contacts em linha nem iniciar uma chamada por mensagem repetida; a hydration pode ocorrer fora do caminho crítico pelo endpoint individual autorizado.
+2. Mensagem com apenas `contactId` pode registrar necessidade de hydration deduplicada quando a metadata local for ausente ou insuficiente segundo regra documentada. Ela não pode consultar Contacts em linha nem iniciar uma chamada por mensagem repetida; a hydration pode ocorrer fora do caminho crítico pelo endpoint individual autorizado. Uma referência normal nunca pode limpar ou antecipar `next_attempt_at` de uma falha.
 3. A precedência é: (a) `contact.id`/`contactId` define identidade; (b) snapshot de webhook mais recente atualiza metadata quando `updatedAt` for comparável; (c) hydration individual atualiza quando trouxer estado mais recente/confiável; (d) backfill/reconciliação não sobrescreve snapshot comprovadamente mais novo; (e) sem timestamps ordenáveis, o upsert deve ser conservador e idempotente, sem converter ausência em exclusão. Nenhuma fonte altera vínculos DigiSac–Acessórias.
 4. O adaptador Contacts **deve** centralizar autenticação, timeout, retry, parse e conversão ao registro local. Webhook, worker de IA e handler HTTP não podem conter chamadas Contacts diretas. Ele deve reutilizar a política DigiSac existente: timeout/tentativas limitados, `429` transitório e `Retry-After` quando presente; na ausência dele, backoff limitado. Não há limite oficial de requests/minute autorizado nesta SPEC.
 5. Full backfill **deve** solicitar `perPage` alto e seguro, definido por
@@ -103,6 +111,29 @@ ou estendida coerentemente.
    erro do provider **deve** falhar a execução sem declará-la completa. Não se
    pode interpretar esses casos como fim normal do backfill. Uma execução
    parcial nunca pode transformar ausência em exclusão ou inativação.
+
+### Decisão de solicitação e backoff (issue 0051)
+
+Uma referência normal de mensagem é somente uma tentativa de registrar a
+necessidade; ela não é uma ordem para tornar o trabalho imediatamente elegível.
+Sob o lock da linha de hydration, a implementação aplica a seguinte tabela:
+
+| Estado observado | Decisão | Transição normal |
+| --- | --- | --- |
+| Sem linha e metadata insuficiente | `requested` | Insere uma linha `pending`. |
+| `pending` | `pending_duplicate` | Nenhuma. |
+| `running` | `running_duplicate` | Nenhuma; lease expirado continua sendo recuperação do poller. |
+| `failed` com `next_attempt_at` futuro | `failed_backoff_preserved` | Nenhuma; o timestamp exato é preservado. |
+| `failed` com horário devido ou nulo | `failed_due` | Nenhuma; o poller faz o claim uma vez. |
+| `succeeded` ou metadata já atual | `succeeded_current` | Nenhuma; não há refresh automático configurado. |
+| ID vazio | `invalid_contact` | Nenhuma operação de banco. |
+
+O retorno detalhado é uma observabilidade sanitizada; a função booleana
+existente continua retornando verdadeiro somente para `requested`. Assim,
+deduplicação de evento e backoff de hydration são proteções independentes.
+Não há estado, fila ou publicação Redis para hydration. Este produto também não
+expõe retry imediato forçado: uma operação de operador exigiria uma nova
+autorização e contrato de auditoria.
 
 ## Falhas, compatibilidade e verificação
 
@@ -133,6 +164,11 @@ resultado como `matching_failed` para nova execução manual.
 - `deletedAt` é metadata conservada; ausência em listagem nunca apaga contato.
 - O slice de migration/modelo/upsert de ticket/hydration individual foi implementado pelo issue 0013.
 - O full Contacts backfill foi implementado pelo issue 0014 com o contrato de paginação, deduplicação e falha acima.
+- Referências repetidas preservam uma falha futura e seu `next_attempt_at` sem
+  resetar a linha para `pending`; falhas devidas ficam para o claim do poller,
+  e estados `pending`, `running` e `succeeded` permanecem single-flight/no-op.
+- As decisões de solicitação normal são testadas sem payload do provider, e
+  hydration não introduz fila ou estado Redis.
 
 ## Decisão residual mínima
 
@@ -141,4 +177,6 @@ o provider validou `perPage`, avanço por `page=N` e término por
 `currentPage`/`lastPage`. A aceitação de `perPage=5000` é evidência do tenant
 atual, não uma garantia universal; a implementação deve preservar o fallback
 multi-page definido nesta SPEC. Não há decisão de produto pendente para este
-slice.
+slice. O retry imediato forçado não faz parte do produto atual; se vier a ser
+necessário, deverá ser especificado como operação administrativa separada,
+autorizada e auditável.

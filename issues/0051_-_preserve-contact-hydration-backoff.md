@@ -2,19 +2,21 @@
 id: 0051
 title: "Preserve contact hydration backoff on repeated message references"
 type: bug
-status: open
+status: closed
 priority: medium
 phase: 5
 created_at: 2026-09-02
-updated_at: 2026-09-02
-closed_at: ~
+updated_at: 2026-09-03
+closed_at: 2026-09-03
 related_issues: ["0013", "0048"]
 blocked_by: []
 affects:
   - src/api/routes.py
   - src/core/digisac_contact_repository.py
   - src/core/digisac_contact_hydration.py
+  - src/core/db.py
   - tests/test_digisac_contact_identity.py
+  - scripts/verify.py
   - tests/test_webhook.py
   - README.md
   - ARCHITECTURE.md
@@ -107,18 +109,21 @@ The webhook can receive repeated messages or redeliveries while a provider failu
 ### Regression and observability tests
 
 - Existing contact identity and concurrent-claim tests remain green.
-- Metrics distinguish a new request, duplicate suppression, backoff preservation and explicit force.
-- Logs include contact/request identifiers and decision reason without logging sensitive contact payloads.
+- Sanitized decision logs distinguish a new request, duplicate suppression,
+  backoff preservation and due work; no metrics or force-operation contract is
+  introduced by this issue.
+- Logs include the opaque contact identifier and decision reason without
+  logging sensitive contact payloads.
 - No Redis key or list is created by contact hydration tests.
 
 ## Acceptance Criteria
 
-- [ ] Repeated message references cannot bypass a future contact-hydration backoff.
-- [ ] Pending/running/failed-due/succeeded/current/forced decisions are documented and tested.
-- [ ] Concurrent requests still produce one durable row and one active lease per contact.
-- [ ] An immediate retry, if retained, is explicit, authorized and auditable.
-- [ ] Existing identity, webhook and hydration behavior remains compatible except for the corrected backoff protection.
-- [ ] No Redis queue is introduced for hydration.
+- [x] Repeated message references cannot bypass a future contact-hydration backoff.
+- [x] Pending/running/failed-due/succeeded/current decisions are documented and tested; forced retry is explicitly not part of the current product.
+- [x] Concurrent requests still produce one durable row and one active lease per contact.
+- [x] No immediate retry is retained without a separately authorized and auditable operator contract.
+- [x] Existing identity, webhook and hydration behavior remains compatible except for the corrected backoff protection.
+- [x] No Redis queue is introduced for hydration.
 
 ## References
 
@@ -131,4 +136,55 @@ The webhook can receive repeated messages or redeliveries while a provider failu
 
 ## Resolution
 
-<!-- Complete with the state-transition decision, migration/test evidence and operator recovery audit example. -->
+Implemented and closed on 2026-09-03. The normal webhook request now has an
+explicit, sanitized decision result while the existing boolean facade remains
+compatible with callers.
+
+### State-transition decision
+
+| Current state | Normal message reference | Durable effect | Who may make it eligible |
+| --- | --- | --- | --- |
+| No hydration row and contact metadata is insufficient | `requested` | Insert one `pending` row | PostgreSQL hydration poller |
+| `pending` | `pending_duplicate` | No change | Existing pending poller work |
+| `running` with either an active or expired lease | `running_duplicate` | No change; lease expiry remains recovery | Poller claim/recovery |
+| `failed` with `next_attempt_at` in the future | `failed_backoff_preserved` | No change; exact schedule is retained | Poller after the persisted due time |
+| `failed` with a due or null schedule | `failed_due` | No change; do not reset failure metadata | Poller claims it once |
+| `succeeded`, or contact metadata is already current | `succeeded_current` | No change | No automatic refresh policy is configured |
+| Blank contact ID | `invalid_contact` | No database work | None |
+
+The current product does not retain an immediate operator-force operation. An
+audited forced retry would require a separately authorized administrative
+surface and durable audit contract; until that is approved, a due scheduled
+retry is the only recovery path. No Redis state or queue was added.
+
+### Delivered implementation
+
+- Added `ContactHydrationRequestDecision` and
+  `ContactHydrationRequestResult` in the PostgreSQL contact repository. The
+  existing `request_digisac_contact_hydration()` boolean API is preserved, and
+  the detailed result is available through the compatibility facade and
+  hydration module.
+- Normal requests now lock the contact/hydration row and never reset a
+  `failed` row, clear `next_attempt_at`, shorten a future backoff, or replace a
+  running claim. The poller remains responsible for due and lease-expired
+  work.
+- Decision logs contain only the opaque `contact_id` and sanitized decision;
+  repeated/pending/running requests, preserved backoff and due rows are
+  distinguishable without provider payloads or contact PII.
+- Added PostgreSQL-focused regression coverage for concurrent future-backoff
+  references, exact schedule preservation, due-failure handoff to the poller,
+  and the succeeded/current no-op decision.
+
+### Validation
+
+Validation is local and disposable only; it does not claim DigiSac, Redis,
+provider, deployment or production availability.
+
+- `python -m compileall -q src tests alembic/versions`: PASS.
+- Focused contact tests: **10 passed, 6 skipped** without a database; the
+  disposable PostgreSQL stage passed **86 passed, 280 deselected**.
+- `git diff --check`: PASS.
+- `npx --yes pyright`: PASS (0 errors, 0 warnings, 0 informations).
+- Full offline suite: **280 passed, 86 skipped**; the skips are the intentional
+  absence of `CAI_TEST_DATABASE_URL`.
+- `graphify update .`: PASS.

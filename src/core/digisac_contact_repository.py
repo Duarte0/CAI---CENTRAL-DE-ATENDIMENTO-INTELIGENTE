@@ -9,7 +9,10 @@ compatibility boundary used by existing callers.
 from __future__ import annotations
 
 import asyncio
+import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import Any, Mapping, Sequence
 
 from psycopg.rows import dict_row
@@ -17,6 +20,43 @@ from psycopg.rows import dict_row
 from src.core.config import settings
 from src.core.db import _parse_timestamp, _row_dict, get_database_pool
 from src.core.digisac_client import DigisacContact
+
+
+logger = logging.getLogger(__name__)
+
+
+class ContactHydrationRequestDecision(str, Enum):
+    """Sanitized outcome of a normal message-triggered hydration request."""
+
+    INVALID_CONTACT = "invalid_contact"
+    REQUESTED = "requested"
+    PENDING_DUPLICATE = "pending_duplicate"
+    RUNNING_DUPLICATE = "running_duplicate"
+    FAILED_BACKOFF_PRESERVED = "failed_backoff_preserved"
+    FAILED_DUE = "failed_due"
+    SUCCEEDED_CURRENT = "succeeded_current"
+
+
+@dataclass(frozen=True)
+class ContactHydrationRequestResult:
+    """Observable request decision without provider or contact metadata."""
+
+    decision: ContactHydrationRequestDecision
+
+    @property
+    def requested(self) -> bool:
+        return self.decision is ContactHydrationRequestDecision.REQUESTED
+
+
+def _hydration_request_result(
+    external_id: str, decision: ContactHydrationRequestDecision
+) -> ContactHydrationRequestResult:
+    logger.info(
+        "DigiSac contact hydration request decision: contact_id=%s decision=%s",
+        external_id,
+        decision.value,
+    )
+    return ContactHydrationRequestResult(decision=decision)
 
 
 _CONTACT_PROVIDER_FIELDS = (
@@ -250,10 +290,12 @@ async def publish_digisac_contact_backfill(
 
 def _request_digisac_contact_hydration_sync(
     external_id: str, requested_at: str | datetime | None = None
-) -> bool:
+) -> ContactHydrationRequestResult:
     normalized_id = external_id.strip()
     if not normalized_id:
-        return False
+        return _hydration_request_result(
+            "missing", ContactHydrationRequestDecision.INVALID_CONTACT
+        )
     requested = (
         _parse_timestamp(requested_at)
         if isinstance(requested_at, (str, datetime))
@@ -287,12 +329,44 @@ def _request_digisac_contact_hydration_sync(
                     """,
                     (contact["id"],),
                 ).fetchone()
-                if state is not None and state["status"] in {"pending", "running"}:
-                    return False
-                if _contact_has_metadata(contact) and (
-                    state is None or state["status"] == "succeeded"
-                ):
-                    return False
+                if state is not None:
+                    state_status = state["status"]
+                    if state_status == "pending":
+                        return _hydration_request_result(
+                            normalized_id,
+                            ContactHydrationRequestDecision.PENDING_DUPLICATE,
+                        )
+                    if state_status == "running":
+                        # The hydration poller owns lease expiry recovery. A
+                        # message reference must never replace that claim.
+                        return _hydration_request_result(
+                            normalized_id,
+                            ContactHydrationRequestDecision.RUNNING_DUPLICATE,
+                        )
+                    if state_status == "succeeded":
+                        return _hydration_request_result(
+                            normalized_id,
+                            ContactHydrationRequestDecision.SUCCEEDED_CURRENT,
+                        )
+                    if state_status == "failed":
+                        next_attempt_at = state["next_attempt_at"]
+                        if next_attempt_at is not None and next_attempt_at > datetime.now(
+                            timezone.utc
+                        ):
+                            return _hydration_request_result(
+                                normalized_id,
+                                ContactHydrationRequestDecision.FAILED_BACKOFF_PRESERVED,
+                            )
+                        # A due failure, including a terminal failure without a
+                        # schedule, stays for the poller to claim exactly once.
+                        return _hydration_request_result(
+                            normalized_id, ContactHydrationRequestDecision.FAILED_DUE
+                        )
+                if _contact_has_metadata(contact):
+                    return _hydration_request_result(
+                        normalized_id,
+                        ContactHydrationRequestDecision.SUCCEEDED_CURRENT,
+                    )
                 if state is None:
                     cursor.execute(
                         """
@@ -302,32 +376,29 @@ def _request_digisac_contact_hydration_sync(
                         """,
                         (contact["id"], requested),
                     )
-                    return True
-                if state["status"] == "running":
-                    return False
-                cursor.execute(
-                    """
-                    UPDATE digisac_contact_hydrations
-                    SET status = 'pending',
-                        requested_at = LEAST(requested_at, %s),
-                        next_attempt_at = NULL,
-                        lease_until = NULL,
-                        failure_category = NULL,
-                        failure_message = NULL,
-                        updated_at = now()
-                    WHERE contact_id = %s
-                    """,
-                    (requested, contact["id"]),
+                    return _hydration_request_result(
+                        normalized_id, ContactHydrationRequestDecision.REQUESTED
+                    )
+                raise RuntimeError(
+                    "PostgreSQL returned an unsupported contact hydration state"
                 )
-                return True
+
+
+async def request_digisac_contact_hydration_result(
+    external_id: str, *, requested_at: str | datetime | None = None
+) -> ContactHydrationRequestResult:
+    return await asyncio.to_thread(
+        _request_digisac_contact_hydration_sync, external_id, requested_at
+    )
 
 
 async def request_digisac_contact_hydration(
     external_id: str, *, requested_at: str | datetime | None = None
 ) -> bool:
-    return await asyncio.to_thread(
-        _request_digisac_contact_hydration_sync, external_id, requested_at
+    result = await request_digisac_contact_hydration_result(
+        external_id, requested_at=requested_at
     )
+    return result.requested
 
 
 def _claim_digisac_contact_hydration_sync(lease_seconds: int) -> dict[str, Any] | None:

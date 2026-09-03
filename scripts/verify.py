@@ -19,7 +19,7 @@ COMPOSE_FILE = ROOT / "docker-compose.test.yml"
 TEST_DATABASE = "cai_test"
 TEST_USER = "cai_test"
 TEST_PASSWORD = "cai_test"
-EXPECTED_SCHEMA = "0023_manual_reconciliation"
+EXPECTED_SCHEMA = "0024_durable_media_leases"
 
 
 class RunnerFailure(RuntimeError):

@@ -1,9 +1,9 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
 - **Status:** implementado; baseline canônico e verificação operacional concluídos
-- **Versão:** 1.8
+- **Versão:** 1.9
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
-- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0050
+- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0051
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
@@ -79,6 +79,15 @@ PostgreSQL descartável, com Alembic head `0024_durable_media_leases`, teve
 **34 passed** nos grupos focados de mídia, ciclo, transcrição e concorrência.
 Os skips permanecem limitados à ausência intencional de
 `CAI_TEST_DATABASE_URL` na etapa offline.
+
+**Preservação de backoff de hydration (issue 0051, 2026-09-03):** a cobertura
+de identidade inclui decisões concorrentes para referências repetidas durante
+falha futura, preservação exata de `next_attempt_at`, handoff de falha devida
+ao poller e no-op de hydration sucedida/current. Não houve migration nova nem
+dependência Redis adicionada; compileall e Pyright passaram, a suíte offline
+teve **280 passed, 86 skipped**, e a etapa PostgreSQL teve **86 passed, 280
+deselected** com head `0024_durable_media_leases` e `APP_TIMEZONE=UTC`. Os
+resultados continuam evidência local/descartável.
 
 ## Objetivo e não objetivos
 

@@ -6,14 +6,14 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 
 | ID | Especificação | Status | Prioridade/Fase | Dependências | Resumo |
 | --- | --- | --- | --- | --- | --- |
-| SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.7; finalização IA PostgreSQL no issue 0048; transcrição de áudio e extração de imagem PostgreSQL nos issues 0049–0050; boundaries estruturais 0032, 0033 e 0035; auditoria Redis 0037 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações, fronteiras de privacidade e limpeza manual allowlisted de resíduos Redis. |
-| SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.7; mídia sem publicação Redis ativa nos issues 0049–0050; boundaries estruturais 0030 e 0033 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; reservas de áudio/imagem persistem sem depender do transporte Redis. |
+| SPEC-0001 | [Contrato compartilhado de dados e análise](0001-shared-data-and-analysis-contract.md) | Baseline ativo v1.8; finalização IA PostgreSQL no issue 0048; transcrição de áudio e extração de imagem PostgreSQL nos issues 0049–0050; backoff de hydration no issue 0051; boundaries estruturais 0032, 0033 e 0035; auditoria Redis 0037 | P0 / baseline | — | Fonte durável, integridade, contrato IA, migrações, fronteiras de privacidade e limpeza manual allowlisted de resíduos Redis. |
+| SPEC-0002 | [Webhook DigiSac e API de consulta](0002-digisac-webhook-and-query-api.md) | Baseline ativo v1.8; mídia sem publicação Redis ativa nos issues 0049–0050; hydration fora da idempotência de evento no issue 0051; boundaries estruturais 0030 e 0033 | P0 / baseline | SPEC-0001 | HMAC, normalização, eventos e consultas atualmente sem versão; reservas de áudio/imagem persistem sem depender do transporte Redis; referências repetidas não antecipam o retry de contato. |
 | SPEC-0003 | [Finalização durável, contexto e mídia](0003-durable-finalization-and-media.md) | Baseline ativo v2.1; polling/lease PostgreSQL da IA, áudio e imagem nos issues 0048–0050; gate compartilhado de áudio/imagem no issue 0046; boundaries estruturais 0029, 0031 e 0035; auditoria Redis 0037 | P0/P1 | SPEC-0001, SPEC-0002 | Ciclo persistente único, contexto, mídia, retry e recuperação concorrente; finalização IA e mídia sem transporte Redis ativo, listas legadas tratadas por cutover bounded, mídia terminal bloqueia e somente conteúdo não vazio concluído habilita classificação. |
-| SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.8; evidência issue 0050 em 2026-09-02 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
+| SPEC-0004 | [Baseline reprodutível de testes e verificação](0004-reproducible-verification-baseline.md) | Implementado v1.9; evidência issues 0050–0051 em 2026-09-03 | P0/P1 | SPEC-0001–0003 | Suíte rastreada, isolamento, runner descartável e evidência local separada por etapa. |
 | SPEC-0005 | [Reconciliação do baseline documental](0005-documentation-baseline-reconciliation.md) | Implementado v1.4; issue 0041 | P1 / reconciliação documental | SPEC-0002–0004, SPEC-0006, SPEC-0012 | Reconciliou PRD/arquitetura/rastreabilidade com `0022`/`238+76` e a API administrativa, sem alegar UI. |
 | SPEC-0006 | [Documentação da API HTTP e contrato OpenAPI](0006-api-documentation-and-openapi-contract.md) | Implementado v1.4 | P1 / documentação de compatibilidade | SPEC-0001–0005, SPEC-0012 | Publica OpenAPI/Swagger/ReDoc para as oito rotas originais e as seis rotas administrativas internas montadas, incluindo métricas duráveis de áudio e imagem e visibilidade de resíduos legados. |
 | SPEC-0007 | [Fundação do diretório externo Acessórias](0007-acessorias-external-directory-foundation.md) | Implementado localmente v1.2; issues 0012, 0034 e 0045 | P0 / Milestone A | SPEC-0001, SPEC-0004, configuração segura de credencial | Diretório PostgreSQL de empresas, contatos, departamentos e relações, com delta manual seguro; `ListAll` inclui todos os status sem filtro `ativa`; não cria Request nem identidade DigiSac. |
-| SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.5; issues 0013, 0014, 0026 e 0045; boundary estrutural 0028 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, provenance canônica do contato no ciclo, hydration, full backfill e consumo pela reconciliação manual; sem deleção por ausência. |
+| SPEC-0008 | [Fundação de identidade de contato DigiSac](0008-digisac-contact-identity-foundation.md) | Implementado localmente v1.6; issues 0013, 0014, 0026, 0045 e 0051; boundary estrutural 0028 | P0 / Milestone B | SPEC-0001, SPEC-0002, SPEC-0004, SPEC-0007 | Contato mínimo por `contact.id`, upsert de ticket, provenance canônica do contato no ciclo, hydration com backoff preservado, full backfill e consumo pela reconciliação manual; sem deleção por ausência. |
 | SPEC-0009 | [Resolução de identidade DigiSac–Acessórias](0009-digisac-acessorias-identity-resolution.md) | Implementado localmente v1.3; issues 0015, 0026 e 0045 | P1 / Milestone C | SPEC-0001, SPEC-0004, SPEC-0007, SPEC-0008 | Evidência/candidatos conservadores, vínculos muitos-para-muitos, resolução por ciclo e redescoberta manual em lote; confirmação é manual, nunca automática. |
 | SPEC-0010 | [Mapeamento de departamento DigiSac para Acessórias](0010-digisac-acessorias-department-mapping.md) | Implementado localmente v1.3; issues 0016, 0020 e 0026; boundary estrutural 0030 | P1 / Milestone D | SPEC-0001, SPEC-0003, SPEC-0007–0009 | Regras globais por IDs externos estáveis, seleção da atribuição dentro dos limites do ciclo, auditoria de lifecycle, snapshots contra `company_departments` e gate após identidade confirmada; não usa IA nem cria Request. |
 | SPEC-0011 | [Criação durável de Request Acessórias](0011-durable-acessorias-request-creation.md) | Implementado localmente v1.5; issues 0017–0019, 0021–0022, 0026 e 0047; boundaries estruturais 0034 e 0036 | P1 / Milestone E | SPEC-0001, SPEC-0003, SPEC-0007–0010 | Criação multipart interna (`tipo=I`) durável, gate de confidence `0..10`/mínimo `5.0` (`0..1`/`0.50` persistido), preparação explícita, recuperação somente pré-POST comprovada, limite Sliding Window compartilhado no processo, payload pré-POST validado antes do marcador, sem idempotency key do provider e reconciliação manual de `429` incerto. |
@@ -21,13 +21,21 @@ Baseline de especificações revisada no passe de specs de 2026-08-14. PRD e arq
 | SPEC-0013 | [Interface web administrativa para conciliação de identidade](0013-administrative-identity-link-review-ui.md) | Implementado localmente v1.5; issues 0042–0044 | P1 / Milestone C.2 | SPEC-0012; `ADMIN_API_TOKEN`, `ADMIN_UI_PASSWORD` e `ADMIN_SESSION_SECRET` em ambiente protegido | Fundação FastAPI com login/logout, sessão assinada, fila, detalhe, busca e ações de confirmação/rejeição/discovery via BFF local; sem matching no frontend ou acesso direto ao banco. |
 
 A evidência mais recente registrada para o runner de SPEC-0004 é **280 passed,
-84 skipped** na etapa offline. A validação PostgreSQL focada do issue 0050 passou
+86 skipped** na etapa offline. A validação PostgreSQL do issue 0051 passou
+**86 passed, 280 deselected** com Alembic head `0024_durable_media_leases`.
+Na mesma execução, a validação PostgreSQL focada do issue 0050 passou
 **34 testes** após aplicar a migration `0024_durable_media_leases`, cobrindo
 claim atômico de imagem, agenda futura, lease/ownership, retry, gate de mídia,
 admissão por webhook/IA e regressões de áudio/imagem. Essa execução foi
 descartável e não substitui evidência de provider ou produção. A execução
 anterior de issue 0047, antes da migration 0024, permanece registrada abaixo
 como evidência histórica com head `0023_manual_reconciliation`.
+
+Na validação do issue 0051 em 2026-09-03, os testes de identidade/hydration
+incluíram referências concorrentes durante backoff futuro, preservação exata de
+`next_attempt_at`, handoff de falha devida ao poller e no-op de hydration
+sucedida/current. Não houve migration nova; a evidência permanece local e
+descartável e não comprova provider, Redis, deployment ou produção.
 
 O issue 0045 acrescenta a migration `0023_manual_reconciliation`
 e a fronteira manual incremental. Em 2026-08-25, a execução canônica com
@@ -84,7 +92,8 @@ Contact Identity Foundation**, **DigiSac–Acessórias Identity Resolution**,
 **Department Mapping**, **Durable Request Creation** e **Administração de
 vínculos de identidade**. SPEC-0008 e seu slice de
 persistência/upsert de ticket/hydration individual foram implementados pelo
-issue 0013. O issue 0014 implementa o full backfill: `perPage` alto pode
+issue 0013; o issue 0051 corrigiu a preservação do backoff das referências
+repetidas. O issue 0014 implementa o full backfill: `perPage` alto pode
 concluir uma página no tenant atual, e `page=N` com `currentPage`/`lastPage`
 mantém o fallback paginado, deduplicado por `contact.id` e seguro contra não
 avanço. SPEC-0010 v1.2 teve sua governança inicial aprovada e foi implementada

@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the existing pipeline; administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the existing pipeline; contact hydration requests are PostgreSQL-only and preserve persisted backoff; administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -88,14 +88,17 @@ retry, synchronization locking, and periodic orchestration.
 ## 2.1 Acessórias architecture and delivery boundary
 
 The implemented Acessórias Directory Foundation (SPEC-0007; issue 0012),
-DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014 and 0026),
+DigiSac Contact Identity Foundation (SPEC-0008; issues 0013–0014, 0026 and 0051),
 DigiSac–Acessórias identity resolution (SPEC-0009; issues 0015 and 0026), and department
 mapping (SPEC-0010; issues 0016, 0020, and 0026) add provider boundaries and durable local
 records. Contact snapshots from ticket webhooks are upserted by opaque
 `contact.id`; message-only references create a durable, deduplicated need for
-individual hydration outside the request path. The full Contacts backfill uses
-validated one-page or `page=N` responses. Request delivery is a separate
-durable operation after the mapping boundary.
+individual hydration outside the request path. A repeated reference is
+evaluated under the PostgreSQL contact-row lock and cannot clear or move a
+future `next_attempt_at`; due failures and expired leases remain the poller's
+responsibility. The full Contacts backfill uses validated one-page or `page=N`
+responses. Request delivery is a separate durable operation after the mapping
+boundary.
 
 \`\`\`mermaid
 flowchart LR
@@ -116,7 +119,9 @@ flowchart LR
 \`contact.id\` is the canonical DigiSac-contact external identity.
 Webhook ticket events incrementally upsert complete contact objects; messages
 that only carry \`contactId\` do not trigger a Contacts API call unless hydration
-is needed. The local Acessórias directory contains companies, company contacts,
+is needed. Normal hydration request decisions (requested, duplicate, future
+backoff preserved, due, current) are observable without provider payloads or
+PII. The local Acessórias directory contains companies, company contacts,
 departments, and current company-department relationships, including inactive
 companies. PostgreSQL is its durable local authority; Redis is not a directory
 or identity source of truth.
@@ -410,7 +415,7 @@ are:
 | Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, extracted text, and media leases. |
 | Assignment | \`ticket_assignment_history\`, \`ticket_assignment_event_keys\` | Chronological, idempotent ticket assignment history. |
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
-| DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, and durable individual hydration claims/retries. |
+| DigiSac contact identity | \`digisac_contacts\`, \`digisac_contact_hydrations\` | Opaque contact identity, approved provider metadata including normalized email, timestamp-aware observation, durable individual hydration claims/retries, and preserved future backoff under repeated message references. |
 | Acessórias directory | \`acessorias_companies\`, \`acessorias_company_contacts\`, \`acessorias_departments\`, \`acessorias_company_departments\`, \`acessorias_directory_sync_executions\` | Durable provider snapshot, presence/activity state, relationships, and sanitized refresh outcomes. |
 | Manual directory reconciliation | \`digisac_acessorias_reconciliation_executions\` | Sanitized manual two-source execution, delta hashes/counts, rematch counts, and resumable failure state. |
 | Identity resolution | \`identity_match_evidence\`, \`identity_company_links\`, \`identity_company_link_transitions\`, \`conversation_cycle_identity_resolutions\`, \`identity_admin_commands\` | Sanitized match evidence, many-to-many candidate/confirmed links, audit transitions, immutable per-cycle outcomes, and PostgreSQL command idempotency. |
@@ -496,7 +501,9 @@ application verifies that schema at startup and does not create or mutate it.
 - Media reservations are idempotent by message ID.
 - DigiSac contact identity is keyed only by provider \`contact.id\`; hydration
   claims and retry state are durable in PostgreSQL and deduplicated under row
-  locks.
+  locks. A normal repeated reference never resets a pending/running/succeeded
+  row or a future failed-row schedule; due work is left for the poller, and no
+  Redis queue or immediate force operation exists.
 - Identity resolution stores evidence, links, transitions, and cycle outcomes
   in PostgreSQL; exact matching never confirms automatically, and a manual
   confirmation is serialized per contact.

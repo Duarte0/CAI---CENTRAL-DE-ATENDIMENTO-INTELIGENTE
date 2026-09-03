@@ -1,9 +1,9 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; decisões de produto registradas abaixo
-- **Versão:** 1.7
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; decisões de produto registradas abaixo
+- **Versão:** 1.8
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0024_durable_media_leases`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049 e 0050
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0024_durable_media_leases`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050 e 0051
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
@@ -62,6 +62,13 @@ reserva, agenda, owner, lease, retry e resultado de áudio vivem em
 Listas legadas de áudio são somente evidência de cutover e não podem ser usadas
 como fonte de backlog.
 
+**Hydration de contatos (2026-09-03):** o issue 0051 mantém referências
+repetidas no limite PostgreSQL: locks por contato e a decisão normal não podem
+limpar ou antecipar um `next_attempt_at` futuro. `pending`, `running`, falha
+devida e hydration sucedida são observados como no-op apropriado; o poller
+continua dono de claims, lease expiry e retry. Não há nova fila Redis nem retry
+forçado sem contrato administrativo aprovado.
+
 **Extração de imagem durável (2026-09-02):** o issue 0050 aplica a mesma
 fronteira a `message_image_extractions`; reserva, agenda, owner, lease, retry e
 resultado são PostgreSQL, e `image_worker` reclama linhas due diretamente sem
@@ -88,6 +95,10 @@ fluxos que ainda o requerem, mas não é autoridade nem transporte de mídia.
 ## Observabilidade e compatibilidade
 
 - Logs **devem** conter motivo sanitizado, categoria/outcome e IDs seguros suficientes para correlacionar falhas, sem conteúdo sensível; diagnósticos do parser podem conter somente metadados estruturais limitados.
+- Solicitações normais de hydration **devem** distinguir nos logs sanitizados
+  uma nova solicitação, duplicação, backoff futuro preservado, falha já devida
+  e estado sucedido/current; nenhum desses eventos pode antecipar
+  `next_attempt_at` ou introduzir fila Redis.
 - Os diagnósticos de extração do webhook **devem** registrar somente evento seguro,
   presença/tipo e caminho de origem; valores extraídos, corpo bruto, URLs e
   segredos não podem atravessar essa fronteira de log.
@@ -96,7 +107,7 @@ fluxos que ainda o requerem, mas não é autoridade nem transporte de mídia.
 
 ## Testes e aceitação
 
-Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Migrations/backfills **devem** ser verificados contra banco descartável.
+Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Testes de hydration **devem** provar que referências repetidas preservam um backoff futuro e deixam falhas devidas para o poller. Migrations/backfills **devem** ser verificados contra banco descartável.
 
 - A mesma chave concorrente produz uma única classificação e o mesmo `public_id` para todos os chamadores.
 - Nenhuma saída sem os quatro campos contratuais produz um resultado persistido válido.

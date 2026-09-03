@@ -28,13 +28,14 @@ complete locally; production acceptance remains separate._
   claimed directly in PostgreSQL, while a bounded manual inventory retires only
   validated legacy queue entries.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
-  issues 0004, 0027–0033, 0037, 0049–0050). Alembic owns the schema through
+  issues 0004, 0027–0033, 0037, 0049–0051). Alembic owns the schema through
   `0024_durable_media_leases`; persistence boundaries for contacts, cycles,
   assignments, media, classifications, and DigiSac directory state are isolated
   behind repositories. Audio transient retry parity, PostgreSQL polling/lease,
   and bounded legacy-list cutover for audio and image are implemented with
   recovery coverage. Revision `0024_durable_media_leases` supplies the shared
-  media lease columns and indexes; issue 0050 required no additional migration.
+  media lease columns and indexes; issues 0050 and 0051 required no additional
+  migration.
 - **[completed] Acessórias directory through Request creation**
   (SPEC-0007–0011; issues 0012–0022, 0026, 0034, 0036). Directory sync,
   canonical ticket `contact.id`, conservative identity candidates/manual
@@ -85,22 +86,32 @@ complete locally; production acceptance remains separate._
   Older `0020`/`203+68` results remain dated historical evidence only; no local
   or disposable result is production/provider/Redis acceptance.
 
-### Approved follow-up backlog
+- **[completed | current checkout | 2026-09-03] Issue 0051 verification.**
+  Normal repeated contact references now return a sanitized decision under the
+  PostgreSQL contact-row lock. Pending/running/succeeded rows remain no-op;
+  failed rows with a future `next_attempt_at` retain the exact schedule, and
+  due failures remain for the hydration poller. The existing boolean request
+  facade remains compatible, no Redis state or migration was added, and the
+  focused identity tests cover concurrent preservation and due handoff. This
+  is local evidence, not provider or production acceptance. The canonical
+  runner passed compileall, Pyright, **280 passed, 86 skipped** offline and
+  **86 passed, 280 deselected** in PostgreSQL with head
+  `0024_durable_media_leases` under `APP_TIMEZONE=UTC`; the override isolates
+  the known timezone discrepancy in `test_department_mapping.py`.
 
-- **[open | coordinated migration]** Issue 0051 preserves hydration backoff; it
-  is already DB-only and is not part of queue removal.
+### Approved follow-up backlog
 
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
-  `pass` occurrences are exception-control flow; the current 84 skips are the
+  `pass` occurrences are exception-control flow; the current 86 skips are the
   explicit database prerequisite policy.
 - **[completed]** Issue 0050 migrated image extraction to PostgreSQL polling and
   left only bounded, manual visibility of legacy Redis lists. Issue 0051
-  preserves hydration backoff; it is already DB-only and is not part of queue
-  removal.
+  preserves contact hydration backoff; it is already DB-only and is not part
+  of queue removal.
 - **[superseded/deprecated]** Issue 0023 is deprecated: its active/inactive
   directory concern was superseded by the later directory-contract alignment,
-  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0048–0050
+  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0048–0051
   are closed.
 
 ## Priority plan
@@ -213,8 +224,9 @@ complete locally; production acceptance remains separate._
   0026), audio retry parity (0027), persistence/provider boundary refactors
   (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
   slices (0038–0040), the documentation reconciliation (0041), PostgreSQL
-  polling/lease for persistent IA finalization (0048), and PostgreSQL polling
-  for audio transcription (0049) and image extraction (0050).
+  polling/lease for persistent IA finalization (0048), PostgreSQL polling for
+  audio transcription and image extraction (0049–0050), and contact hydration
+  backoff preservation (0051).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -223,9 +235,9 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issues 0048–0050 are
-complete locally; issue 0051 remains the explicitly scoped hydration-backoff
-follow-up.
+shell/session/BFF, read, and command-action increments. Issues 0048–0051 are
+complete locally; the remaining items are product, operational authorization,
+or production-acceptance gates.
 Request
 lifecycle, broader IA policy, and production acceptance remain separate blocked
 plan items.
