@@ -1,8 +1,11 @@
+import asyncio
+
 import pytest
 from fastapi import HTTPException, Response
 
 from src.api import routes
 from src.api.webhook_adapter import DigisacMessage, DigisacWebhookAdapter
+from src.core import webhook_event_repository
 from src.core.message_filter import is_bot_message
 
 
@@ -187,6 +190,11 @@ async def test_audio_webhook_admits_transcription_without_redis_publication(monk
 
     monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
     monkeypatch.setattr(routes, "reserve_transcription", fake_reserve)
+    monkeypatch.setattr(
+        webhook_event_repository,
+        "try_mark_webhook_event",
+        lambda *_args: asyncio.sleep(0, result=True),
+    )
 
     body = await routes.digisac_webhook(
         request=None, response=Response(), redis=Redis()
@@ -227,6 +235,11 @@ async def test_image_webhook_admits_extraction_without_redis_publication(
 
     monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
     monkeypatch.setattr(routes, "reserve_image_extraction", fake_reserve)
+    monkeypatch.setattr(
+        webhook_event_repository,
+        "try_mark_webhook_event",
+        lambda *_args: asyncio.sleep(0, result=True),
+    )
 
     body = await routes.digisac_webhook(
         request=None, response=Response(), redis=Redis()
@@ -234,3 +247,66 @@ async def test_image_webhook_admits_extraction_without_redis_publication(
 
     assert body["image_extraction_queued"] is True
     assert queued == []
+
+
+@pytest.mark.asyncio
+async def test_media_reservation_precedes_postgresql_idempotency(monkeypatch):
+    order: list[str] = []
+
+    async def fake_parse(_request):
+        return {
+            "event": "message.created",
+            "data": {
+                "id": "image-order",
+                "ticketId": "ticket-order",
+                "type": "image",
+                "isFromMe": False,
+                "file": {"mimetype": "image/png"},
+            },
+        }, None
+
+    async def reserve_image(*_args):
+        order.append("media")
+        return True
+
+    async def mark_event(*_args):
+        order.append("idempotency")
+        return True
+
+    monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
+    monkeypatch.setattr(routes, "reserve_image_extraction", reserve_image)
+    monkeypatch.setattr(
+        webhook_event_repository, "try_mark_webhook_event", mark_event
+    )
+
+    await routes.digisac_webhook(request=None, response=Response(), redis=None)
+
+    assert order == ["media", "idempotency"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_does_not_acknowledge_when_idempotency_database_fails(
+    monkeypatch,
+):
+    async def fake_parse(_request):
+        return {
+            "event": "message.created",
+            "data": {
+                "id": "database-failure",
+                "ticketId": "ticket-failure",
+                "type": "chat",
+                "isFromMe": False,
+                "text": "Mensagem de teste",
+            },
+        }, None
+
+    async def fail_mark(*_args):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
+    monkeypatch.setattr(
+        webhook_event_repository, "try_mark_webhook_event", fail_mark
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await routes.digisac_webhook(request=None, response=Response(), redis=None)

@@ -92,6 +92,7 @@ async def postgres_state(request):
                 ia_classifications,
                 message_transcriptions,
                 message_image_extractions,
+                webhook_event_keys,
                 ticket_assignment_history,
                 ticket_assignment_event_keys,
                 digisac_departments,

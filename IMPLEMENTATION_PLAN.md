@@ -28,8 +28,8 @@ complete locally; production acceptance remains separate._
   claimed directly in PostgreSQL, while a bounded manual inventory retires only
   validated legacy queue entries.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
-  issues 0004, 0027–0033, 0037, 0049–0051). Alembic owns the schema through
-  `0024_durable_media_leases`; persistence boundaries for contacts, cycles,
+  issues 0004, 0027–0033, 0037, 0049–0053). Alembic owns the schema through
+  `0025_webhook_event_keys`; persistence boundaries for contacts, cycles,
   assignments, media, classifications, and DigiSac directory state are isolated
   behind repositories. Audio transient retry parity, PostgreSQL polling/lease,
   and bounded legacy-list cutover for audio and image are implemented with
@@ -83,6 +83,21 @@ complete locally; production acceptance remains separate._
   audio entries with a reviewed recovery point; its final dry-run found all
   six lists empty while durable totals remained intact. This is acceptance
   evidence for that named runtime, not a claim about other deployments.
+- **[completed | current checkout | 2026-09-03] Issue 0053 verification and
+  cutover.** Generic webhook idempotency now uses the atomic PostgreSQL ledger
+  `webhook_event_keys` from Alembic `0025_webhook_event_keys`; the digest and
+  one-hour expiry contract are unchanged, and the active service contains no
+  Redis dependency. Concurrent acceptance, expiry replacement, bounded cleanup,
+  fail-closed database behavior, media ordering, route compatibility and
+  report-bound legacy-marker handoff are covered by focused tests. The named
+  `cai` runtime was stopped at the old/new boundary, backed up, migrated,
+  imported live `processed:*` markers without source deletion, and restarted
+  with the PostgreSQL-only decision path. Exact counts and recovery-point
+  references are recorded in issue 0053. The canonical runner passed **290
+  passed, 90 skipped** offline and **90 passed, 290 deselected** on PostgreSQL
+  16 with head `0025_webhook_event_keys`; the named runtime imported 171 live
+  markers and retained all 171 Redis source keys. This is named-runtime
+  evidence, not a production-wide claim.
 
 ### Implemented with bounded evidence
 
@@ -114,13 +129,13 @@ complete locally; production acceptance remains separate._
 ### Approved follow-up backlog
 
 - **[open | staged operational decommission]** Redis cleanup and removal
-  (issues 0053–0056; issue 0052 completed). Issue 0052 retired only fully
-  inventoried legacy IA, audio and image queue entries; issue 0053 moves generic webhook idempotency
+  (issues 0054–0056; issues 0052–0053 completed). Issue 0052 retired only fully
+  inventoried legacy IA, audio and image queue entries; issue 0053 moved generic webhook idempotency
   from Redis to a PostgreSQL ledger; issue 0054 sunsets IA status/result
   compatibility keys; issue 0055 removes Redis from the application runtime
   and Compose; issue 0056 disposes the retained Redis volume only after an
   explicit observation window and backup review. The sequence preserves
-  `processed:*`, durable PostgreSQL state, historical recovery tooling and
+  retained `processed:*`, durable PostgreSQL state, historical recovery tooling and
   rollback boundaries until each dedicated issue closes.
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
@@ -229,7 +244,7 @@ complete locally; production acceptance remains separate._
 
 ### Phase 6 — Redis cleanup and decommission
 
-6. **[P1 | in progress | issues 0053–0056] Remove legacy Redis work residue, migrate
+6. **[P1 | in progress | issues 0054–0056] Remove legacy Redis work residue, migrate
    the remaining transient contracts, and dispose storage only after a
    controlled observation window.**
 
@@ -239,8 +254,9 @@ complete locally; production acceptance remains separate._
      retired the fully inventoried IA, audio and image queue/dead-letter
      entries without replay or PostgreSQL mutation. Apply was report-bound,
      digest-checked, family-scoped and confirmation-gated;
-   - issue 0053 replaces Redis webhook idempotency with an expiring,
-     concurrency-safe PostgreSQL ledger;
+   - issue 0053 is completed: it replaces Redis webhook idempotency with an
+     expiring, concurrency-safe PostgreSQL ledger and coordinates the
+     `processed:*` handoff before the new API starts;
    - issue 0054 stops and later removes IA `ia_status:*`/`ia_result:*`
      compatibility views after historical backfill disposition and a TTL
      observation window;
@@ -257,10 +273,11 @@ complete locally; production acceptance remains separate._
    `FLUSHALL`, broad Docker volume cleanup, provider replay or deletion of
    PostgreSQL business data.
 
-   Current runtime evidence is recorded in issue 0052: the final dry-run found
+   Current runtime evidence is recorded in issues 0052 and 0053: the final dry-run found
    zero entries in all six retired lists after removing 17,164 IA and 71 image
    entries. The protected Redis families and PostgreSQL durable totals remain
-   outside this issue's deletion boundary.
+   outside this issue's deletion boundary; issue 0053 retains legacy
+   `processed:*` markers for their natural TTL and does not delete them.
 
 ## Dependencies, discrepancies, and sequencing
 
@@ -281,8 +298,9 @@ complete locally; production acceptance remains separate._
   (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
   slices (0038–0040), the documentation reconciliation (0041), PostgreSQL
   polling/lease for persistent IA finalization (0048), PostgreSQL polling for
-  audio transcription and image extraction (0049–0050), and contact hydration
-  backoff preservation (0051).
+  audio transcription and image extraction (0049–0050), contact hydration
+  backoff preservation (0051), validated legacy queue retirement (0052), and
+  PostgreSQL webhook idempotency (0053).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -293,8 +311,10 @@ complete locally; production acceptance remains separate._
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
 shell/session/BFF, read, and command-action increments. Issues 0048–0052 are
 complete locally, with issue 0052 also accepted in the named `cai` runtime.
-Issues 0053–0056 define the remaining staged Redis cleanup and decommission
-work; destructive storage disposal remains separately gated.
+Issues 0054–0056 define the remaining staged Redis cleanup and decommission
+work; destructive storage disposal remains separately gated. Issue 0053 is
+complete locally and in the named `cai` runtime, with its legacy marker source
+retained for the following compatibility/decommission stages.
 The remaining items are product, operational authorization, or
 production-acceptance gates.
 Request

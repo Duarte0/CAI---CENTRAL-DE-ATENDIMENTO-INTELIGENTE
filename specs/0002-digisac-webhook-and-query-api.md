@@ -1,9 +1,9 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
 - **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas sem versão
-- **Versão:** 1.8
+- **Versão:** 1.9
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0051
+- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0053
 - **Dependências:** SPEC-0001
 
 ## Objetivo e não objetivos
@@ -28,6 +28,15 @@ somente a decisão observável correspondente; uma falha com `next_attempt_at`
 futuro permanece agendada e não é movida para o presente. A resposta HTTP e a
 deduplicação do webhook não são usadas para limpar o backoff.
 
+**Ledger PostgreSQL de idempotência (2026-09-03):** o issue 0053 preserva a
+derivação SHA-256 e a janela de uma hora, mas a decisão genérica de aceite agora
+é feita atomicamente por `webhook_event_keys`. A repetição dentro da janela retorna
+`202` com `status: duplicate`; uma linha expirada só pode ser substituída por um
+vencedor. A decisão ocorre depois da reserva durável de áudio/imagem e antes do
+`202` de aceite. Falha de PostgreSQL não é convertida em aceite; a rota falha
+fechadamente. HMAC e rejeições de envelope continuam anteriores à normalização e
+à inserção do ledger.
+
 ## Ingestão, validação e normalização
 
 1. `POST /webhook/digisac` **deve** aceitar `ticket.created`, `ticket.updated`, `message.created` e `message.updated`. Evento não suportado **deve** retornar `200` com motivo seguro e não pode alterar estado.
@@ -38,7 +47,7 @@ deduplicação do webhook não são usadas para limpar o backoff.
 
 ## Idempotência, mídia e respostas
 
-1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da marcação transitória de idempotência. Esses workers não publicam trabalho ativo em Redis; falha de Redis em outros fluxos não pode apagar a reserva durável de mídia.
+1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da decisão de idempotência no ledger PostgreSQL. Esses workers não publicam trabalho ativo em Redis; falha de Redis em outros fluxos não pode apagar a reserva durável de mídia.
 2. Repetição **não pode** duplicar ciclo ou reserva; ciclo e reserva persistentes são a deduplicação de trabalho relevante. O webhook não publica `ia_queue`.
 3. A referência `message.contactId` **não pode** antecipar o retry de hydration:
    `pending`, `running`, falha futura, falha devida e hydration sucedida são
@@ -51,7 +60,7 @@ deduplicação do webhook não são usadas para limpar o backoff.
 
 Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, valores extraídos de mensagem/contato, segredo, token ou URL assinada. O diagnóstico de extração do parser fica limitado a presença, tipo e caminho de origem. Não há autorização de leitura ou rate limit adicional para o operador interno; a integração Acessórias aprovada exigirá revisão de acesso em seu próprio contrato.
 
-Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes de idempotência, ausência de publicação Redis para áudio/imagem, fechamento/reabertura e `404` nas consultas. Testes de hydration devem provar que duas entregas ou muitas referências do mesmo sender durante um backoff não antecipam a chamada Contacts. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto e que uma assinatura inválida não atinge o parse.
+Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes da idempotência PostgreSQL, concorrência e expiração do ledger, ausência de publicação Redis para áudio/imagem, fechamento/reabertura e `404` nas consultas. Testes de hydration devem provar que duas entregas ou muitas referências do mesmo sender durante um backoff não antecipam a chamada Contacts. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto, que uma assinatura inválida não atinge o parse e que uma falha do banco não produz aceite bem-sucedido.
 
 - Repetição do webhook não produz fila, reserva ou ciclo duplicado.
 - PDF `document` não entra na fila visual; `document` MIME `image/*` entra uma única vez.
@@ -59,4 +68,4 @@ Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignor
 
 ## Decisões registradas
 
-O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. A integração Acessórias aprovada terá revisão de acesso em contrato próprio e não altera esta superfície. A remoção das superfícies de diagnóstico foi aprovada; o operador monitora o sistema via logs e nenhuma superfície de debug é necessária. Issue `0025` registra que a extração normal do webhook também emite somente metadados seguros, sem valores de entrada. Issue `0051` registra que as decisões de hydration são logadas somente com o ID opaco e a decisão sanitizada; a idempotência do evento não substitui o backoff persistido.
+O sistema é interno e de operador único: não há login, API key, JWT, autorização de consultas ou rate limiting. Em produção, `WEBHOOK_SECRET` é obrigatório para validar webhooks DigiSac e impedir injeção de eventos. As consultas montadas são atualmente sem versão; a política de introduzir `/v1/` e manter compatibilidade antes de uma futura `/v2/` ainda não foi implementada. A integração Acessórias aprovada terá revisão de acesso em contrato próprio e não altera esta superfície. A remoção das superfícies de diagnóstico foi aprovada; o operador monitora o sistema via logs e nenhuma superfície de debug é necessária. Issue `0025` registra que a extração normal do webhook também emite somente metadados seguros, sem valores de entrada. Issue `0051` registra que as decisões de hydration são logadas somente com o ID opaco e a decisão sanitizada; a idempotência do evento não substitui o backoff persistido. Issue `0053` registra que o ledger genérico também expõe somente outcomes agregados, sem digest ou payload, e que `processed:*` só deixa de ser fonte de decisão após o handoff coordenado.

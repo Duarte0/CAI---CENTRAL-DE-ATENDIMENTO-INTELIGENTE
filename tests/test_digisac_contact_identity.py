@@ -10,6 +10,7 @@ import requests
 from fastapi import Response
 
 from src.api import routes
+from src.core import webhook_event_repository
 from src.core import db as db_module
 from src.core import digisac_contact_repository as contact_repository
 from src.core.digisac_contact_repository import ContactHydrationRequestDecision
@@ -227,6 +228,11 @@ async def test_message_contact_reference_schedules_hydration_without_inline_prov
         return payload, None
 
     monkeypatch.setattr(routes, "parse_webhook_payload", parse)
+    monkeypatch.setattr(
+        webhook_event_repository,
+        "try_mark_webhook_event",
+        lambda *_args: asyncio.sleep(0, result=True),
+    )
 
     result = await routes.digisac_webhook(
         request=None, response=Response(), redis=redis

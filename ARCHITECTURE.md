@@ -49,7 +49,7 @@ flowchart LR
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the existing pipeline; contact hydration requests are PostgreSQL-only and preserve persisted backoff; administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, PostgreSQL webhook-idempotency decision, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the remaining pipeline; generic webhook idempotency, contact hydration requests, administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
@@ -57,8 +57,8 @@ flowchart LR
 | \`image_worker\` | Polls due image rows, downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation, schedule, claim, lease, retry and result; no Redis dependency. |
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
 | \`acessorias_directory\` | Acquires and reconciles the Acessórias company, contact, department, and relationship directory. | PostgreSQL snapshot and synchronization executions; provider access is configuration-backed. |
-| \`postgres\` | Source of truth for analysis, media state, assignment history, DigiSac/Acessórias directory data, and persistent cycles. | PostgreSQL 16, managed by Alembic. |
-| \`redis\` | Remaining transient work transport and coordination for API/IA flows. | Redis 7 with AOF in Compose; not required by audio/image workers. |
+| \`postgres\` | Source of truth for analysis, media state, assignment history, DigiSac/Acessórias directory data, persistent cycles, and generic webhook idempotency. | PostgreSQL 16, managed by Alembic. |
+| \`redis\` | Remaining transient status/result views and coordination for API/IA flows. | Redis 7 with AOF in Compose; not required by audio/image workers or webhook idempotency. |
 | \`migrate\` | Applies the configured Alembic revision before application services start. | No application schema creation at runtime. |
 
 The application uses one PostgreSQL connection pool per process. Database
@@ -179,7 +179,6 @@ retains only durable Request operation orchestration and compatibility exports.
 sequenceDiagram
     participant D as DigiSac
     participant A as FastAPI
-    participant R as Redis
     participant P as PostgreSQL
     participant W as Worker
 
@@ -197,8 +196,9 @@ sequenceDiagram
     else text, document, or ticket lifecycle
         A->>P: maintain ticket/cycle state
     end
+    A->>P: atomically record event digest with one-hour expiry
+    P-->>A: accepted, duplicate, or expired-replaced
     A-->>D: 202 accepted or 200 ignored
-    R->>W: consume only remaining Redis-backed flows
 \`\`\`
 
 ### Authentication and normalization
@@ -228,7 +228,11 @@ prompt.
 ## 4. Redis coordination
 
 Redis carries work and short-lived coordination, not the durable business
-record.
+record. Generic webhook idempotency is not a Redis contract after issue 0053:
+the active API records the deterministic digest in PostgreSQL, and a database
+failure fails closed before a successful webhook acknowledgement. Redis
+remains available for separate status/result compatibility views and other
+explicitly retained flows until issues 0054–0056 complete.
 
 ### Queues and dead letters
 
@@ -257,9 +261,10 @@ not contain the maintenance scripts.
 
 ### Transient keys
 
-Important key families include:
+Important retained or handoff key families include:
 
-- \`processed:*\` for temporary webhook idempotency;
+- \`processed:*\` as retained legacy webhook markers during the coordinated
+  handoff; they are not read by the active idempotency service after cutover;
 - TTL-based \`ia_status:*\` and \`ia_result:*\` compatibility views.
 
 The former buffer/debounce families are not application paths. Issue 0037's
@@ -413,12 +418,13 @@ defined in \`src/core/intents.py\`.
 
 ## 9. PostgreSQL data model
 
-Alembic owns the schema through \`0024_durable_media_leases\`. The main data groups
+Alembic owns the schema through \`0025_webhook_event_keys\`. The main data groups
 are:
 
 | Data group | Tables | Purpose |
 | --- | --- | --- |
 | Analysis | \`ia_classifications\`, \`classification_messages\` | Classification identity, result, full context, and ordered supporting messages. |
+| Webhook idempotency | \`webhook_event_keys\` | Sanitized SHA-256 event digest, first-seen timestamp and one-hour expiry; concurrent acceptance and bounded expiry cleanup. |
 | Media | \`message_transcriptions\`, \`message_image_extractions\` | Durable reservation, attempts, provider model, status, retry schedule, error, extracted text, and media leases. |
 | Assignment | \`ticket_assignment_history\`, \`ticket_assignment_event_keys\` | Chronological, idempotent ticket assignment history. |
 | DigiSac directory | \`digisac_departments\`, \`digisac_users\`, \`digisac_directory_sync_state\` | Local lookup cache and synchronization state. |
@@ -497,11 +503,19 @@ docker compose -p cai logs -f api ia_worker audio_worker image_worker
 
 The persistent-cycle schema must be migrated before API and worker rollout. The
 application verifies that schema at startup and does not create or mutate it.
+For the issue 0053 handoff, the old API is stopped and drained before the
+`0025_webhook_event_keys` migration and reviewed import of live `processed:*`
+markers. The new API starts only after that import; source Redis markers are
+retained for their natural TTL and are not part of the active decision path.
 
 ## 12. Reliability and recovery invariants
 
 - PostgreSQL persistence precedes any Redis publication that remains part of an
   active contract; audio and image processing do not publish work to Redis.
+- Webhook event acceptance is decided atomically in PostgreSQL after durable
+  media reservation. A duplicate is returned only for an unexpired digest, an
+  expired row has one replacement winner, and an unavailable database fails
+  closed without a successful receipt.
 - A failed Redis publication clears the corresponding PostgreSQL publication
   marker for the remaining Redis-backed flows so reconciliation can retry it.
 - Persistent claims and leases recover work abandoned by process failure.
@@ -565,6 +579,12 @@ records these delivery limitations:
   Redis buffer, debounce, feature flag, and legacy worker branch were removed.
 - The raw-payload diagnostic surfaces were removed under issue `0006`; no
   replacement debug route or raw-payload contract exists.
+- Issue `0053` moves generic webhook idempotency from Redis `processed:*` to the
+  expiring PostgreSQL `webhook_event_keys` ledger. The digest derivation remains
+  unchanged, the ledger stores only digest/timestamps, cleanup is bounded, and
+  the coordinated handoff imports live markers without deleting their Redis
+  source. Issues `0054`–`0056` own subsequent compatibility retirement and
+  storage disposal.
 - Issue `0025` removes extracted webhook values from normal logs while
   preserving safe event, presence/type, and source metadata.
 - SPEC-0012 and issues `0038`–`0040` provide six authenticated internal
@@ -669,7 +689,12 @@ they limit release verification and future evolution decisions.
   \`src/core/digisac_directory.py\`.
 - PostgreSQL access and department mapping: \`src/core/department_mapping.py\`, and
   \`alembic/versions/0001_initial.py\` through
-  \`0024_durable_media_leases.py\`.
+  \`0025_webhook_event_keys.py\`.
+- Generic webhook idempotency and its bounded handoff/cleanup operations:
+  \`src/utils/idempotency.py\`, \`src/core/webhook_event_repository.py\`,
+  \`scripts/migrate_legacy_webhook_idempotency.py\`,
+  \`scripts/cleanup_expired_webhook_event_keys.py\`, and Alembic
+  \`0025_webhook_event_keys.py\`.
 - DigiSac contact acquisition and backfill: \`src/core/digisac_client.py\`,
   \`src/core/digisac_contact_backfill.py\`, and
   \`src/utils/backfill_digisac_contacts.py\`.

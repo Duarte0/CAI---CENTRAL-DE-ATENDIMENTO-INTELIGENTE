@@ -1,22 +1,20 @@
+from pathlib import Path
+
 import pytest
 
+from src.core import webhook_event_repository
 from src.utils.idempotency import IdempotencyService
 
 
-class MemoryRedis:
-    def __init__(self):
-        self.values = {}
-
-    async def set(self, key, value, ex=None, nx=False):
-        if nx and key in self.values:
-            return False
-        self.values[key] = value
-        return True
-
-
 @pytest.mark.asyncio
-async def test_try_mark_processed_is_atomic():
-    service = IdempotencyService(MemoryRedis())
+async def test_try_mark_processed_delegates_to_postgresql_boundary(monkeypatch):
+    decisions = iter([True, False])
+
+    async def fake_mark(_event_id):
+        return next(decisions)
+
+    monkeypatch.setattr(webhook_event_repository, "try_mark_webhook_event", fake_mark)
+    service = IdempotencyService()
 
     assert await service.try_mark_processed("event-1") is True
     assert await service.try_mark_processed("event-1") is False
@@ -33,3 +31,9 @@ def test_event_id_uses_message_id_and_content():
     assert IdempotencyService.generate_event_id(
         first
     ) != IdempotencyService.generate_event_id(second)
+
+
+def test_active_idempotency_service_has_no_redis_dependency():
+    source = Path("src/utils/idempotency.py").read_text(encoding="utf-8")
+
+    assert "redis" not in source.lower()

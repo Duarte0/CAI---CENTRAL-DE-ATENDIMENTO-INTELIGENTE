@@ -1,20 +1,20 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; decisões de produto registradas abaixo
-- **Versão:** 1.9
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; issue 0053 moveu a idempotência genérica de webhook para PostgreSQL; decisões de produto registradas abaixo
+- **Versão:** 1.10
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0024_durable_media_leases`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050, 0051 e 0052
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0025_webhook_event_keys`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050, 0051, 0052 e 0053
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
 
-Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte/coordenação transitória onde um fluxo ainda o requer e não é a fila persistente de finalização IA.
+Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte/coordenação transitória onde um fluxo ainda o requer e não é a fila persistente de finalização IA nem a autoridade da idempotência genérica de webhook.
 
 Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados. Os issues 0037 e 0052 adicionam somente auditorias manuais, bounded e repetíveis para famílias Redis órfãs e listas legadas já fora do transporte ativo; não apagam dados duráveis nem transformam a operação em job de retenção.
 
 ## Estado de referência
 
-`PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0024_durable_media_leases`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
+`PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0025_webhook_event_keys`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
 
 **Evidência de implementação (2026-08-14):** issue 0010 alinhou o prompt do
 worker com `VALID_INTENT_TYPES`, incluindo `financial` na lista permitida e na
@@ -89,10 +89,27 @@ exato nas entradas validadas. Valores malformados, desconhecidos e
 dead-letters transitórios permanecem; o comando não republica, chama provider,
 altera PostgreSQL ou toca outras famílias Redis.
 
+**Idempotência genérica de webhook em PostgreSQL (2026-09-03):** o issue 0053
+move a decisão de uma entrega vencedora para `webhook_event_keys`, com digest
+SHA-256 minúsculo, `first_seen_at`, `expires_at` de uma hora e índice para
+limpeza bounded. A decisão usa uma única operação PostgreSQL concorrente:
+entregas dentro da janela retornam `duplicate`, e somente um conflito expirado
+pode ser substituído. A indisponibilidade do banco falha fechadamente e não
+autoriza um `202` de aceite. O ledger não guarda corpo, texto, contato, segredo,
+URL assinada ou resposta de provider; limpeza é independente do caminho de
+requisição, limitada por lote e observável apenas por contagens.
+
+O handoff de `processed:*` é uma operação única e explícita: a API antiga é
+parada e drenada, um dry-run completo com revisão/backup é arquivado, os
+marcadores ainda vivos são importados sem apagar suas chaves Redis, e só então
+a API PostgreSQL-only é iniciada. Uma fotografia nova ou truncada interrompe o
+apply. Isso evita a lacuna de uma implantação mista; a remoção das chaves
+retidas continua pertencendo aos issues 0054–0056.
+
 ## Contrato de dados e integridade
 
-1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. O ciclo IA e as mídias elegíveis **devem** ser reclamados por lease PostgreSQL; Redis limita-se à idempotência temporária, status/resultados com TTL e coordenação de fluxos que ainda tenham contrato próprio. Filas legadas de IA e mídia não são backlog ativo e só podem ser removidas por inventário completo, reconciliado e confirmação delimitada.
-2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos.
+1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias, ciclos persistentes e a decisão genérica de idempotência de webhook. O ciclo IA e as mídias elegíveis **devem** ser reclamados por lease PostgreSQL; Redis limita-se a status/resultados com TTL e coordenação de fluxos que ainda tenham contrato próprio. Filas legadas de IA e mídia não são backlog ativo e só podem ser removidas por inventário completo, reconciliado e confirmação delimitada.
+2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos. O digest genérico de webhook **deve** ser único no ledger enquanto `expires_at` não vencer, com substituição expirada atômica e retenção equivalente a uma hora.
 3. `classification_messages` e `conversation_cycle_messages` **devem** preservar a ordem que fundamenta o resultado. Um vínculo de mensagem e sua posição **devem** ser únicos dentro da classificação ou ciclo correspondente. Uma mensagem **não pode** pertencer a dois ciclos persistentes.
 4. Timestamps duráveis **devem** usar `TIMESTAMPTZ`; listas e snapshots estruturados **devem** usar JSONB onde o schema o define. Identificadores externos não resolvidos **devem** permanecer preservados, sem nomes ou transferências inventados.
 5. Alterações de schema **devem** ser Alembic aditivas e compatíveis. Backfills **devem** oferecer auditoria/dry-run, aplicação repetível e rollback em erro. Um downgrade que possa apagar classificações, ciclos ou agendamentos duráveis **deve** recusar-se explicitamente antes de perder dados.
@@ -125,7 +142,7 @@ altera PostgreSQL ou toca outras famílias Redis.
 
 ## Testes e aceitação
 
-Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Testes de hydration **devem** provar que referências repetidas preservam um backoff futuro e deixam falhas devidas para o poller. Migrations/backfills **devem** ser verificados contra banco descartável.
+Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente do ledger de webhook, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Testes de hydration **devem** provar que referências repetidas preservam um backoff futuro e deixam falhas devidas para o poller. Migrations/backfills **devem** ser verificados contra banco descartável, e o handoff de marcadores deve ser report-bound, sem apagar sua fonte Redis.
 
 - A mesma chave concorrente produz uma única classificação e o mesmo `public_id` para todos os chamadores.
 - Nenhuma saída sem os quatro campos contratuais produz um resultado persistido válido.

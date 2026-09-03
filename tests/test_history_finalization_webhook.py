@@ -2,6 +2,7 @@ import pytest
 from fastapi import Response
 
 from src.api import routes
+from src.core import webhook_event_repository
 
 
 class Redis:
@@ -31,6 +32,11 @@ async def send(monkeypatch, redis, payload):
         return payload, None
 
     monkeypatch.setattr(routes, "parse_webhook_payload", parse)
+    monkeypatch.setattr(
+        webhook_event_repository,
+        "try_mark_webhook_event",
+        lambda *_args: _async(True),
+    )
     return await routes.digisac_webhook(request=None, response=Response(), redis=redis)
 
 
@@ -52,9 +58,7 @@ async def test_text_webhook_does_not_publish_an_ia_cycle(monkeypatch):
     }
     result = await send(monkeypatch, redis, payload)
     assert result["status"] == "received"
-    assert list(redis.values) and all(
-        key.startswith("processed:") for key in redis.values
-    )
+    assert redis.values == {}
     assert redis.queues == {}
 
 

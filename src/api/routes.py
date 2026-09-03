@@ -650,7 +650,7 @@ async def digisac_webhook(
         "event": message.event,
         "timestamp": (message.timestamp.isoformat() if message.timestamp else None),
     }
-    idempotency = IdempotencyService(redis)
+    idempotency = IdempotencyService()
     event_id = idempotency.generate_event_id(idempotency_data)
     # Reserve before event idempotency so a duplicate webhook cannot erase a
     # durable media row. Audio admission itself does not publish to Redis.

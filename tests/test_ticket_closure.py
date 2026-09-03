@@ -2,6 +2,7 @@ import pytest
 from fastapi import Response
 
 from src.api import routes
+from src.core import webhook_event_repository
 
 
 class PersistentRedis:
@@ -25,6 +26,11 @@ async def send(monkeypatch, redis, payload):
         return payload, None
 
     monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
+    monkeypatch.setattr(
+        webhook_event_repository,
+        "try_mark_webhook_event",
+        lambda *_args: _completed(True),
+    )
     monkeypatch.setattr(
         routes, "capture_ticket_assignment", lambda *_args: _completed(False)
     )
@@ -88,9 +94,7 @@ async def test_message_webhook_does_not_publish_an_ia_cycle(monkeypatch):
         "transcription_queued": False,
         "image_extraction_queued": False,
     }
-    assert list(redis.values) and all(
-        key.startswith("processed:") for key in redis.values
-    )
+    assert redis.values == {}
     assert redis.queues == {}
 
 

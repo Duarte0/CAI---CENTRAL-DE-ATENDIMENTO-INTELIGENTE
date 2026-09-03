@@ -14,7 +14,7 @@ resultado por API.
 - recebe eventos `ticket.created`, `ticket.updated`, `message.created` e
   `message.updated` da DigiSac;
 - valida e normaliza envelopes de webhook, ignora mensagens de bot e deduplica
-  eventos;
+  eventos com um ledger PostgreSQL de digest expiráveis;
 - registra, em ordem cronológica, os departamentos e atendentes pelos quais o
   ticket passou;
 - transcreve áudios e extrai o conteúdo visível de imagens em workers separados;
@@ -74,17 +74,20 @@ ia_worker
 
 | Componente | Responsabilidade |
 | --- | --- |
-| `api` | FastAPI, autenticação do webhook, normalização, reservas de mídia, abertura/fechamento de ciclos e consultas. |
+| `api` | FastAPI, HMAC do webhook, normalização, reserva de mídia, decisão de idempotência PostgreSQL, abertura/fechamento de ciclos e consultas. |
 | `ia_worker` | Polling/lease PostgreSQL de finalização, montagem do contexto, classificação e despertar seletivo de ciclos bloqueados por mídia. |
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
-| `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac e ciclos. |
-| `redis` | Idempotência temporária, status e resultados com TTL e fluxos que ainda têm contrato Redis; as listas de trabalho IA/áudio/imagem são apenas resíduo de cutover e não transportam trabalho ativo. |
+| `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac, ciclos e ledger de idempotência do webhook. |
+| `redis` | Status/resultados com TTL e fluxos que ainda têm contrato Redis; `processed:*` é somente resíduo de handoff e as listas de trabalho IA/áudio/imagem não transportam trabalho ativo. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
 | `maintenance` | Perfil separado para inventariar e retirar, com relatório e confirmação, somente as listas Redis legadas validadas; não participa do runtime da aplicação. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
-camada transitória de transporte e coordenação.
+camada transitória de transporte e coordenação. A decisão genérica de
+idempotência do webhook não depende de Redis: PostgreSQL aceita um digest uma
+vez por hora, substitui uma linha somente após sua expiração e falha fechadamente
+quando o banco não pode decidir.
 
 O fechamento de ticket não publica `ia_queue`: o `ia_worker` reclama um ciclo
 elegível por lease diretamente no PostgreSQL. `GET /queues` expõe `ia_due`,
@@ -210,6 +213,23 @@ motivo seguro, timestamp durável e ator opcional; nenhum usuário da conversa,
 token, corpo do provider ou conteúdo da classificação é usado como ator ou
 evidência.
 
+## Idempotência de webhook
+
+O digest SHA-256 determinístico do evento é registrado em
+`webhook_event_keys` no PostgreSQL com `first_seen_at` e expiração de uma hora.
+Uma entrega concorrente tem um único vencedor; uma entrega dentro da janela
+retorna `202` com `status: duplicate`. O ledger armazena somente o digest e
+timestamps, nunca corpo, texto, contato, segredo, URL assinada ou resposta de
+provider. A limpeza de expirados é uma operação de manutenção bounded, com
+contagens antes/depois e sem acesso ao payload.
+
+O handoff dos marcadores Redis antigos é coordenado: pare e drene a API antiga,
+faça o dry-run completo, arquive o relatório e um recovery point PostgreSQL,
+aplique a importação dos marcadores ainda vivos e só então inicie a API nova.
+O apply revalida a fotografia e não remove as chaves `processed:*`; elas ficam
+retidas até os próximos issues de decommission. Uma fotografia truncada ou um
+marcador novo interrompe a operação para evitar uma implantação mista.
+
 ## Finalização persistente por histórico DigiSac
 
 Cada abertura/reabertura cria uma sequência e cada fechamento persiste um ciclo
@@ -320,8 +340,11 @@ retenção ou arquivamento devem ser definidos como política operacional explí
 
 - O webhook pode exigir HMAC-SHA256 sobre o corpo bruto por meio de
   `X-Digisac-Signature` (`<hash>` ou `sha256=<hash>`).
-- Reservas de mídia acontecem antes da marcação de idempotência, permitindo que
-  uma entrega DigiSac repetida recupere uma publicação que falhou.
+- Reservas de mídia acontecem antes da decisão de idempotência no ledger
+  PostgreSQL, permitindo que uma entrega DigiSac repetida recupere uma
+  publicação que falhou.
+- A decisão do digest é atômica e expira em uma hora; falha do PostgreSQL não
+  confirma o recebimento e não depende da disponibilidade do Redis.
 - Filas de mídia e ciclos usam reservas/claims persistentes para evitar
   publicações concorrentes e recuperar trabalho abandonado.
 - A identidade de contato usa somente `contact.id`; hydration individual é
@@ -645,7 +668,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic head `0024_durable_media_leases` e só então
+ao destino, aplica e verifica Alembic head `0025_webhook_event_keys` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -742,6 +765,18 @@ preservação exata de `next_attempt_at`, handoff de falha devida ao poller e
 no-op de hydration sucedida/current. Não houve migration nova nem dependência
 Redis adicionada; essa evidência continua local/descartável.
 
+Na implementação do issue 0053 em 2026-09-03, o digest genérico passou a usar
+o ledger PostgreSQL `webhook_event_keys`, com migration `0025`, expiração de uma
+hora, decisão concorrente atômica, cleanup bounded e falha fechada do webhook
+quando o banco não decide. O runner canônico passou compileall, Pyright,
+**290 passed, 90 skipped** offline e **90 passed, 290 deselected** no PostgreSQL
+16 descartável. No runtime `cai`, a API antiga foi parada antes do handoff, um
+backup custom-format foi validado, 171 marcadores vivos foram importados sem
+apagar `processed:*`, e a API/IA/audio/image foram recriados a partir de
+`db7a077`; o health interno retornou `{"status":"ok"}`. O ledger terminou com
+176 linhas vivas (171 importadas e cinco novas entregas), enquanto 171 marcadores
+Redis permaneceram retidos. Checksums e o recovery point estão na issue 0053.
+
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
 estruturados e motivos sanitizados, nunca o corpo bruto da requisição ou a
@@ -768,6 +803,29 @@ docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 resíduo de cutover. O procedimento suportado usa uma imagem de manutenção
 separada, é dry-run por padrão e não apaga itens desconhecidos, malformados ou
 dead-letters transitórios.
+
+### Handoff da idempotência de webhook (issue 0053)
+
+Antes de iniciar a versão que usa PostgreSQL, pare e drene as instâncias antigas
+da API. Capture um recovery point PostgreSQL e execute o dry-run da imagem
+`maintenance`; revise o relatório completo de `processed:*` antes do apply:
+
+```bash
+docker compose -p cai stop api
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.migrate_legacy_webhook_idempotency \
+  --dry-run --operator "$OPERATOR" --revision "$REVISION" \
+  --max-items 1000 --report /reports/webhook-idempotency-handoff.json
+```
+
+O apply exige a confirmação exata `migrate-legacy-webhook-idempotency`, a mesma
+revisão/limite do dry-run e `--backup-reference` apontando para o recovery point.
+Ele importa somente marcadores válidos ainda vivos, não lê seus valores nem
+apaga as chaves Redis, e bloqueia se a fotografia estiver truncada ou tiver
+crescido. Inicie a API somente após o apply; não execute versões antigas e novas
+simultaneamente. A limpeza posterior do ledger usa
+`scripts.cleanup_expired_webhook_event_keys` em lotes de no máximo 1000 e não é
+necessária para a correção do caminho de requisição.
 
 Prepare um diretório de relatório gravável pelo usuário do container e capture
 a revisão do checkout. O valor de `--max-items` deve ser maior que o tamanho
