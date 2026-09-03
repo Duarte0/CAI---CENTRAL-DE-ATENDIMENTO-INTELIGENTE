@@ -71,6 +71,18 @@ complete locally; production acceptance remains separate._
   lists were not deleted or replayed; the bounded inventory/apply script is
   explicit and dry-run by default. This is local evidence, not provider or
   production acceptance.
+- **[completed | current checkout | 2026-09-03] Issue 0052 maintenance
+  implementation.** The dedicated Docker `maintenance` target/profile now
+  contains the bounded scripts without expanding the `api` image. The
+  coordinator requires a pinned revision, operator, protected connection
+  context, archived dry-run report and approved PostgreSQL recovery point;
+  apply is one family at a time, rechecks runtime/durable invariants and exact
+  list-value digests, and performs only validated one-at-a-time `LREM`. Local
+  focused script/coordinator coverage passed **15 tests**. The controlled `cai`
+  runtime procedure then removed 17,164 IA entries, 71 image entries and 0
+  audio entries with a reviewed recovery point; its final dry-run found all
+  six lists empty while durable totals remained intact. This is acceptance
+  evidence for that named runtime, not a claim about other deployments.
 
 ### Implemented with bounded evidence
 
@@ -101,6 +113,15 @@ complete locally; production acceptance remains separate._
 
 ### Approved follow-up backlog
 
+- **[open | staged operational decommission]** Redis cleanup and removal
+  (issues 0053–0056; issue 0052 completed). Issue 0052 retired only fully
+  inventoried legacy IA, audio and image queue entries; issue 0053 moves generic webhook idempotency
+  from Redis to a PostgreSQL ledger; issue 0054 sunsets IA status/result
+  compatibility keys; issue 0055 removes Redis from the application runtime
+  and Compose; issue 0056 disposes the retained Redis volume only after an
+  explicit observation window and backup review. The sequence preserves
+  `processed:*`, durable PostgreSQL state, historical recovery tooling and
+  rollback boundaries until each dedicated issue closes.
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
   `pass` occurrences are exception-control flow; the current 86 skips are the
@@ -206,6 +227,41 @@ complete locally; production acceptance remains separate._
    checks, and explicit acceptance criteria. This cannot be inferred from the
    local runner and must not be bundled with feature build work.
 
+### Phase 6 — Redis cleanup and decommission
+
+6. **[P1 | in progress | issues 0053–0056] Remove legacy Redis work residue, migrate
+   the remaining transient contracts, and dispose storage only after a
+   controlled observation window.**
+
+   Sequence:
+
+   - issue 0052 is completed: its `maintenance` image/profile and coordinator
+     retired the fully inventoried IA, audio and image queue/dead-letter
+     entries without replay or PostgreSQL mutation. Apply was report-bound,
+     digest-checked, family-scoped and confirmation-gated;
+   - issue 0053 replaces Redis webhook idempotency with an expiring,
+     concurrency-safe PostgreSQL ledger;
+   - issue 0054 stops and later removes IA `ia_status:*`/`ia_result:*`
+     compatibility views after historical backfill disposition and a TTL
+     observation window;
+   - issue 0055 removes Redis from API/IA runtime, health, queue observability,
+     dependencies and Compose while retaining storage for rollback;
+   - issue 0056 permanently disposes the exact Redis container/storage target
+     only after Redis-free deployment, backup validation and explicit approval.
+
+   Dependencies and risks: 0053–0055 must not assume a mixed old/new
+   deployment is safe; PostgreSQL is the durable authority, but idempotency and
+   compatibility cutovers need explicit handoff. Unknown Redis consumers,
+   queue growth, unmatched entries, invalid historical results or an
+   unvalidated backup block the sequence. No issue permits `FLUSHDB`,
+   `FLUSHALL`, broad Docker volume cleanup, provider replay or deletion of
+   PostgreSQL business data.
+
+   Current runtime evidence is recorded in issue 0052: the final dry-run found
+   zero entries in all six retired lists after removing 17,164 IA and 71 image
+   entries. The protected Redis families and PostgreSQL durable totals remain
+   outside this issue's deletion boundary.
+
 ## Dependencies, discrepancies, and sequencing
 
 | Status | Finding | Planning impact |
@@ -235,9 +291,12 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issues 0048–0051 are
-complete locally; the remaining items are product, operational authorization,
-or production-acceptance gates.
+shell/session/BFF, read, and command-action increments. Issues 0048–0052 are
+complete locally, with issue 0052 also accepted in the named `cai` runtime.
+Issues 0053–0056 define the remaining staged Redis cleanup and decommission
+work; destructive storage disposal remains separately gated.
+The remaining items are product, operational authorization, or
+production-acceptance gates.
 Request
 lifecycle, broader IA policy, and production acceptance remain separate blocked
 plan items.

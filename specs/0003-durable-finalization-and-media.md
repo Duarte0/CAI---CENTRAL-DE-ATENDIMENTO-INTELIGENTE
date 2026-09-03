@@ -1,9 +1,9 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037
-- **Versão:** 2.1
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037; retirada validada das listas legadas no issue 0052
+- **Versão:** 2.2
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049 e 0050
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049, 0050 e 0052
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
@@ -90,6 +90,16 @@ criar outra cópia Redis. O script
 IDs desconhecidos/malformados e dead-letters transitórios, e só remove valores
 validados após confirmação explícita.
 
+**Retirada coordenada do legado (2026-09-03):** o issue 0052 consolidou a
+execução no contexto `maintenance`, fora da imagem `api`. Um relatório dry-run
+completo cobre `ia_queue`/`ia_dead_letter`, as duas listas de áudio e as duas
+listas de imagem, além de `/health`, `/queues`, schema e invariantes agregadas.
+O apply é limitado a uma família, exige recovery point e confirmação exata,
+revalida uma segunda fotografia e remove apenas valores validados por `LREM`.
+O PostgreSQL continua sendo a autoridade para ciclos, transcrições, extrações,
+agendas, leases e resultados; dead-letters transitórios, entradas desconhecidas
+e malformadas continuam preservados.
+
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
 **216 testes offline aprovados e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 216
@@ -141,7 +151,7 @@ Definir a finalização por histórico DigiSac e os contratos de mídia, context
 
 ## Remoção do legado, observabilidade e verificação
 
-Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúdo sensível. `ia_due`, `ia_scheduled` e `ia_leased`, além dos contadores `audio_*` e `image_*` de due, agendado, lease, stale, completed e failed, **devem** ser derivados de PostgreSQL. As listas Redis de IA e mídia são somente visibilidade de resíduos de cutover. Testes de banco descartável **devem** cobrir paginação, fronteira, filtro/renderização, claim/lease concorrente, persistência antes do polling, agenda futura, cooldown sem claim, crash/restart sem Redis, reconciliação de mídia e áudio/imagem bloqueados e acordados no modo persistente.
+Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúdo sensível. `ia_due`, `ia_scheduled` e `ia_leased`, além dos contadores `audio_*` e `image_*` de due, agendado, lease, stale, completed e failed, **devem** ser derivados de PostgreSQL. As listas Redis de IA e mídia são somente visibilidade de resíduos de cutover e sua retirada **deve** seguir relatório completo, digests sem valores brutos, segunda fotografia e confirmação delimitada. Testes de banco descartável **devem** cobrir paginação, fronteira, filtro/renderização, claim/lease concorrente, persistência antes do polling, agenda futura, cooldown sem claim, crash/restart sem Redis, reconciliação de mídia e áudio/imagem bloqueados e acordados no modo persistente.
 
 - Uma queda entre persistência e polling é recuperável sem duplicar classificação.
 - Áudio ou imagem terminalmente falha nunca gera classificação do ciclo dependente.

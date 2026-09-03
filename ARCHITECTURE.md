@@ -246,7 +246,14 @@ legacy IA lists have no active producer or consumer and are inventoried by
 validated snapshot and retains malformed/unknown entries. Audio lists are
 inventoried by `scripts/retire_legacy_audio_queue.py`; image lists are
 inventoried by `scripts/retire_legacy_image_queue.py`. Neither is active work;
-both workers poll PostgreSQL.
+both workers poll PostgreSQL. The supported joint retirement runs in the
+Compose `maintenance` profile through
+`scripts.retire_validated_legacy_redis_queues`: it writes only SHA-256 value
+digests, captures `/health`, `/queues`, schema and aggregate PostgreSQL
+invariants, and requires a reviewed report, a second snapshot without growth
+or replacement, an approved recovery point and exact confirmation per family.
+The profile is not started by the normal Compose up and the `api` image does
+not contain the maintenance scripts.
 
 ### Transient keys
 

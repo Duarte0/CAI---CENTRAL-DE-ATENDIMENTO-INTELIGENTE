@@ -47,6 +47,32 @@ services:
     command: alembic upgrade ${ALEMBIC_TARGET_REVISION:-head}
     restart: "no"
 
+  maintenance:
+    profiles: ["maintenance"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: maintenance
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+      TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ${MAINTENANCE_REPORT_DIR:-./reports}:/reports
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    command: ["sleep", "infinity"]
+    restart: "no"
+
   api:
     build:
       context: .

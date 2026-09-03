@@ -1,4 +1,4 @@
-"""Inventory and boundedly retire legacy ``ia_queue`` entries.
+"""Inventory and boundedly retire legacy IA Redis lists.
 
 The IA worker polls PostgreSQL directly. This command never republishes work:
 it compares a bounded Redis-list snapshot with durable cycle rows and, only in
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from src.core.redis_client import create_redis_client
 
 
 LEGACY_IA_QUEUE = "ia_queue"
+LEGACY_IA_DEAD_LETTER = "ia_dead_letter"
 DEFAULT_MAX_ITEMS = 1_000
 _APPLY_CONFIRMATION = "retire-legacy-ia-queue"
 
@@ -54,6 +56,7 @@ class LegacyIAQueueInventory:
     entries_by_cycle: dict[str, int]
     durable_cycles: dict[str, dict[str, Any]]
     _removable_values: tuple[str, ...] = field(repr=False)
+    entry_digests: tuple[str, ...] = field(repr=False)
 
     @property
     def unique_cycle_ids(self) -> int:
@@ -93,6 +96,7 @@ class LegacyIAQueueInventory:
             "duplicate_entries": self.duplicate_entries,
             "malformed_entries": self.malformed_entries,
             "unknown_cycle_entries": self.unknown_cycle_entries,
+            "entry_digests": list(self.entry_digests),
             "validated_entries_eligible_for_retirement": len(
                 self._removable_values
             ),
@@ -100,6 +104,88 @@ class LegacyIAQueueInventory:
             "decision": (
                 "rerun with a larger --max-items before apply"
                 if self.truncated
+                else "apply may remove only validated durable-cycle entries"
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class LegacyIAListsInventory:
+    """Complete inventory for the IA queue and its legacy dead-letter list."""
+
+    physical_counts: dict[str, int]
+    inspected_counts: dict[str, int]
+    truncated: dict[str, bool]
+    malformed_counts: dict[str, int]
+    unknown_counts: dict[str, int]
+    entries_by_cycle: dict[str, dict[str, int]]
+    durable_cycles: dict[str, dict[str, Any]]
+    removable_values: dict[str, tuple[str, ...]] = field(repr=False)
+    entry_digests: dict[str, tuple[str, ...]] = field(repr=False)
+
+    @property
+    def physical_entries(self) -> int:
+        return sum(self.physical_counts.values())
+
+    @property
+    def inspected_entries(self) -> int:
+        return sum(self.inspected_counts.values())
+
+    @property
+    def unique_cycle_ids(self) -> int:
+        return len(self.entries_by_cycle)
+
+    @property
+    def duplicate_entries(self) -> int:
+        return self.inspected_entries - sum(self.malformed_counts.values()) - self.unique_cycle_ids
+
+    def report(self) -> dict[str, Any]:
+        cycles = []
+        for cycle_id in sorted(self.entries_by_cycle):
+            durable = self.durable_cycles.get(cycle_id)
+            cycles.append(
+                {
+                    "cycle_id": cycle_id,
+                    "physical_entries": sum(self.entries_by_cycle[cycle_id].values()),
+                    "queues": self.entries_by_cycle[cycle_id],
+                    "durable_state": (
+                        {
+                            "status": durable.get("status"),
+                            "next_attempt_at": durable.get("next_attempt_at"),
+                            "lease_expires_at": durable.get("lease_expires_at"),
+                            "completed_at": durable.get("completed_at"),
+                            "updated_at": durable.get("updated_at"),
+                        }
+                        if durable is not None
+                        else None
+                    ),
+                }
+            )
+        return {
+            "queues": {
+                key: {
+                    "physical_entries": self.physical_counts[key],
+                    "inspected_entries": self.inspected_counts[key],
+                    "truncated": self.truncated[key],
+                    "malformed_entries": self.malformed_counts[key],
+                    "unknown_cycle_entries": self.unknown_counts[key],
+                    "entry_digests": list(self.entry_digests[key]),
+                    "validated_entries_eligible_for_retirement": len(
+                        self.removable_values[key]
+                    ),
+                }
+                for key in self.physical_counts
+            },
+            "physical_entries": self.physical_entries,
+            "inspected_entries": self.inspected_entries,
+            "unique_cycle_ids": self.unique_cycle_ids,
+            "duplicate_entries": self.duplicate_entries,
+            "malformed_entries": sum(self.malformed_counts.values()),
+            "unknown_cycle_entries": sum(self.unknown_counts.values()),
+            "cycles": cycles,
+            "decision": (
+                "rerun with a larger --max-items before apply"
+                if any(self.truncated.values())
                 else "apply may remove only validated durable-cycle entries"
             ),
         }
@@ -156,7 +242,100 @@ async def inventory_legacy_ia_queue(
         entries_by_cycle=dict(Counter(cycle_id for _, cycle_id in parsed)),
         durable_cycles=durable_cycles,
         _removable_values=removable_values,
+        entry_digests=tuple(
+            hashlib.sha256(value.encode("utf-8")).hexdigest()
+            for value in inspected_values
+        ),
     )
+
+
+async def inventory_legacy_ia_lists(
+    redis: LegacyQueueRedis,
+    *,
+    cycle_lookup: CycleLookup,
+    max_items: int = DEFAULT_MAX_ITEMS,
+) -> LegacyIAListsInventory:
+    """Inventory both IA legacy lists without mutating either store."""
+    if max_items <= 0:
+        raise ValueError("max_items must be positive")
+    queues = (LEGACY_IA_QUEUE, LEGACY_IA_DEAD_LETTER)
+    physical_counts = {key: await redis.llen(key) for key in queues}
+    inspected = {
+        key: await redis.lrange(key, 0, max_items - 1) for key in queues
+    }
+    for key in queues:
+        if len(inspected[key]) > max_items:
+            raise RuntimeError("Redis returned more entries than the requested bound")
+    parsed: dict[str, list[tuple[str, str]]] = {key: [] for key in queues}
+    malformed_counts: dict[str, int] = {}
+    for key in queues:
+        malformed_counts[key] = 0
+        for value in inspected[key]:
+            cycle_id = _cycle_id_from_value(value)
+            if cycle_id is None:
+                malformed_counts[key] += 1
+            else:
+                parsed[key].append((value, cycle_id))
+    cycle_ids = list(
+        dict.fromkeys(
+            cycle_id for key in queues for _value, cycle_id in parsed[key]
+        )
+    )
+    durable_cycles = await cycle_lookup(cycle_ids)
+    entries_by_cycle: dict[str, dict[str, int]] = {}
+    unknown_counts: dict[str, int] = {}
+    removable_values: dict[str, tuple[str, ...]] = {}
+    entry_digests: dict[str, tuple[str, ...]] = {}
+    terminal_statuses = {"completed", "completed_with_warnings", "failed"}
+    for key in queues:
+        unknown_counts[key] = sum(
+            1 for _value, cycle_id in parsed[key] if cycle_id not in durable_cycles
+        )
+        for _value, cycle_id in parsed[key]:
+            counts = entries_by_cycle.setdefault(
+                cycle_id, {LEGACY_IA_QUEUE: 0, LEGACY_IA_DEAD_LETTER: 0}
+            )
+            counts[key] += 1
+        removable_values[key] = tuple(
+            value
+            for value, cycle_id in parsed[key]
+            if cycle_id in durable_cycles
+            and (
+                key == LEGACY_IA_QUEUE
+                or durable_cycles[cycle_id].get("status") in terminal_statuses
+            )
+        )
+        entry_digests[key] = tuple(
+            hashlib.sha256(value.encode("utf-8")).hexdigest()
+            for value in inspected[key]
+        )
+    return LegacyIAListsInventory(
+        physical_counts=physical_counts,
+        inspected_counts={key: len(inspected[key]) for key in queues},
+        truncated={key: physical_counts[key] > len(inspected[key]) for key in queues},
+        malformed_counts=malformed_counts,
+        unknown_counts=unknown_counts,
+        entries_by_cycle=entries_by_cycle,
+        durable_cycles=durable_cycles,
+        removable_values=removable_values,
+        entry_digests=entry_digests,
+    )
+
+
+async def retire_validated_legacy_ia_entries(
+    redis: LegacyQueueRedis,
+    inventory: LegacyIAListsInventory,
+) -> int:
+    """Remove only complete-snapshot values validated for their IA list."""
+    if any(inventory.truncated.values()):
+        raise RuntimeError(
+            "cannot apply a truncated inventory; increase --max-items first"
+        )
+    removed = 0
+    for key, values in inventory.removable_values.items():
+        for value in values:
+            removed += await redis.lrem(key, 1, value)
+    return removed
 
 
 async def retire_validated_legacy_ia_queue_entries(
@@ -182,8 +361,8 @@ async def retire_validated_legacy_ia_queue_entries(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Inventory legacy ia_queue entries and optionally retire only "
-            "entries backed by durable PostgreSQL cycles."
+            "Inventory legacy ia_queue and ia_dead_letter entries and "
+            "optionally retire only entries backed by durable PostgreSQL cycles."
         )
     )
     parser.add_argument("--max-items", type=int, default=DEFAULT_MAX_ITEMS)
@@ -211,7 +390,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         await initialize_database()
         redis = create_redis_client()
         await redis.ping()
-        inventory = await inventory_legacy_ia_queue(
+        inventory = await inventory_legacy_ia_lists(
             redis,
             cycle_lookup=get_cycles_by_public_ids,
             max_items=args.max_items,
@@ -223,7 +402,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         }
         if args.apply:
             report["removed_validated_entries"] = (
-                await retire_validated_legacy_ia_queue_entries(redis, inventory)
+                await retire_validated_legacy_ia_entries(redis, inventory)
             )
         return report
     finally:

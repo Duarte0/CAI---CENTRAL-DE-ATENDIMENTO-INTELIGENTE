@@ -43,6 +43,18 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
+FROM api AS maintenance
+
+# The maintenance image is deliberately separate from the application target.
+# It carries the bounded Redis retirement commands, while api remains free of
+# operational scripts and keeps its existing runtime surface.
+USER root
+COPY scripts/ /app/scripts/
+RUN chown -R app:app /app/scripts
+USER app
+
+CMD ["sleep", "infinity"]
+
 FROM base AS ralph
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

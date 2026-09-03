@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -59,6 +60,7 @@ class LegacyAudioInventory:
     entries_by_message: dict[str, dict[str, int]]
     durable_rows: dict[str, dict[str, Any]]
     removable_values: dict[str, tuple[str, ...]] = field(repr=False)
+    entry_digests: dict[str, tuple[str, ...]] = field(repr=False)
 
     @property
     def physical_entries(self) -> int:
@@ -108,6 +110,7 @@ class LegacyAudioInventory:
                     "truncated": self.truncated[key],
                     "malformed_entries": self.malformed_counts[key],
                     "unknown_message_entries": self.unknown_counts[key],
+                    "entry_digests": list(self.entry_digests[key]),
                     "validated_entries_eligible_for_retirement": len(
                         self.removable_values[key]
                     ),
@@ -216,6 +219,13 @@ async def inventory_legacy_audio_lists(
         entries_by_message=entries_by_message,
         durable_rows=durable_rows,
         removable_values=removable_values,
+        entry_digests={
+            key: tuple(
+                hashlib.sha256(value.encode("utf-8")).hexdigest()
+                for value in inspected[key]
+            )
+            for key in queues
+        },
     )
 
 

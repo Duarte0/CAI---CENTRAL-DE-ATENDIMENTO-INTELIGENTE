@@ -79,8 +79,9 @@ ia_worker
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
 | `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac e ciclos. |
-| `redis` | Idempotência temporária, status e resultados com TTL e filas de fluxos que ainda têm contrato Redis; não transporta mídia ativa nem é a fila persistente de finalização IA. |
+| `redis` | Idempotência temporária, status e resultados com TTL e fluxos que ainda têm contrato Redis; as listas de trabalho IA/áudio/imagem são apenas resíduo de cutover e não transportam trabalho ativo. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
+| `maintenance` | Perfil separado para inventariar e retirar, com relatório e confirmação, somente as listas Redis legadas validadas; não participa do runtime da aplicação. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação.
@@ -108,6 +109,12 @@ transitório permanece em `pending` com `next_attempt_at`; falha permanente fica
 em `failed` no PostgreSQL, sem `RPUSH`, `LPOP`, `LRANGE`, `LREM` ou dead-letter
 Redis no caminho ativo. As listas legadas são apenas evidência para o comando
 bounded `scripts.retire_legacy_image_queue`.
+
+A retirada conjunta deve usar o perfil Compose `maintenance` e
+`scripts.retire_validated_legacy_redis_queues`. O comando guarda apenas
+digests dos valores Redis e exige um relatório dry-run completo, a revisão do
+checkout, um recovery point PostgreSQL, uma segunda fotografia e confirmação
+exata por família. A imagem `api` não contém os scripts de manutenção.
 
 ## Integração Acessórias aprovada
 
@@ -756,33 +763,82 @@ docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 
 Áudio e imagem não possuem mais retry ou dead-letter ativo em Redis: `pending`,
 `next_attempt_at`, `processing`, lease, `completed` e `failed` ficam em
-`message_transcriptions` e `message_image_extractions`. Para auditar o legado
-antes de removê-lo, use os comandos bounded abaixo; o padrão é dry-run e nenhum item desconhecido ou
-malformado é apagado:
+`message_transcriptions` e `message_image_extractions`. As seis listas legadas
+(`ia_queue`, `ia_dead_letter`, as duas de áudio e as duas de imagem) são
+resíduo de cutover. O procedimento suportado usa uma imagem de manutenção
+separada, é dry-run por padrão e não apaga itens desconhecidos, malformados ou
+dead-letters transitórios.
+
+Prepare um diretório de relatório gravável pelo usuário do container e capture
+a revisão do checkout. O valor de `--max-items` deve ser maior que o tamanho
+físico observado em todas as listas:
 
 ```bash
-PYTHONPATH=/app python -m scripts.retire_legacy_audio_queue --max-items 1000
-PYTHONPATH=/app python -m scripts.retire_legacy_audio_queue \
-  --recover-transient --max-items 1000
+REPORT_DIR=$(mktemp -d)
+export MAINTENANCE_REPORT_DIR="$REPORT_DIR"
+REVISION=$(git rev-parse HEAD)
+OPERATOR="nome-do-operador"
+REPORT_NAME="cai-legacy-queues-dry-run.json"
+MAX_ITEMS=50000
+
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --dry-run --operator "$OPERATOR" --revision "$REVISION" \
+  --compose-project cai --max-items "$MAX_ITEMS" \
+  --api-url http://api:8000 --report "/reports/$REPORT_NAME"
 ```
 
-Somente após revisar o relatório, confirmar que o worker PostgreSQL está
-saudável e repetir uma fotografia completa, a retirada exige a confirmação
-explícita `--apply --confirm retire-legacy-audio-queue`. Dead-letters
-transitórios importados permanecem como evidência até a transcrição ser
-persistida com sucesso.
-
-Para imagens, o procedimento equivalente é:
+Revise e arquive o JSON antes de qualquer apply. Ele contém `/health`,
+`/queues`, schema, invariantes PostgreSQL, contagens, estados, duplicidades e
+digests SHA-256; não contém valores Redis, mensagens, payloads ou segredos.
+Registre também o status dos serviços:
 
 ```bash
-PYTHONPATH=/app python -m scripts.retire_legacy_image_queue --max-items 1000
-PYTHONPATH=/app python -m scripts.retire_legacy_image_queue \
-  --recover-transient --max-items 1000
+docker compose -p cai ps api ia_worker audio_worker image_worker
 ```
 
-Após revisar um inventário completo e confirmar o worker, a retirada exige
-`--apply --confirm retire-legacy-image-queue`; IDs desconhecidos, itens
-malformados e dead-letters transitórios não são apagados por inferência.
+Faça o backup ou registre o recovery point aprovado antes de aplicar:
+
+```bash
+BACKUP="$REPORT_DIR/cai-$(date -u +%Y%m%d-%H%M%S).dump"
+docker compose -p cai exec -T postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$BACKUP"
+```
+
+Aplique uma família por vez. O coordenador revalida a segunda fotografia e
+recusa crescimento, troca de valores, snapshot truncado, runtime indisponível
+ou relatório de outro operador/revisão. As confirmações são deliberadamente
+distintas:
+
+```bash
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --apply --family ia --confirm retire-legacy-ia-queue \
+  --operator "$OPERATOR" --revision "$REVISION" --compose-project cai \
+  --max-items "$MAX_ITEMS" --api-url http://api:8000 \
+  --backup-reference "$BACKUP" --report "/reports/$REPORT_NAME"
+
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --apply --family image --confirm retire-legacy-image-queue \
+  --operator "$OPERATOR" --revision "$REVISION" --compose-project cai \
+  --max-items "$MAX_ITEMS" --api-url http://api:8000 \
+  --backup-reference "$BACKUP" --report "/reports/$REPORT_NAME"
+
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --apply --family audio --confirm retire-legacy-audio-queue \
+  --operator "$OPERATOR" --revision "$REVISION" --compose-project cai \
+  --max-items "$MAX_ITEMS" --api-url http://api:8000 \
+  --backup-reference "$BACKUP" --report "/reports/$REPORT_NAME"
+```
+
+Cada `LREM` remove somente uma ocorrência exata previamente validada. O
+comando não faz provider call, republicação, recuperação automática de
+dead-letter, escrita PostgreSQL, `FLUSHDB`, `FLUSHALL` ou remoção de
+`processed:*`, `ia_status:*`, `ia_result:*`, `ia_processing` e outras famílias.
+Após cada família, revise o relatório atualizado; em caso de interrupção,
+gere novo dry-run e reavalie o restante antes de continuar.
 
 Resíduos das antigas chaves Redis de buffer/debounce podem ser auditados e
 removidos somente por uma operação manual, limitada e revisada. O dry-run
