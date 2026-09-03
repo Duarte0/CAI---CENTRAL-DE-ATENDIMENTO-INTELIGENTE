@@ -98,6 +98,17 @@ complete locally; production acceptance remains separate._
   16 with head `0025_webhook_event_keys`; the named runtime imported 171 live
   markers and retained all 171 Redis source keys. This is named-runtime
   evidence, not a production-wide claim.
+- **[implemented | observation pending | current checkout | 2026-09-03] Issue
+  0054 IA Redis compatibility sunset.** `ia_worker` now persists and exposes
+  status/result only through PostgreSQL, with no Redis client, `SET`, or
+  `RESULT_TTL_SECONDS` wiring. Public routes remain unchanged; OpenAPI and
+  worker regression coverage make the dependency boundary explicit. The
+  maintenance-only `scripts.retire_ia_redis_compatibility` command inventories
+  only `ia_status:*`/`ia_result:*`, records sanitized TTL/value digests and
+  durable matches, and requires a full 86400-second observation window plus an
+  explicit historical decision before deletion. The implementation is ready
+  for the named runtime handoff, but the issue remains open until that window
+  and the bounded apply are verified.
 
 ### Implemented with bounded evidence
 
@@ -131,8 +142,8 @@ complete locally; production acceptance remains separate._
 - **[open | staged operational decommission]** Redis cleanup and removal
   (issues 0054–0056; issues 0052–0053 completed). Issue 0052 retired only fully
   inventoried legacy IA, audio and image queue entries; issue 0053 moved generic webhook idempotency
-  from Redis to a PostgreSQL ledger; issue 0054 sunsets IA status/result
-  compatibility keys; issue 0055 removes Redis from the application runtime
+  from Redis to a PostgreSQL ledger; issue 0054 stops IA status/result
+  compatibility writes and starts their required sunset observation; issue 0055 removes Redis from the application runtime
   and Compose; issue 0056 disposes the retained Redis volume only after an
   explicit observation window and backup review. The sequence preserves
   retained `processed:*`, durable PostgreSQL state, historical recovery tooling and
@@ -257,9 +268,9 @@ complete locally; production acceptance remains separate._
    - issue 0053 is completed: it replaces Redis webhook idempotency with an
      expiring, concurrency-safe PostgreSQL ledger and coordinates the
      `processed:*` handoff before the new API starts;
-   - issue 0054 stops and later removes IA `ia_status:*`/`ia_result:*`
-     compatibility views after historical backfill disposition and a TTL
-     observation window;
+   - issue 0054 is implemented: the IA worker no longer depends on Redis or
+     writes `ia_status:*`/`ia_result:*`; the maintenance report, historical
+     disposition and full TTL observation must finish before its bounded apply;
    - issue 0055 removes Redis from API/IA runtime, health, queue observability,
      dependencies and Compose while retaining storage for rollback;
    - issue 0056 permanently disposes the exact Redis container/storage target
@@ -273,11 +284,13 @@ complete locally; production acceptance remains separate._
    `FLUSHALL`, broad Docker volume cleanup, provider replay or deletion of
    PostgreSQL business data.
 
-   Current runtime evidence is recorded in issues 0052 and 0053: the final dry-run found
+   Current runtime evidence is recorded in issues 0052–0054: the final dry-run found
    zero entries in all six retired lists after removing 17,164 IA and 71 image
    entries. The protected Redis families and PostgreSQL durable totals remain
    outside this issue's deletion boundary; issue 0053 retains legacy
-   `processed:*` markers for their natural TTL and does not delete them.
+   `processed:*` markers for their natural TTL and does not delete them. Issue
+   0054 likewise retains both compatibility families until its observation gate
+   is complete.
 
 ## Dependencies, discrepancies, and sequencing
 
@@ -309,12 +322,14 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issues 0048–0052 are
-complete locally, with issue 0052 also accepted in the named `cai` runtime.
-Issues 0054–0056 define the remaining staged Redis cleanup and decommission
-work; destructive storage disposal remains separately gated. Issue 0053 is
-complete locally and in the named `cai` runtime, with its legacy marker source
-retained for the following compatibility/decommission stages.
+shell/session/BFF, read, and command-action increments. Issues 0048–0053 are
+complete locally, with issues 0052–0053 also accepted in the named `cai`
+runtime. Issue 0054 is implemented locally and ready for the named runtime
+handoff, but its destructive compatibility-key apply remains gated by the
+complete observation window. Issues 0055–0056 define the remaining staged Redis
+decommission work; destructive storage disposal remains separately gated. Issue
+0053 is complete locally and in the named `cai` runtime, with its legacy marker
+source retained for the following compatibility/decommission stages.
 The remaining items are product, operational authorization, or
 production-acceptance gates.
 Request

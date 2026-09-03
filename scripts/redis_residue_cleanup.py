@@ -96,6 +96,12 @@ ACTIVE_QUEUE_KEYS: tuple[str, ...] = (
 
 PRESERVED_KEY_PATTERNS: tuple[str, ...] = (
     "processed:*",
+)
+
+# These families have a separate sunset contract in issue 0054.  They remain
+# visible in this general inventory so a queue cleanup cannot accidentally
+# delete them, but retirement is owned by the dedicated compatibility command.
+RETIRED_COMPATIBILITY_KEY_PATTERNS: tuple[str, ...] = (
     "ia_status:*",
     "ia_result:*",
 )
@@ -159,6 +165,7 @@ class ProcessingInventory:
 class RedisInventory:
     families: Mapping[str, KeyFamilyInventory]
     protected: Mapping[str, KeyFamilyInventory]
+    retired_compatibility: Mapping[str, KeyFamilyInventory]
     processing: ProcessingInventory
     queue_lengths: Mapping[str, int]
 
@@ -169,6 +176,10 @@ class RedisInventory:
             },
             "protected": {
                 pattern: family.report() for pattern, family in self.protected.items()
+            },
+            "retired_compatibility": {
+                pattern: family.report()
+                for pattern, family in self.retired_compatibility.items()
             },
             "ia_processing": self.processing.report(),
             "queue_lengths": dict(self.queue_lengths),
@@ -284,10 +295,22 @@ async def collect_inventory(
             KeyFamilySpec(pattern, "current Redis contract", "active"),
             max_keys_per_pattern,
         )
+    retired_compatibility: dict[str, KeyFamilyInventory] = {}
+    for pattern in RETIRED_COMPATIBILITY_KEY_PATTERNS:
+        retired_compatibility[pattern] = await _family_inventory(
+            redis,
+            KeyFamilySpec(
+                pattern,
+                "issue 0054 dedicated sunset procedure",
+                "retired-compatibility",
+            ),
+            max_keys_per_pattern,
+        )
     queue_lengths = {key: await redis.llen(key) for key in ACTIVE_QUEUE_KEYS}
     return RedisInventory(
         families=families,
         protected=protected,
+        retired_compatibility=retired_compatibility,
         processing=await _inspect_processing(redis, max_keys_per_pattern),
         queue_lengths=queue_lengths,
     )

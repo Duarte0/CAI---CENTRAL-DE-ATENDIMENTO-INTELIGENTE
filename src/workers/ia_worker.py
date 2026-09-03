@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 import logging
 import time
@@ -9,7 +8,6 @@ from typing import Any, Dict, cast
 from groq import Groq
 
 from src.core.config import settings
-from src.core.analysis import with_protocol
 from src.core.acessorias_requests import create_request_for_cycle
 from src.core.acessorias_preparation import prepare_cycle_for_request
 from src.core.db import (  # noqa: F401
@@ -41,7 +39,6 @@ from src.core.finalization import (
     render_context,
 )
 from src.core.ia_classification import build_prompt, parse_result, system_prompt
-from src.core.redis_client import AsyncRedis, create_redis_client
 from src.core.provider_retry import (
     ProviderRetryWindowActive,
     TransientProviderError,
@@ -54,9 +51,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class IAWorker:
-    def __init__(self, redis_client: AsyncRedis):
-        self.redis = redis_client
-
+    def __init__(self):
         # Usa GROQ_API_KEY
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
@@ -77,7 +72,6 @@ class IAWorker:
                 self.max_tokens,
             )
         self.max_retries = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
-        self.result_ttl_seconds = int(os.getenv("RESULT_TTL_SECONDS", 86400))
         self.prompt_version = settings.prompt_version
         self.provider_blocked_until = 0.0
         self.provider_window_resume_pending = False
@@ -643,27 +637,6 @@ class IAWorker:
                 cycle_id,
                 type(exc).__name__,
             )
-        result = with_protocol(result, cycle.get("protocol"))
-        if identity.public_id is not None:
-            result["classification_public_id"] = str(identity.public_id)
-        result["cycle_id"] = cycle_id
-        await self.redis.set(
-            f"ia_result:{conversation_id}",
-            json.dumps(result, ensure_ascii=False),
-            ex=self.result_ttl_seconds,
-        )
-        await self.redis.set(
-            f"ia_status:{conversation_id}",
-            json.dumps(
-                {
-                    "conversation_id": conversation_id,
-                    "cycle_id": cycle_id,
-                    "status": final_status,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ),
-            ex=self.result_ttl_seconds,
-        )
         logger.info(
             "Conversation cycle completed: cycle_id=%s conversation_id=%s "
             "status=%s message_count=%s audio_count=%s image_count=%s "
@@ -997,18 +970,12 @@ class IAWorker:
 
 async def main() -> None:
     """Função principal"""
-    redis_client = None
     try:
         await initialize_database()
-        redis_client = create_redis_client()
-        await redis_client.ping()
-        logger.info("✅ Conectado ao Redis")
-        await IAWorker(redis_client).process()
+        await IAWorker().process()
     except Exception as e:
         logger.error(f"❌ Erro de inicialização/execução do worker: {e}")
     finally:
-        if redis_client is not None:
-            await redis_client.aclose()
         await close_database()
 
 

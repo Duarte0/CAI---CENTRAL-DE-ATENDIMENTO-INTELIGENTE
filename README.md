@@ -66,8 +66,7 @@ ia_worker
   ├─ aguarda/reagenda mídias pendentes de forma durável
   ├─ divide e resume contextos acima do limite seguro
   ├─ classifica a intenção do cliente com Groq
-  └─ grava classificação, snapshot e estado durável no PostgreSQL; publica
-     apenas status/resultados transitórios compatíveis no Redis
+  └─ grava classificação, snapshot, status e resultado duráveis no PostgreSQL
 ```
 
 ### Componentes
@@ -79,9 +78,9 @@ ia_worker
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
 | `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac, ciclos e ledger de idempotência do webhook. |
-| `redis` | Status/resultados com TTL e fluxos que ainda têm contrato Redis; `processed:*` é somente resíduo de handoff e as listas de trabalho IA/áudio/imagem não transportam trabalho ativo. |
+| `redis` | Coordenação transitória e famílias legadas/handoff ainda retidas; `ia_status:*`/`ia_result:*` não têm produtor após o issue 0054 e `processed:*` não é lido pelo caminho ativo. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
-| `maintenance` | Perfil separado para inventariar e retirar, com relatório e confirmação, somente as listas Redis legadas validadas; não participa do runtime da aplicação. |
+| `maintenance` | Perfil separado para inventariar e retirar, com relatório e confirmação, somente famílias Redis explicitamente allowlisted; inclui o sunset das views IA do issue 0054 e não participa do runtime da aplicação. |
 
 RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
 camada transitória de transporte e coordenação. A decisão genérica de
@@ -397,7 +396,6 @@ Variáveis principais:
 | `MAX_TOKENS` | Orçamento solicitado à classificação; o worker impõe mínimo efetivo de `1000`. | `500` no `.env.example`; `3000` se ausente |
 | `PROMPT_VERSION` | Identificador do prompt persistido. | `v4` |
 | `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas do worker de classificação IA. | `3` |
-| `RESULT_TTL_SECONDS` | TTL de status/resultados transitórios no Redis. | `86400` |
 | `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por mídia. | `30` |
 | `CONTENT_RECOVERY_LEASE_SECONDS` | Lease de recuperação de mídia. | `300` |
 | `CONTENT_RECONCILE_INTERVAL_SECONDS` | Intervalo do reconciliador de mídia. | `5` |
@@ -424,8 +422,8 @@ docker compose -p cai logs -f api ia_worker audio_worker image_worker
 ```
 
 O Compose inicia PostgreSQL, Redis, aplica `alembic upgrade head` no serviço
-`migrate` e só então libera API e workers. `audio_worker` e `image_worker`
-dependem somente de PostgreSQL e da migration; API e IA continuam usando Redis
+`migrate` e só então libera API e workers. `ia_worker`, `audio_worker` e
+`image_worker` dependem somente de PostgreSQL e da migration; a API ainda usa Redis
 conforme seus contratos atuais. A API fica em
 `http://localhost:8000`; PostgreSQL e Redis também são publicados localmente no
 Compose atual.
@@ -505,11 +503,11 @@ não mapeadas de Redis ou servidor não têm um envelope de negócio estável.
 | `POST` | `/webhook/digisac` | Recebe eventos DigiSac; normalmente responde `202`. |
 | `GET` | `/health` | Verifica Redis e PostgreSQL. |
 | `GET` | `/queues` | Contadores das filas, dead-letters e ciclos por estado. |
-| `GET` | `/conversations/{id}/status` | Estado persistente do ciclo mais recente. |
-| `GET` | `/conversations/{id}/result` | Resultado mais recente disponível. |
+| `GET` | `/conversations/{id}/status` | Estado persistente do ciclo mais recente, lido do PostgreSQL. |
+| `GET` | `/conversations/{id}/result` | Resultado mais recente disponível, lido do PostgreSQL. |
 | `GET` | `/conversations/{id}/cycles` | Lista ciclos persistidos da conversa. |
-| `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo. |
-| `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo específico. |
+| `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo, lido do PostgreSQL. |
+| `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo, lido do PostgreSQL. |
 
 As oito rotas acima são a superfície HTTP operacional original e continuam sem
 autenticação adicional nas consultas. A administração da identidade Acessórias
@@ -619,11 +617,21 @@ PYTHONPATH=/app python -m src.utils.migrate_sqlite_to_postgres \
 
 O migrador abre o SQLite somente para leitura, recusa destino já populado,
 valida o conteúdo e faz rollback completo em caso de erro. Resultados históricos
-que ainda estejam no Redis podem ser importados de forma idempotente com:
+que ainda estejam no Redis devem primeiro ser inventariados sem valores e
+reconciliados com PostgreSQL. Se houver resultado válido sem cópia durável, o
+importador idempotente só pode ser executado no perfil `maintenance`, após
+revisão do relatório:
 
 ```bash
-docker compose -p cai exec ia_worker python -m src.utils.backfill_redis_history
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m src.utils.backfill_redis_history
 ```
+
+O comando `python -m scripts.retire_ia_redis_compatibility --dry-run` é a
+fonte do relatório de sunset: ele registra somente contagens, buckets de TTL,
+digests de chave/entrada e matches duráveis. O `--apply` exige a janela completa
+de `RESULT_TTL_SECONDS` (86400 segundos por padrão), decisão histórica explícita
+e confirmação exata; remove somente `ia_status:*` e `ia_result:*`.
 
 ## Testes e validação
 
@@ -777,6 +785,16 @@ apagar `processed:*`, e a API/IA/audio/image foram recriados a partir de
 176 linhas vivas (171 importadas e cinco novas entregas), enquanto 171 marcadores
 Redis permaneceram retidos. Checksums e o recovery point estão na issue 0053.
 
+Na implementação do issue 0054 em 2026-09-03, o `ia_worker` deixou de depender
+do Redis e de publicar `ia_status:*`/`ia_result:*`; a classificação e o estado
+terminal continuam sendo persistidos no PostgreSQL antes da disponibilidade por
+API. O inventário e a eventual retirada dessas duas famílias foram isolados no
+comando de manutenção `scripts.retire_ia_redis_compatibility`, com digests de
+entrada, buckets de TTL, reconciliação de resultado durável, confirmação exata e
+janela obrigatória de 86400 segundos. A implementação passou os testes focados;
+o apply permanece deliberadamente pendente até a janela completa e não removeu
+`processed:*`, filas, `ia_processing` ou dados PostgreSQL.
+
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
 estruturados e motivos sanitizados, nunca o corpo bruto da requisição ou a
@@ -803,6 +821,24 @@ docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 resíduo de cutover. O procedimento suportado usa uma imagem de manutenção
 separada, é dry-run por padrão e não apaga itens desconhecidos, malformados ou
 dead-letters transitórios.
+
+### Sunset das views IA Redis (issue 0054)
+
+Após parar o worker antigo e iniciar a revisão sem o produtor Redis, capture e
+arquive um relatório bounded no perfil `maintenance`:
+
+```bash
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_ia_redis_compatibility \
+  --dry-run --report /reports/ia-redis-compatibility.json
+```
+
+O relatório não contém chaves, valores, conteúdo de conversa ou payloads; ele
+registra somente contagens, TTLs agrupados, digests e matches PostgreSQL. Depois
+de pelo menos um TTL completo e revisão histórica explícita, o apply exige
+`--confirm retire-ia-redis-compatibility`, `--historical-decision
+all-valid-results-durable` e `--observation-completed-at`. A operação verifica
+uma segunda fotografia e remove somente `ia_status:*` e `ia_result:*`.
 
 ### Handoff da idempotência de webhook (issue 0053)
 
@@ -915,8 +951,9 @@ PYTHONPATH=/app python -m scripts.redis_residue_cleanup \
 O comando só pode apagar as seis famílias explicitamente allowlisted pelo
 issue 0037, uma chave por vez; nunca usa `FLUSHDB`, `FLUSHALL` ou um glob
 genérico. Ele revalida Redis, filas, PostgreSQL, leases, agendas e marcadores
-antes e depois, preservando filas/dead-letters ativos, `processed:*`,
-`ia_status:*`, `ia_result:*` e todo o estado durável PostgreSQL.
+antes e depois, preservando filas/dead-letters ativos, `processed:*`, as views
+IA aposentadas (que pertencem ao comando específico do issue 0054) e todo o
+estado durável PostgreSQL.
 
 Backup:
 

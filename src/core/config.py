@@ -39,7 +39,6 @@ class Settings(BaseSettings):
 
     # Worker Settings
     ia_timeout_seconds: int = 60
-    result_ttl_seconds: int = 86400
 
     # AI Settings
     model_name: str = "openai/gpt-oss-120b"

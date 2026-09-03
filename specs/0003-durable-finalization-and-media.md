@@ -1,9 +1,9 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037; retirada validada das listas legadas no issue 0052
-- **Versão:** 2.2
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037; retirada validada das listas legadas no issue 0052; views IA de status/resultado sem produtor Redis e sunset bounded no issue 0054
+- **Versão:** 2.3
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049, 0050 e 0052
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049, 0050, 0052 e 0054
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
@@ -100,6 +100,17 @@ O PostgreSQL continua sendo a autoridade para ciclos, transcrições, extraçõe
 agendas, leases e resultados; dead-letters transitórios, entradas desconhecidas
 e malformadas continuam preservados.
 
+**Aposentadoria das views IA Redis (2026-09-03):** o issue 0054 removeu a
+publicação de `ia_status:*`/`ia_result:*` do `ia_worker`; classificação, ciclo,
+status e resultado permanecem no PostgreSQL. A consulta pública não usa essas
+views e o worker IA não depende mais de Redis. O comando
+`scripts.retire_ia_redis_compatibility` foi separado para a imagem/profile
+`maintenance`, com inventário bounded, buckets de TTL, digests sem valores,
+reconciliação com classificação durável e apply condicionado a decisão histórica,
+segunda fotografia e janela completa de TTL. A operação de remoção ainda não foi
+executada; filas legadas, `processed:*`, `ia_processing` e dados PostgreSQL estão
+fora da fronteira.
+
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
 **216 testes offline aprovados e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 216
@@ -162,8 +173,11 @@ Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúd
 O modo Redis-buffer, a flag, suas chaves, debounce, tratamento no worker e
 cobertura específica foram removidos. A fila Redis persistente de finalização
 IA também foi retirada: somente o fluxo por histórico com polling/lease
-PostgreSQL permanece. Redis continua transporte/coordenação transitória para
-fluxos que ainda o requerem; áudio e imagem não dependem mais de Redis.
+PostgreSQL permanece. As views IA de status/resultado deixaram de ser publicadas
+no Redis pelo issue 0054; Redis continua somente para coordenação/transporte de
+fluxos que ainda o requerem, e áudio, imagem e finalização IA não dependem mais
+de Redis. Resíduos históricos dessas views só podem ser retirados pelo comando
+bounded de maintenance após o período de observação definido.
 Resíduos históricos não ativos são tratados somente por
 auditoria manual bounded; `ia_processing`, itens malformados, IDs desconhecidos
 e dead-letters transitórios não importados não são apagados por inferência.

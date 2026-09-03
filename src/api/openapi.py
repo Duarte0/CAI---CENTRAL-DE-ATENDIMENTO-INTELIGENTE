@@ -764,7 +764,8 @@ def _decorate_operations(document: dict[str, Any]) -> None:
     )
 
     conversation_status_description = (
-        "Returns the latest persisted cycle state. conversation_id is the external "
+        "Returns the latest persisted PostgreSQL cycle state; this operation does "
+        "not read the retired Redis compatibility view. conversation_id is the external "
         "DigiSac identifier and cycle_id is its public UUID. An accepted webhook does "
         "not imply a terminal state or an available result."
     )
@@ -812,7 +813,9 @@ def _decorate_operations(document: dict[str, Any]) -> None:
     )
     result_description = (
         "Returns the latest classification projection when classification_public_id "
-        "is available. A terminal cycle and a classification result are separate facts."
+        "is available. The projection is read from PostgreSQL and does not depend on "
+        "the retired ia_result:* Redis compatibility view. A terminal cycle and a "
+        "classification result are separate facts."
     )
     operation(
         "/conversations/{conversation_id}/result",
@@ -876,7 +879,7 @@ def _decorate_operations(document: dict[str, Any]) -> None:
             ] = "Maximum cycles to return; default 50 and effective database clamp 1-100. Type errors return 422."
 
     cycle_status_description = (
-        "Returns the persisted cycle row identified by public_id. The path value is "
+        "Returns the persisted PostgreSQL cycle row identified by public_id. The path value is "
         "named cycle_id but the handler does not validate its UUID format."
     )
     operation(
@@ -902,10 +905,11 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         tag="Ciclos",
         summary="Get a cycle classification result",
         description=(
-            "Returns the classification projection for a cycle when its "
+            "Returns the PostgreSQL classification projection for a cycle when its "
             "classification_public_id is available. completed and "
             "completed_with_warnings are terminal states, but status alone does "
-            "not guarantee result availability."
+            "not guarantee result availability; the retired ia_result:* Redis "
+            "compatibility view is not used."
         ),
         responses={
             "200": _response(

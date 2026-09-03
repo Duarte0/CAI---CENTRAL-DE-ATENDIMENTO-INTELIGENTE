@@ -29,6 +29,10 @@ COPY main.py /app/main.py
 COPY alembic/ /app/alembic/
 COPY alembic.ini /app/alembic.ini
 
+# Historical Redis backfill is a maintenance-only tool. Keep it out of the
+# application image so a normal API/worker container cannot run the importer.
+RUN rm /app/src/utils/backfill_redis_history.py
+
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -50,7 +54,9 @@ FROM api AS maintenance
 # operational scripts and keeps its existing runtime surface.
 USER root
 COPY scripts/ /app/scripts/
+COPY src/utils/backfill_redis_history.py /app/src/utils/backfill_redis_history.py
 RUN chown -R app:app /app/scripts
+RUN chown app:app /app/src/utils/backfill_redis_history.py
 USER app
 
 CMD ["sleep", "infinity"]

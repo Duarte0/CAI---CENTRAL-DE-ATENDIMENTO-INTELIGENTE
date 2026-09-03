@@ -27,6 +27,9 @@ def test_ia_worker_has_no_active_redis_finalization_transport() -> None:
     source = inspect.getsource(ia_worker.IAWorker)
     assert "ia_queue" not in source
     assert "ia_dead_letter" not in source
+    assert "ia_status:" not in source
+    assert "ia_result:" not in source
+    assert "self.redis" not in source
 
 
 @pytest.mark.asyncio

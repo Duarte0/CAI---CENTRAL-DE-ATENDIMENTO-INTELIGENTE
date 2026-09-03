@@ -52,13 +52,13 @@ flowchart LR
 | \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, PostgreSQL webhook-idempotency decision, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the remaining pipeline; generic webhook idempotency, contact hydration requests, administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
-| \`ia_worker\` | Consumes persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, and classifications; Redis queues/results. |
+| \`ia_worker\` | Polls persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, classifications, status and results; no Redis dependency after issue 0054. |
 | \`audio_worker\` | Polls due audio rows, downloads audio from DigiSac, calls Groq transcription, and persists status/result. | PostgreSQL reservation, schedule, claim, lease, retry and result; no Redis dependency. |
 | \`image_worker\` | Polls due image rows, downloads image data, calls Groq vision, and persists extracted text/status. | PostgreSQL reservation, schedule, claim, lease, retry and result; no Redis dependency. |
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
 | \`acessorias_directory\` | Acquires and reconciles the Acessórias company, contact, department, and relationship directory. | PostgreSQL snapshot and synchronization executions; provider access is configuration-backed. |
 | \`postgres\` | Source of truth for analysis, media state, assignment history, DigiSac/Acessórias directory data, persistent cycles, and generic webhook idempotency. | PostgreSQL 16, managed by Alembic. |
-| \`redis\` | Remaining transient status/result views and coordination for API/IA flows. | Redis 7 with AOF in Compose; not required by audio/image workers or webhook idempotency. |
+| \`redis\` | Remaining transient coordination and retained handoff/legacy families until the later runtime decommission. | Redis 7 with AOF in Compose; not required by IA, audio or image workers after issue 0054, nor by webhook idempotency. |
 | \`migrate\` | Applies the configured Alembic revision before application services start. | No application schema creation at runtime. |
 
 The application uses one PostgreSQL connection pool per process. Database
@@ -230,9 +230,10 @@ prompt.
 Redis carries work and short-lived coordination, not the durable business
 record. Generic webhook idempotency is not a Redis contract after issue 0053:
 the active API records the deterministic digest in PostgreSQL, and a database
-failure fails closed before a successful webhook acknowledgement. Redis
-remains available for separate status/result compatibility views and other
-explicitly retained flows until issues 0054–0056 complete.
+failure fails closed before a successful webhook acknowledgement. Issue 0054
+removes the IA status/result producer and makes those two families
+maintenance-only. Redis remains available for other explicitly retained flows
+until issues 0055–0056 complete.
 
 ### Queues and dead letters
 
@@ -265,7 +266,10 @@ Important retained or handoff key families include:
 
 - \`processed:*\` as retained legacy webhook markers during the coordinated
   handoff; they are not read by the active idempotency service after cutover;
-- TTL-based \`ia_status:*\` and \`ia_result:*\` compatibility views.
+- \`ia_status:*\` and \`ia_result:*\` are retired compatibility families, with no
+  active producer or public consumer after issue 0054. Their bounded inventory,
+  historical disposition and eventual deletion belong only to
+  \`scripts.retire_ia_redis_compatibility\` after the full TTL observation window.
 
 The former buffer/debounce families are not application paths. Issue 0037's
 manual \`scripts/redis_residue_cleanup.py\` command inventories those explicit
@@ -273,7 +277,8 @@ families with Redis/PostgreSQL state before deletion, removes only reviewed
 orphaned keys one at a time, and retains the ambiguous \`ia_processing\` list.
 It does not alter durable PostgreSQL state or the active queue/dead-letter
 families above. The historical \`src/utils/backfill_redis_history.py\` utility
-remains available because migration/backfill code is not inferred to be dead.
+remains available only in the maintenance boundary; the compatibility inventory
+must establish its historical disposition before any deletion.
 
 ## 5. Finalization modes
 
@@ -300,8 +305,8 @@ The IA worker then:
 8. waits for scheduled media at \`next_attempt_at\` when required;
 9. renders the context and summarizes oversized context when necessary;
 10. calls Groq and persists the classification, snapshot, and result;
-11. transitions the cycle to a terminal state and publishes compatibility
-    status/result data where applicable.
+11. transitions the cycle to a terminal state; status and result projections
+    remain available from PostgreSQL and no Redis compatibility view is written.
 12. resolves the canonical ticket contact identity and persists the cycle outcome;
 13. evaluates and persists the cycle-scoped department-mapping snapshot;
 14. evaluates the persisted classification confidence on the `0..10` business

@@ -1,10 +1,11 @@
 # SPEC-0006 — Documentação da API HTTP e contrato OpenAPI
 
-- **Status:** implementado; delta v1.6 documenta as métricas duráveis de áudio/imagem, a visibilidade transitória das listas legadas, a fronteira do comando de manutenção do issue 0052 e a idempotência PostgreSQL do webhook do issue 0053
-- **Versão:** 1.6
+- **Status:** implementado; delta v1.7 documenta as métricas duráveis de áudio/imagem, a visibilidade transitória das listas legadas, a fronteira do comando de manutenção do issue 0052, a idempotência PostgreSQL do webhook do issue 0053 e a independência PostgreSQL das consultas de status/resultado após o issue 0054
+- **Versão:** 1.7
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
 - **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13;
-  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012; issues 0049–0050 e 0053
+  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012; issues 0049–0050,
+  0053 e 0054
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004, SPEC-0005 e
   SPEC-0012
 
@@ -84,7 +85,7 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
 5. `GET /cycles/{cycle_id}/status` **must** documentar todos e somente os campos serializados da linha de `conversation_processing_cycles` atual: `id`, `public_id`, `conversation_id`, `sequence_number`, `protocol`, `cycle_started_at`, `ticket_closed_at`, `cycle_start_strategy`, `open_event_key`, `close_event_key`, `status`, `attempt_count`, `transient_retry_count`, `error_phase`, `error_message`, `warning_count`, `snapshot_json`, `rendered_context`, `model_context`, `context_reduction_applied`, `context_reduction_json`, `history_recovery_attempt`, `history_page_count`, `processing_time_ms`, `classification_id`, `next_attempt_at`, `enqueued_at`, `lease_owner`, `lease_expires_at`, `created_at`, `updated_at` e `completed_at`. UUIDs e timestamps **must** ter formatos OpenAPI apropriados; campos JSON permanecem objetos/listas de forma permissiva quando o código não fixa sua estrutura. Ciclo inexistente retorna `404` com `{"detail":"Cycle not found"}`.
 6. `GET /cycles/{cycle_id}/result` **must** reutilizar o schema de resultado de conversa. Ciclo inexistente retorna `404` com `{"detail":"Cycle not found"}`; ciclo existente sem classificação retorna `404` com `{"detail":"Cycle result not available"}`. `completed` e `completed_with_warnings` são terminais, mas a disponibilidade é determinada pelo `classification_public_id` que o handler consulta, não somente pelo texto do status.
 7. Para resultados de classificação, o schema reutilizável **must** refletir o JSON retornado pelo `LEFT JOIN`, inclusive nulabilidade de classificação antes da guarda interna. A taxonomia efetivamente persistida/produzida para `intent_type` é `question`, `problem`, `request`, `complaint`, `payment`, `billing`, `financial`, `document`, `protocol` e `other`; `department` e `agent` são listas construídas pela aplicação. Exemplos de sucesso **must** usar uma classificação concluída e dados fictícios.
-8. Os quatro endpoints de resultado/status **must** explicar estados intermediários versus terminais, disponibilidade posterior do resultado e `404`; não devem inferir SLA, polling interval ou êxito de processamento a partir de `202` do webhook. Parâmetros path inválidos não possuem validação de formato declarada no handler atual; a documentação **must not** inventar `422` de UUID para eles.
+8. Os quatro endpoints de resultado/status **must** explicar estados intermediários versus terminais, disponibilidade posterior do resultado e `404`; não devem inferir SLA, polling interval ou êxito de processamento a partir de `202` do webhook. Status e resultado são projeções dos repositórios PostgreSQL e não dependem das views Redis aposentadas `ia_status:*`/`ia_result:*`. Parâmetros path inválidos não possuem validação de formato declarada no handler atual; a documentação **must not** inventar `422` de UUID para eles.
 
 ## Segurança, privacidade e compatibilidade
 
@@ -139,3 +140,10 @@ compileall, Pyright estrito, **238 passed, 76 skipped** offline, Alembic
 `0022_identity_discovery_command` e **76 passed, 238 deselected** no PostgreSQL
 16 descartável. Os skips e a matriz descartável não comprovam Redis, DigiSac,
 Groq, secret manager, réplicas, deployment ou produção.
+
+No issue 0054, as descrições OpenAPI de status e resultado passaram a declarar
+explicitamente a projeção PostgreSQL e a ausência de dependência das views
+`ia_status:*`/`ia_result:*`. Os handlers e respostas não foram alterados; as
+rotas continuam com os mesmos códigos, `404` e campos. `/health` e `/queues`
+continuam documentando suas dependências Redis porque a retirada do Redis da API
+é o escopo posterior do issue 0055.

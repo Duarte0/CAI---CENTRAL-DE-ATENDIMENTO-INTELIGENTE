@@ -1,14 +1,14 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; issue 0053 moveu a idempotência genérica de webhook para PostgreSQL; decisões de produto registradas abaixo
-- **Versão:** 1.10
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; issue 0053 moveu a idempotência genérica de webhook para PostgreSQL; issue 0054 retirou o produtor das views IA de status/resultado e deixou sua limpeza para o sunset bounded; decisões de produto registradas abaixo
+- **Versão:** 1.11
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0025_webhook_event_keys`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050, 0051, 0052 e 0053
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0025_webhook_event_keys`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050, 0051, 0052, 0053 e 0054
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
 
-Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte/coordenação transitória onde um fluxo ainda o requer e não é a fila persistente de finalização IA nem a autoridade da idempotência genérica de webhook.
+Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte/coordenação transitória onde um fluxo ainda o requer e não é a fila persistente de finalização IA, a autoridade da idempotência genérica de webhook ou a fonte de status/resultado da IA.
 
 Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados. Os issues 0037 e 0052 adicionam somente auditorias manuais, bounded e repetíveis para famílias Redis órfãs e listas legadas já fora do transporte ativo; não apagam dados duráveis nem transformam a operação em job de retenção.
 
@@ -74,8 +74,9 @@ fronteira a `message_image_extractions`; reserva, agenda, owner, lease, retry e
 resultado são PostgreSQL, e `image_worker` reclama linhas due diretamente sem
 publicar ou consumir `image_extraction_queue`. A lista e a dead-letter legadas
 permanecem apenas para inventário bounded e retirada manual validada. Redis
-continua permitido para idempotência temporária, status/resultados TTL e outros
-fluxos que ainda o requerem, mas não é autoridade nem transporte de mídia.
+continua permitido somente para coordenação transitória e famílias explicitamente
+retidas; não é autoridade, transporte de mídia ou fonte das views IA de
+status/resultado.
 
 **Retirada validada de filas legadas (2026-09-03):** o issue 0052 adiciona o
 target Docker/perfil Compose `maintenance` e o coordenador
@@ -106,9 +107,19 @@ a API PostgreSQL-only é iniciada. Uma fotografia nova ou truncada interrompe o
 apply. Isso evita a lacuna de uma implantação mista; a remoção das chaves
 retidas continua pertencendo aos issues 0054–0056.
 
+**Views IA Redis aposentadas (2026-09-03):** o issue 0054 removeu de
+`src/workers/ia_worker.py` a publicação de `ia_status:*` e `ia_result:*`,
+removeu `RESULT_TTL_SECONDS` da configuração do worker e retirou a dependência
+Redis do serviço IA. As rotas públicas continuam consultando os repositórios
+PostgreSQL. O comando `scripts.retire_ia_redis_compatibility` faz inventário
+bounded com buckets de TTL, digests de entrada e matches duráveis sem expor
+valores; o importador histórico foi mantido somente no perfil `maintenance`.
+Nenhuma chave foi removida nesta etapa: o apply requer decisão histórica,
+segunda fotografia e uma janela completa de 86400 segundos.
+
 ## Contrato de dados e integridade
 
-1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias, ciclos persistentes e a decisão genérica de idempotência de webhook. O ciclo IA e as mídias elegíveis **devem** ser reclamados por lease PostgreSQL; Redis limita-se a status/resultados com TTL e coordenação de fluxos que ainda tenham contrato próprio. Filas legadas de IA e mídia não são backlog ativo e só podem ser removidas por inventário completo, reconciliado e confirmação delimitada.
+1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias, ciclos persistentes e a decisão genérica de idempotência de webhook. O ciclo IA e as mídias elegíveis **devem** ser reclamados por lease PostgreSQL; Redis limita-se à coordenação de fluxos que ainda tenham contrato próprio e não é fonte das views IA de status/resultado. Filas legadas de IA e mídia não são backlog ativo e só podem ser removidas por inventário completo, reconciliado e confirmação delimitada.
 2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos. O digest genérico de webhook **deve** ser único no ledger enquanto `expires_at` não vencer, com substituição expirada atômica e retenção equivalente a uma hora.
 3. `classification_messages` e `conversation_cycle_messages` **devem** preservar a ordem que fundamenta o resultado. Um vínculo de mensagem e sua posição **devem** ser únicos dentro da classificação ou ciclo correspondente. Uma mensagem **não pode** pertencer a dois ciclos persistentes.
 4. Timestamps duráveis **devem** usar `TIMESTAMPTZ`; listas e snapshots estruturados **devem** usar JSONB onde o schema o define. Identificadores externos não resolvidos **devem** permanecer preservados, sem nomes ou transferências inventados.
@@ -130,6 +141,11 @@ retidas continua pertencendo aos issues 0054–0056.
   **deve** ser por família, precedido de dry-run completo e segundo snapshot;
   valores Redis brutos, credenciais, corpos, payloads e URLs assinadas não
   podem entrar no relatório.
+- O sunset de `ia_status:*` e `ia_result:*` **deve** usar somente
+  `scripts.retire_ia_redis_compatibility`, exigir reconciliação histórica,
+  digests de chave/entrada, segunda fotografia e uma observação de pelo menos
+  um TTL completo antes do apply. O comando **não pode** tocar `processed:*`,
+  filas, `ia_processing` ou dados PostgreSQL.
 - Solicitações normais de hydration **devem** distinguir nos logs sanitizados
   uma nova solicitação, duplicação, backoff futuro preservado, falha já devida
   e estado sucedido/current; nenhum desses eventos pode antecipar

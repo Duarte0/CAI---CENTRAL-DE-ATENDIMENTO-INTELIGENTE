@@ -7,6 +7,7 @@ import pytest
 from scripts.redis_residue_cleanup import (
     ACTIVE_QUEUE_KEYS,
     PRESERVED_KEY_PATTERNS,
+    RETIRED_COMPATIBILITY_KEY_PATTERNS,
     RedisSafetyError,
     collect_inventory,
     delete_orphaned_keys,
@@ -76,6 +77,11 @@ async def test_inventory_classifies_orphans_and_preserves_active_contracts():
         assert inventory.protected[queue].deletable is False
     for pattern in PRESERVED_KEY_PATTERNS:
         assert inventory.protected[pattern].deletable is False
+    for pattern in RETIRED_COMPATIBILITY_KEY_PATTERNS:
+        assert inventory.retired_compatibility[pattern].classification == (
+            "retired-compatibility"
+        )
+        assert inventory.retired_compatibility[pattern].deletable is False
 
 
 @pytest.mark.asyncio
