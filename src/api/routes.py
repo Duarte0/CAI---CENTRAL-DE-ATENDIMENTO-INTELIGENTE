@@ -49,7 +49,6 @@ from src.core.digisac_directory import directory_sync_loop
 from src.core.message_filter import is_bot_message
 from src.core.media import is_image_message
 from src.core.models import ConversationProcessing, WebhookPayload
-from src.core.redis_client import AsyncRedis, create_redis_client
 from src.utils.idempotency import IdempotencyService
 
 
@@ -254,11 +253,8 @@ async def capture_contact_snapshot(
     return False
 
 
-async def enqueue_audio_transcription(
-    redis: AsyncRedis, message: DigisacMessage
-) -> bool:
+async def enqueue_audio_transcription(message: DigisacMessage) -> bool:
     """Persist an idempotent audio reservation for PostgreSQL polling."""
-    del redis  # retained in the signature for webhook/test compatibility
     if message.message_type not in AUDIO_MESSAGE_TYPES or not message.message_id:
         return False
     reserved = await reserve_transcription(
@@ -271,11 +267,8 @@ async def enqueue_audio_transcription(
     return True
 
 
-async def enqueue_image_extraction(
-    redis: AsyncRedis, message: DigisacMessage
-) -> bool:
+async def enqueue_image_extraction(message: DigisacMessage) -> bool:
     """Persist an idempotent image reservation for PostgreSQL polling."""
-    del redis  # retained in the signature for webhook/test compatibility
     if not is_image_message(message.message_type, message.file) or not message.message_id:
         return False
     reserved = await reserve_image_extraction(
@@ -292,7 +285,6 @@ async def enqueue_image_extraction(
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     require_admin_api_token()
     await initialize_database()
-    app.state.redis = create_redis_client()
     directory_task = asyncio.create_task(directory_sync_loop())
     contact_hydration_task = asyncio.create_task(contact_hydration_loop())
     try:
@@ -304,7 +296,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await directory_task
         with suppress(asyncio.CancelledError):
             await contact_hydration_task
-        await app.state.redis.aclose()
         await close_database()
 
 
@@ -335,52 +326,28 @@ async def validation_error_handler(
     return await request_validation_exception_handler(request, exc)
 
 
-def get_redis(request: Request) -> AsyncRedis:
-    return cast(AsyncRedis, request.app.state.redis)
-
-
 @app.get("/health")
-async def health(redis: AsyncRedis = Depends(get_redis)) -> dict[str, str]:
-    await redis.ping()
+async def health() -> dict[str, str]:
     if not await database_is_ready():
         raise HTTPException(status_code=503, detail="database unavailable")
     return {"status": "ok"}
 
 
 @app.get("/queues")
-async def queue_metrics(
-    redis: AsyncRedis = Depends(get_redis),
-) -> dict[str, Any]:
-    """Operational view of legacy lists and durable PostgreSQL work counts."""
-    legacy_counts = await asyncio.gather(
-        redis.llen("ia_queue"),
-        redis.llen("ia_dead_letter"),
-        redis.llen("audio_transcription_queue"),
-        redis.llen("audio_transcription_dead_letter"),
-        redis.llen("image_extraction_queue"),
-        redis.llen("image_extraction_dead_letter"),
-    )
+async def queue_metrics() -> dict[str, Any]:
+    """Operational view of durable PostgreSQL work counts."""
     cycle_work, audio_work, image_work = await asyncio.gather(
         get_cycle_work_metrics(),
         get_transcription_work_metrics(),
         get_image_extraction_work_metrics(),
     )
-    ia_queue, dead_letter, audio_queue, audio_dead_letter, image_queue, image_dead_letter = (
-        legacy_counts
-    )
     result: dict[str, Any] = {
-        "ia_queue": ia_queue,
-        "ia_dead_letter": dead_letter,
-        "audio_transcription_queue": audio_queue,
-        "audio_transcription_dead_letter": audio_dead_letter,
         "audio_due": audio_work["due"],
         "audio_scheduled": audio_work["scheduled"],
         "audio_leased": audio_work["leased"],
         "audio_stale": audio_work["stale"],
         "audio_completed": audio_work["completed"],
         "audio_failed": audio_work["failed"],
-        "image_extraction_queue": image_queue,
-        "image_extraction_dead_letter": image_dead_letter,
         "image_due": image_work["due"],
         "image_scheduled": image_work["scheduled"],
         "image_leased": image_work["leased"],
@@ -436,7 +403,6 @@ async def digisac_webhook(
     request: Request,
     response: Response,
     _: None = Depends(verify_webhook_signature),
-    redis: AsyncRedis = Depends(get_redis),
 ) -> dict[str, Any]:
     """Ingest DigiSac events into the persistent cycle and media flows."""
     payload_data, _payload = await parse_webhook_payload(request)
@@ -653,9 +619,9 @@ async def digisac_webhook(
     idempotency = IdempotencyService()
     event_id = idempotency.generate_event_id(idempotency_data)
     # Reserve before event idempotency so a duplicate webhook cannot erase a
-    # durable media row. Audio admission itself does not publish to Redis.
-    transcription_queued = await enqueue_audio_transcription(redis, message)
-    image_extraction_queued = await enqueue_image_extraction(redis, message)
+    # durable media row. Admission persists directly for PostgreSQL polling.
+    transcription_queued = await enqueue_audio_transcription(message)
+    image_extraction_queued = await enqueue_image_extraction(message)
     if not await idempotency.try_mark_processed(event_id):
         return {"status": "duplicate", "conversation_id": conversation_id}
     return {

@@ -37,7 +37,10 @@ from src.core.db import (
     get_transcription,
     initialize_database,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import (
+    create_redis_client,
+    maintenance_redis_url_configured,
+)
 from scripts.retire_legacy_audio_queue import (
     LEGACY_AUDIO_DEAD_LETTER,
     LEGACY_AUDIO_QUEUE,
@@ -396,7 +399,7 @@ async def _run_dry_run(
                 "compose_project": compose_project,
                 "max_items": max_items,
                 "database_configured": bool(settings.database_url),
-                "redis_configured": bool(settings.redis_url),
+                "redis_configured": maintenance_redis_url_configured(),
                 "api_endpoint": "/health and /queues",
             },
             "runtime_before": runtime,

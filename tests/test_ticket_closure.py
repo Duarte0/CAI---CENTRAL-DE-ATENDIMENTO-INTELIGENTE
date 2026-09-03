@@ -5,23 +5,7 @@ from src.api import routes
 from src.core import webhook_event_repository
 
 
-class PersistentRedis:
-    """Minimal transport double for the persistent webhook contract."""
-
-    def __init__(self):
-        self.values = {}
-        self.queues = {}
-
-    async def set(self, key, value, **_kwargs):
-        self.values[key] = value
-        return True
-
-    async def rpush(self, key, value):
-        self.queues.setdefault(key, []).append(value)
-        return len(self.queues[key])
-
-
-async def send(monkeypatch, redis, payload):
+async def send(monkeypatch, payload):
     async def fake_parse(_request):
         return payload, None
 
@@ -34,14 +18,11 @@ async def send(monkeypatch, redis, payload):
     monkeypatch.setattr(
         routes, "capture_ticket_assignment", lambda *_args: _completed(False)
     )
-    return await routes.digisac_webhook(
-        request=None, response=Response(), redis=redis
-    )
+    return await routes.digisac_webhook(request=None, response=Response())
 
 
 @pytest.mark.asyncio
 async def test_ticket_created_always_establishes_persistent_cycle(monkeypatch):
-    redis = PersistentRedis()
     cycle = {"public_id": "cycle-open", "conversation_id": "ticket"}
     calls = []
 
@@ -53,7 +34,6 @@ async def test_ticket_created_always_establishes_persistent_cycle(monkeypatch):
 
     result = await send(
         monkeypatch,
-        redis,
         {
             "event": "ticket.created",
             "data": {"id": "ticket", "createdAt": "2026-07-28T12:00:00Z"},
@@ -67,12 +47,10 @@ async def test_ticket_created_always_establishes_persistent_cycle(monkeypatch):
         "cycle_id": "cycle-open",
         "cycle_created": True,
     }
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
 async def test_message_webhook_does_not_publish_an_ia_cycle(monkeypatch):
-    redis = PersistentRedis()
     payload = {
         "event": "message.created",
         "data": {
@@ -86,7 +64,7 @@ async def test_message_webhook_does_not_publish_an_ia_cycle(monkeypatch):
         },
     }
 
-    result = await send(monkeypatch, redis, payload)
+    result = await send(monkeypatch, payload)
 
     assert result == {
         "status": "received",
@@ -94,8 +72,6 @@ async def test_message_webhook_does_not_publish_an_ia_cycle(monkeypatch):
         "transcription_queued": False,
         "image_extraction_queued": False,
     }
-    assert redis.values == {}
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
@@ -107,10 +83,8 @@ async def test_message_webhook_does_not_publish_an_ia_cycle(monkeypatch):
     ],
 )
 async def test_bot_message_is_ignored_before_persistent_work(monkeypatch, bot_fields):
-    redis = PersistentRedis()
     result = await send(
         monkeypatch,
-        redis,
         {
             "event": "message.created",
             "data": {
@@ -126,8 +100,6 @@ async def test_bot_message_is_ignored_before_persistent_work(monkeypatch, bot_fi
 
     assert result["status"] == "ignored"
     assert result["reason"] in {"is_from_bot", "bot_origin_fallback"}
-    assert redis.values == {}
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
@@ -148,18 +120,14 @@ async def test_bot_message_is_ignored_before_persistent_work(monkeypatch, bot_fi
     ],
 )
 async def test_invalid_closed_ticket_is_ignored(monkeypatch, payload, reason):
-    redis = PersistentRedis()
-
-    result = await send(monkeypatch, redis, payload)
+    result = await send(monkeypatch, payload)
 
     assert result["status"] == "ignored"
     assert result["reason"] == reason
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
 async def test_close_persists_cycle_without_publishing_ia_queue(monkeypatch):
-    redis = PersistentRedis()
     cycle = {
         "public_id": "cycle-public",
         "conversation_id": "ticket",
@@ -179,7 +147,6 @@ async def test_close_persists_cycle_without_publishing_ia_queue(monkeypatch):
 
     result = await send(
         monkeypatch,
-        redis,
         {
             "event": "ticket.updated",
             "data": {
@@ -198,12 +165,10 @@ async def test_close_persists_cycle_without_publishing_ia_queue(monkeypatch):
         "cycle_id": "cycle-public",
         "queued": True,
     }
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
 async def test_duplicate_close_reuses_cycle_without_ia_publication(monkeypatch):
-    redis = PersistentRedis()
     cycle = {
         "public_id": "cycle-public",
         "conversation_id": "ticket",
@@ -231,19 +196,17 @@ async def test_duplicate_close_reuses_cycle_without_ia_publication(monkeypatch):
         },
     }
 
-    first = await send(monkeypatch, redis, payload)
-    duplicate = await send(monkeypatch, redis, payload)
+    first = await send(monkeypatch, payload)
+    duplicate = await send(monkeypatch, payload)
 
     assert first["cycle_id"] == duplicate["cycle_id"] == "cycle-public"
     assert first["status"] == "ticket_closed"
     assert duplicate["status"] == "ticket_already_closed"
     assert close_calls == 2
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
 async def test_reopen_creates_cycle_without_classification_job(monkeypatch):
-    redis = PersistentRedis()
     cycle = {"public_id": "cycle-two", "conversation_id": "ticket"}
     create_calls = []
 
@@ -255,7 +218,6 @@ async def test_reopen_creates_cycle_without_classification_job(monkeypatch):
 
     result = await send(
         monkeypatch,
-        redis,
         {
             "event": "ticket.updated",
             "data": {
@@ -274,12 +236,10 @@ async def test_reopen_creates_cycle_without_classification_job(monkeypatch):
         "cycle_created": True,
         "queued": False,
     }
-    assert redis.queues == {}
 
 
 @pytest.mark.asyncio
 async def test_persisted_cycle_does_not_require_ia_queue_publication(monkeypatch):
-    redis = PersistentRedis()
     cycle = {
         "public_id": "cycle-recoverable",
         "conversation_id": "ticket",
@@ -299,7 +259,6 @@ async def test_persisted_cycle_does_not_require_ia_queue_publication(monkeypatch
 
     result = await send(
         monkeypatch,
-        redis,
         {
             "event": "ticket.updated",
             "data": {"id": "ticket", "isOpen": False, "protocol": "123"},
@@ -310,7 +269,6 @@ async def test_persisted_cycle_does_not_require_ia_queue_publication(monkeypatch
     assert result["status"] == "ticket_closed"
     assert result["cycle_id"] == "cycle-recoverable"
     assert result["queued"] is True
-    assert redis.queues == {}
 
 
 async def _completed(value):

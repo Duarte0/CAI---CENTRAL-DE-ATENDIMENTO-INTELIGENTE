@@ -1,6 +1,6 @@
 # Implementation Plan
 
-_Planning baseline: 2026-09-02. Source, Alembic revisions, configuration, and
+_Planning baseline: 2026-09-03. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
 evidence, never production availability. The SPEC-0013 Phase 2 delivery is
 complete locally; production acceptance remains separate._
@@ -12,7 +12,7 @@ complete locally; production acceptance remains separate._
 - **[completed] Core durable CAI workflow** (PRD §§5–8; SPEC-0001–0004).
   FastAPI webhook ingestion, PostgreSQL-backed cycles, persistent DigiSac
   history reconstruction, Groq classification, PostgreSQL polling/lease for IA
-  finalization, Redis coordination where still required, and
+  finalization, with historical Redis access isolated to maintenance, and
   separate durable audio/image processing are implemented. PostgreSQL state is
   reserved before media transport; IA finalization, audio transcription and
   image extraction are claimed by PostgreSQL polling/lease. Lease, due-retry,
@@ -110,10 +110,22 @@ complete locally; production acceptance remains separate._
   the dry-run found 80 keys in each family and 80 durable result matches; both
   counts stayed at 80 after 30 seconds. The implementation is deployed, but
   the issue remains open until the full window and bounded apply are verified.
+- **[completed | current checkout | 2026-09-03] Issue 0055 Redis-free
+  application runtime.** API, webhook admission, health, durable queue metrics
+  and IA worker no longer import, initialize, ping or require Redis. The six
+  legacy `/queues` fields were removed explicitly instead of fabricated as
+  zero. Runtime requirements and `.env.example` no longer carry Redis settings;
+  the client and historical commands use only the separate `maintenance`
+  image/profile with explicit `MAINTENANCE_REDIS_URL`. Compose no longer
+  defines the Redis service/volume or API/worker dependency, while the retained
+  Docker container/storage was not deleted. Focused source, route, OpenAPI,
+  dependency and Compose guards plus the Redis-free named runtime smoke prove
+  the boundary locally; this is not production-wide acceptance.
 
 ### Implemented with bounded evidence
 
-- **[completed | local-only evidence]** Provider integrations, Redis runtime,
+- **[completed | local-only evidence]** Provider integrations, historical Redis
+  maintenance boundary,
   Docker deployment, secret-manager provisioning, and production acceptance.
   Source and local/disposable tests prove contracts, not current provider
   behavior, multi-process rate limits, deployed Redis, credentials, replicas,
@@ -140,11 +152,11 @@ complete locally; production acceptance remains separate._
 
 ### Approved follow-up backlog
 
-- **[open | staged operational decommission]** Redis cleanup and removal
-  (issues 0054–0056; issues 0052–0053 completed). Issue 0052 retired only fully
+- **[open | staged operational decommission]** Redis cleanup and final storage
+  disposal (issues 0054 and 0056; issues 0052–0053 and 0055 completed). Issue 0052 retired only fully
   inventoried legacy IA, audio and image queue entries; issue 0053 moved generic webhook idempotency
   from Redis to a PostgreSQL ledger; issue 0054 stops IA status/result
-  compatibility writes and starts their required sunset observation; issue 0055 removes Redis from the application runtime
+  compatibility writes and starts their required sunset observation; issue 0055 removed Redis from the application runtime
   and Compose; issue 0056 disposes the retained Redis volume only after an
   explicit observation window and backup review. The sequence preserves
   retained `processed:*`, durable PostgreSQL state, historical recovery tooling and
@@ -272,8 +284,9 @@ complete locally; production acceptance remains separate._
    - issue 0054 is implemented: the IA worker no longer depends on Redis or
      writes `ia_status:*`/`ia_result:*`; the maintenance report, historical
      disposition and full TTL observation must finish before its bounded apply;
-   - issue 0055 removes Redis from API/IA runtime, health, queue observability,
-     dependencies and Compose while retaining storage for rollback;
+   - issue 0055 is completed: API/IA runtime, health, queue observability,
+     dependencies and Compose are Redis-free while the retained storage remains
+     outside the application topology for rollback;
    - issue 0056 permanently disposes the exact Redis container/storage target
      only after Redis-free deployment, backup validation and explicit approval.
 
@@ -285,13 +298,14 @@ complete locally; production acceptance remains separate._
    `FLUSHALL`, broad Docker volume cleanup, provider replay or deletion of
    PostgreSQL business data.
 
-   Current runtime evidence is recorded in issues 0052–0054: the final dry-run found
+   Current runtime evidence is recorded in issues 0052–0055: the final dry-run found
    zero entries in all six retired lists after removing 17,164 IA and 71 image
    entries. The protected Redis families and PostgreSQL durable totals remain
    outside this issue's deletion boundary; issue 0053 retains legacy
    `processed:*` markers for their natural TTL and does not delete them. Issue
    0054 likewise retains both compatibility families until its observation gate
-   is complete.
+   is complete. Issue 0055's named `cai` rebuild verified API health and worker
+   startup without Redis; the old Redis container/storage remains retained.
 
 ## Dependencies, discrepancies, and sequencing
 
@@ -313,8 +327,9 @@ complete locally; production acceptance remains separate._
   slices (0038–0040), the documentation reconciliation (0041), PostgreSQL
   polling/lease for persistent IA finalization (0048), PostgreSQL polling for
   audio transcription and image extraction (0049–0050), contact hydration
-  backoff preservation (0051), validated legacy queue retirement (0052), and
-  PostgreSQL webhook idempotency (0053).
+  backoff preservation (0051), validated legacy queue retirement (0052),
+  PostgreSQL webhook idempotency (0053), IA compatibility retirement boundary
+  (0054), and Redis-free application runtime (0055).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -327,8 +342,9 @@ shell/session/BFF, read, and command-action increments. Issues 0048–0053 are
 complete locally, with issues 0052–0053 also accepted in the named `cai`
 runtime. Issue 0054 is implemented locally and ready for the named runtime
 handoff, but its destructive compatibility-key apply remains gated by the
-complete observation window. Issues 0055–0056 define the remaining staged Redis
-decommission work; destructive storage disposal remains separately gated. Issue
+complete observation window. Issue 0054 remains gated by its complete TTL
+observation and bounded apply; issue 0056 defines the remaining destructive
+storage disposal. Issue
 0053 is complete locally and in the named `cai` runtime, with its legacy marker
 source retained for the following compatibility/decommission stages.
 The remaining items are product, operational authorization, or

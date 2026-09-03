@@ -1,9 +1,9 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
-- **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção e consultas sem versão
-- **Versão:** 1.9
+- **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção, consultas sem versão e runtime PostgreSQL-only
+- **Versão:** 2.0
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0053
+- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0055
 - **Dependências:** SPEC-0001
 
 ## Objetivo e não objetivos
@@ -37,6 +37,14 @@ vencedor. A decisão ocorre depois da reserva durável de áudio/imagem e antes 
 fechadamente. HMAC e rejeições de envelope continuam anteriores à normalização e
 à inserção do ledger.
 
+**Runtime PostgreSQL-only (2026-09-03):** o issue 0055 removeu do webhook
+qualquer dependência, injeção ou publicação Redis. Reservas de mídia e a
+decisão de idempotência são operações PostgreSQL; `GET /health` verifica apenas
+o banco, e `GET /queues` devolve somente métricas duráveis. A mudança dos campos
+de listas legadas é explícita no contrato OpenAPI e não fabrica zeros. Redis só
+é acessível por comandos históricos do profile `maintenance`, com
+`MAINTENANCE_REDIS_URL` explícita.
+
 ## Ingestão, validação e normalização
 
 1. `POST /webhook/digisac` **deve** aceitar `ticket.created`, `ticket.updated`, `message.created` e `message.updated`. Evento não suportado **deve** retornar `200` com motivo seguro e não pode alterar estado.
@@ -47,7 +55,7 @@ fechadamente. HMAC e rejeições de envelope continuam anteriores à normalizaç
 
 ## Idempotência, mídia e respostas
 
-1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da decisão de idempotência no ledger PostgreSQL. Esses workers não publicam trabalho ativo em Redis; falha de Redis em outros fluxos não pode apagar a reserva durável de mídia.
+1. Reserva PostgreSQL de áudio/imagem **deve** ocorrer antes da decisão de idempotência no ledger PostgreSQL. O webhook não publica trabalho ativo nem depende de Redis; falha ou ausência de Redis não pode apagar a reserva durável de mídia.
 2. Repetição **não pode** duplicar ciclo ou reserva; ciclo e reserva persistentes são a deduplicação de trabalho relevante. O webhook não publica `ia_queue`.
 3. A referência `message.contactId` **não pode** antecipar o retry de hydration:
    `pending`, `running`, falha futura, falha devida e hydration sucedida são
@@ -60,7 +68,7 @@ fechadamente. HMAC e rejeições de envelope continuam anteriores à normalizaç
 
 Logs e respostas operacionais comuns **devem** expor IDs, evento e motivo sanitizado, nunca corpo bruto, valores extraídos de mensagem/contato, segredo, token ou URL assinada. O diagnóstico de extração do parser fica limitado a presença, tipo e caminho de origem. Não há autorização de leitura ou rate limit adicional para o operador interno; a integração Acessórias aprovada exigirá revisão de acesso em seu próprio contrato.
 
-Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes da idempotência PostgreSQL, concorrência e expiração do ledger, ausência de publicação Redis para áudio/imagem, fechamento/reabertura e `404` nas consultas. Testes de hydration devem provar que duas entregas ou muitas referências do mesmo sender durante um backoff não antecipam a chamada Contacts. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto, que uma assinatura inválida não atinge o parse e que uma falha do banco não produz aceite bem-sucedido.
+Testes devem cobrir HMAC antes do parse, envelope/data inválidos, eventos ignorados, bots, documento-imagem versus PDF, reserva antes da idempotência PostgreSQL, concorrência e expiração do ledger, ausência de publicação Redis para áudio/imagem, fechamento/reabertura e `404` nas consultas. Também devem provar que API/webhook/health/queues iniciam sem Redis, que `/queues` contém somente métricas duráveis e que os seis campos legados não são fabricados. Testes de hydration devem provar que duas entregas ou muitas referências do mesmo sender durante um backoff não antecipam a chamada Contacts. Testes de rota devem provar que as superfícies de diagnóstico removidas não são servidas, que a rota de produção não registra corpo bruto, que uma assinatura inválida não atinge o parse e que uma falha do banco não produz aceite bem-sucedido.
 
 - Repetição do webhook não produz fila, reserva ou ciclo duplicado.
 - PDF `document` não entra na fila visual; `document` MIME `image/*` entra uma única vez.

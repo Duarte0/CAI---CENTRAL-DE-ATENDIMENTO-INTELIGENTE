@@ -1,7 +1,7 @@
 # CAI System Architecture
 
 **Status:** implementation-derived architecture baseline  
-**Reference date:** 2026-08-14
+**Reference date:** 2026-09-03
 **Audience:** engineering and operations
 
 This document describes the architecture implemented in this repository. Source
@@ -25,10 +25,8 @@ increment.
 \`\`\`mermaid
 flowchart LR
     D[DigiSac] -->|webhooks and message history| API[FastAPI API]
-    API --> R[(Redis)]
     API --> P[(PostgreSQL)]
     API --> D
-    R --> IW[IA worker]
     P --> AW[Audio worker]
     P --> IMW[Image worker]
     AW --> D
@@ -42,14 +40,13 @@ flowchart LR
     IW --> P
     API --> C[Query and operations API]
     P --> C
-    R --> C
 \`\`\`
 
 ## 2. Runtime components
 
 | Component | Responsibility | Durable state or coordination |
 | --- | --- | --- |
-| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, PostgreSQL webhook-idempotency decision, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes PostgreSQL and Redis for the remaining pipeline; generic webhook idempotency, contact hydration requests, administrative reads, command idempotency, and identity mutations use PostgreSQL only; the UI session is signed cookie state. |
+| \`api\` | FastAPI lifecycle, HMAC validation, webhook parsing, normalization, media reservation, PostgreSQL webhook-idempotency decision, ticket events, finalization scheduling, public queries, authenticated identity triage/commands, and the local identity-review shell/session boundary. | Writes and reads PostgreSQL only; generic webhook idempotency, contact hydration requests, media reservations, operational metrics, administrative reads, command idempotency, and identity mutations use PostgreSQL; the UI session is signed cookie state. |
 | \`webhook_adapter\` | Converts DigiSac envelopes into normalized \`DigisacMessage\` values. | No persistence. |
 | \`message_filter\` / \`media\` | Removes bot/unsupported messages and determines effective media type, including image MIME documents. | No persistence. |
 | \`ia_worker\` | Polls persistent cycle jobs, retrieves history, builds context, calls Groq, and persists classifications. | PostgreSQL claims, leases, snapshots, classifications, status and results; no Redis dependency after issue 0054. |
@@ -58,8 +55,8 @@ flowchart LR
 | \`digisac_directory\` | Periodically synchronizes departments and users for assignment-name resolution. | PostgreSQL directory cache and sync state. |
 | \`acessorias_directory\` | Acquires and reconciles the Acessórias company, contact, department, and relationship directory. | PostgreSQL snapshot and synchronization executions; provider access is configuration-backed. |
 | \`postgres\` | Source of truth for analysis, media state, assignment history, DigiSac/Acessórias directory data, persistent cycles, and generic webhook idempotency. | PostgreSQL 16, managed by Alembic. |
-| \`redis\` | Remaining transient coordination and retained handoff/legacy families until the later runtime decommission. | Redis 7 with AOF in Compose; not required by IA, audio or image workers after issue 0054, nor by webhook idempotency. |
 | \`migrate\` | Applies the configured Alembic revision before application services start. | No application schema creation at runtime. |
+| \`maintenance\` | Runs bounded historical Redis inventory/retirement commands outside the application runtime. | Separate image dependency; requires explicit \`MAINTENANCE_REDIS_URL\`; does not participate in service startup. |
 
 The application uses one PostgreSQL connection pool per process. Database
 initialization verifies the Alembic schema and does not create or mutate
@@ -225,15 +222,15 @@ Ticket protocol is retained as application metadata. It is associated with the
 classification/result after persistence and is not included in the model
 prompt.
 
-## 4. Redis coordination
+## 4. Historical Redis maintenance
 
-Redis carries work and short-lived coordination, not the durable business
-record. Generic webhook idempotency is not a Redis contract after issue 0053:
-the active API records the deterministic digest in PostgreSQL, and a database
-failure fails closed before a successful webhook acknowledgement. Issue 0054
-removes the IA status/result producer and makes those two families
-maintenance-only. Redis remains available for other explicitly retained flows
-until issues 0055–0056 complete.
+Redis is not part of the application runtime after issue 0055. The active API
+records webhook idempotency, media reservations, cycles, classifications and
+operational metrics in PostgreSQL; a database failure fails closed before a
+successful webhook acknowledgement. Issue 0054 removed the IA status/result
+producer and issue 0055 removed the remaining runtime client and Compose
+service. Any retained Redis endpoint is reachable only from the separate
+`maintenance` image with an explicit `MAINTENANCE_REDIS_URL`.
 
 ### Queues and dead letters
 
@@ -258,11 +255,12 @@ digests, captures `/health`, `/queues`, schema and aggregate PostgreSQL
 invariants, and requires a reviewed report, a second snapshot without growth
 or replacement, an approved recovery point and exact confirmation per family.
 The profile is not started by the normal Compose up and the `api` image does
-not contain the maintenance scripts.
+not install Redis or contain the maintenance scripts.
 
 ### Transient keys
 
-Important retained or handoff key families include:
+Important retained or handoff key families are historical maintenance targets,
+not active application state:
 
 - \`processed:*\` as retained legacy webhook markers during the coordinated
   handoff; they are not read by the active idempotency service after cutover;
@@ -459,8 +457,8 @@ Bearer `ADMIN_API_TOKEN`; they are not public API operations.
 | Route | Purpose |
 | --- | --- |
 | \`POST /webhook/digisac\` | Authenticated production webhook ingestion. |
-| \`GET /health\` | PostgreSQL and Redis readiness. |
-| \`GET /queues\` | Legacy Redis visibility plus PostgreSQL-derived IA/audio/image work metrics. |
+| \`GET /health\` | PostgreSQL readiness. |
+| \`GET /queues\` | PostgreSQL-derived IA/audio/image work metrics and cycle counts. |
 | \`GET /conversations/{conversation_id}/status\` | Conversation processing status. |
 | \`GET /conversations/{conversation_id}/result\` | Latest conversation result. |
 | \`GET /conversations/{conversation_id}/cycles\` | Persistent cycle list. |
@@ -489,15 +487,15 @@ implemented aliases or prefixes in this checkout.
 \`docker-compose.yml\` defines:
 
 1. PostgreSQL 16.14 with a persistent volume and readiness check.
-2. Redis 7 with AOF persistence and readiness check.
-3. A one-shot \`migrate\` service running \`alembic upgrade\`.
-4. \`api\` and \`ia_worker\`, gated on healthy PostgreSQL, healthy Redis, and
-   successful migration completion; \`audio_worker\` and \`image_worker\`, gated
-   only on healthy PostgreSQL and successful migration completion.
-5. An optional \`ralph\` development/verification service.
+2. A one-shot \`migrate\` service running \`alembic upgrade\`.
+3. \`api\`, \`ia_worker\`, \`audio_worker\` and \`image_worker\`, gated on
+   healthy PostgreSQL and successful migration completion.
+4. An optional \`maintenance\` profile for explicit historical Redis access and
+   an optional \`ralph\` development/verification service.
 
-The application requires Python 3.11+, PostgreSQL, Redis, DigiSac and Groq
-credentials, and \`ffmpeg\` for audio processing. The active deployment project
+The application requires Python 3.11+, PostgreSQL, DigiSac and Groq credentials,
+and \`ffmpeg\` for audio processing. Historical maintenance additionally requires
+the separately supplied Redis endpoint and dependency. The active deployment project
 is conventionally named \`cai\`:
 
 \`\`\`bash
@@ -515,14 +513,12 @@ retained for their natural TTL and are not part of the active decision path.
 
 ## 12. Reliability and recovery invariants
 
-- PostgreSQL persistence precedes any Redis publication that remains part of an
-  active contract; audio and image processing do not publish work to Redis.
+- All application persistence and polling required for webhook, IA, audio and
+  image processing is PostgreSQL-backed; no runtime Redis publication remains.
 - Webhook event acceptance is decided atomically in PostgreSQL after durable
   media reservation. A duplicate is returned only for an unexpired digest, an
   expired row has one replacement winner, and an unavailable database fails
   closed without a successful receipt.
-- A failed Redis publication clears the corresponding PostgreSQL publication
-  marker for the remaining Redis-backed flows so reconciliation can retry it.
 - Persistent claims and leases recover work abandoned by process failure.
 - Media reservations are idempotent by message ID.
 - DigiSac contact identity is keyed only by provider \`contact.id\`; hydration
@@ -590,6 +586,13 @@ records these delivery limitations:
   the coordinated handoff imports live markers without deleting their Redis
   source. Issues `0054`–`0056` own subsequent compatibility retirement and
   storage disposal.
+- Issue `0055` removes Redis from the API/IA runtime and normal Compose
+  topology. `/health`, `/queues`, webhook admission, media reservations and
+  all active workers use PostgreSQL/provider contracts only; `/queues` no
+  longer fabricates the six legacy Redis list fields. Historical Redis tools
+  and their client live only in the separate `maintenance` image and require
+  `MAINTENANCE_REDIS_URL`. The retained Redis container/volume is not deleted;
+  issue `0056` owns that irreversible disposal.
 - Issue `0025` removes extracted webhook values from normal logs while
   preserving safe event, presence/type, and source metadata.
 - SPEC-0012 and issues `0038`–`0040` provide six authenticated internal
@@ -682,6 +685,9 @@ they limit release verification and future evolution decisions.
 - Durable transcription and image-extraction persistence:
   \`src/core/durable_media_repository.py\`, with compatibility exports retained
   by \`src/core/db.py\`; issue 0050 adds the image claim and work metrics.
+- Historical Redis maintenance: \`scripts/redis_maintenance_client.py\` and
+  the bounded inventory/retirement commands in \`scripts/\`; these are excluded
+  from the application image and are not imported by the runtime.
 - Classification persistence, ordered message association, protocol metadata,
   and existence queries: \`src/core/classification_repository.py\`, with
   compatibility exports retained by \`src/core/db.py\`.

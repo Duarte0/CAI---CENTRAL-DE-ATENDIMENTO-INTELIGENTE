@@ -143,7 +143,6 @@ async def test_webhook_returns_200_for_invalid_message_shape(
     body = await routes.digisac_webhook(
         request=None,
         response=response,
-        redis=None,
     )
 
     assert response.status_code == 200
@@ -158,22 +157,13 @@ async def test_webhook_returns_400_only_when_data_is_not_an_object(monkeypatch):
     monkeypatch.setattr(routes, "parse_webhook_payload", fake_parse)
 
     with pytest.raises(HTTPException) as error:
-        await routes.digisac_webhook(request=None, response=Response(), redis=None)
+        await routes.digisac_webhook(request=None, response=Response())
 
     assert error.value.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_audio_webhook_admits_transcription_without_redis_publication(monkeypatch):
-    queued = []
-
-    class Redis:
-        async def set(self, *_args, **_kwargs):
-            return True
-
-        async def rpush(self, queue, item):
-            queued.append((queue, item))
-
     async def fake_parse(_request):
         return {
             "event": "message.updated",
@@ -196,12 +186,9 @@ async def test_audio_webhook_admits_transcription_without_redis_publication(monk
         lambda *_args: asyncio.sleep(0, result=True),
     )
 
-    body = await routes.digisac_webhook(
-        request=None, response=Response(), redis=Redis()
-    )
+    body = await routes.digisac_webhook(request=None, response=Response())
 
     assert body["transcription_queued"] is True
-    assert queued == []
 
 
 @pytest.mark.asyncio
@@ -209,15 +196,6 @@ async def test_audio_webhook_admits_transcription_without_redis_publication(monk
 async def test_image_webhook_admits_extraction_without_redis_publication(
     monkeypatch, is_from_me
 ):
-    queued = []
-
-    class Redis:
-        async def set(self, *_args, **_kwargs):
-            return True
-
-        async def rpush(self, queue, item):
-            queued.append((queue, item))
-
     async def fake_parse(_request):
         return {
             "event": "message.created",
@@ -241,12 +219,9 @@ async def test_image_webhook_admits_extraction_without_redis_publication(
         lambda *_args: asyncio.sleep(0, result=True),
     )
 
-    body = await routes.digisac_webhook(
-        request=None, response=Response(), redis=Redis()
-    )
+    body = await routes.digisac_webhook(request=None, response=Response())
 
     assert body["image_extraction_queued"] is True
-    assert queued == []
 
 
 @pytest.mark.asyncio
@@ -279,7 +254,7 @@ async def test_media_reservation_precedes_postgresql_idempotency(monkeypatch):
         webhook_event_repository, "try_mark_webhook_event", mark_event
     )
 
-    await routes.digisac_webhook(request=None, response=Response(), redis=None)
+    await routes.digisac_webhook(request=None, response=Response())
 
     assert order == ["media", "idempotency"]
 
@@ -309,4 +284,4 @@ async def test_webhook_does_not_acknowledge_when_idempotency_database_fails(
     )
 
     with pytest.raises(RuntimeError, match="database unavailable"):
-        await routes.digisac_webhook(request=None, response=Response(), redis=None)
+        await routes.digisac_webhook(request=None, response=Response())

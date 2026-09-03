@@ -1,9 +1,9 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** implementado; baseline canônico e verificação operacional concluídos
-- **Versão:** 1.9
+- **Status:** implementado; baseline canônico, verificação operacional e smoke Redis-free concluídos
+- **Versão:** 2.0
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
-- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0051
+- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0051 e 0055
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
@@ -88,6 +88,15 @@ dependência Redis adicionada; compileall e Pyright passaram, a suíte offline
 teve **280 passed, 86 skipped**, e a etapa PostgreSQL teve **86 passed, 280
 deselected** com head `0024_durable_media_leases` e `APP_TIMEZONE=UTC`. Os
 resultados continuam evidência local/descartável.
+
+**Runtime sem Redis (issue 0055, 2026-09-03):** o runner canônico passou
+compileall, Pyright, **297 passed, 90 skipped** offline e **90 passed, 297
+deselected** em PostgreSQL 16 descartável com head `0025_webhook_event_keys`.
+Os testes adicionais cobrem health PostgreSQL-only, métricas duráveis de
+`/queues`, ausência dos seis campos Redis legados, Compose sem serviço/volume
+Redis, requisitos separados e exclusão do cliente histórico da imagem da API.
+O named runtime `cai` foi reconstruído com a API/IA sem Redis; esta evidência é
+local e específica do runtime nomeado, não comprova produção.
 
 ## Objetivo e não objetivos
 

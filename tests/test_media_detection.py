@@ -72,12 +72,7 @@ async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
         reserved.append((message_id, conversation_id, model))
         return True
 
-    class Redis:
-        async def rpush(self, *_args):
-            raise AssertionError("image admission must not publish to Redis")
-
     monkeypatch.setattr(routes, "reserve_image_extraction", fake_reserve)
-    redis = Redis()
     message = DigisacMessage(
         ticketId="ticket-id",
         id="image-document-id",
@@ -86,7 +81,7 @@ async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
         file={"name": "proof.jpg", "mimetype": "image/jpeg"},
     )
 
-    assert await routes.enqueue_image_extraction(redis, message) is True
+    assert await routes.enqueue_image_extraction(message) is True
     assert reserved and reserved[0][:2] == ("image-document-id", "ticket-id")
 
 

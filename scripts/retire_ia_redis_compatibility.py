@@ -24,7 +24,7 @@ from src.core.db import (
     close_database,
     initialize_database,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 from scripts.redis_residue_cleanup import collect_postgres_snapshot
 
 

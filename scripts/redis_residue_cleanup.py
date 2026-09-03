@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, cast
 
 from src.core.db import close_database, get_database_pool, initialize_database
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 
 
 class RedisMaintenanceClient(Protocol):

@@ -23,7 +23,7 @@ from src.core.db import (
     get_cycles_by_public_ids,
     initialize_database,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 
 
 LEGACY_IA_QUEUE = "ia_queue"

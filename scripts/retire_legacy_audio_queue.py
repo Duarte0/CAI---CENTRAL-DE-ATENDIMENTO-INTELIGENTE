@@ -24,7 +24,7 @@ from src.core.db import (
     initialize_database,
     set_transcription_status,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 from src.workers.audio_worker import _is_transient_failure_text
 
 

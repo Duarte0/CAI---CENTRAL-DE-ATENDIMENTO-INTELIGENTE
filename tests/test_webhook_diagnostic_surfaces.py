@@ -10,7 +10,6 @@ from src.api.routes import app
 
 
 async def post_webhook(path: str, body: bytes, **kwargs: object) -> httpx.Response:
-    app.dependency_overrides[routes.get_redis] = lambda: object()
     transport = httpx.ASGITransport(app=app)
     try:
         async with httpx.AsyncClient(

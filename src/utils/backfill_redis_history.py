@@ -23,7 +23,7 @@ from src.core.db import (
     initialize_database,
     insert_classification,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 
 
 logger = logging.getLogger(__name__)

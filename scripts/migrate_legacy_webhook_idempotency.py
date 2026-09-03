@@ -25,7 +25,7 @@ from src.core.db import (
     import_legacy_webhook_event_keys,
     initialize_database,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 
 
 REPORT_VERSION = 1

@@ -102,25 +102,19 @@ def _schemas() -> dict[str, JsonSchema]:
         "QueueMetrics": {
             "title": "Queue metrics",
             "description": (
-                "Legacy Redis queue/dead-letter counts plus durable IA, audio and "
-                "image work counts. ia_*, audio_* and image_* work counts are "
-                "derived from PostgreSQL; "
+                "Durable IA, audio and image work counts derived from PostgreSQL. "
+                "Legacy Redis queue/dead-letter fields are intentionally absent "
+                "after the Redis runtime removal; "
                 "conversation_cycles is an empty map when cycle metrics are unavailable."
             ),
             "type": "object",
             "required": [
-                "ia_queue",
-                "ia_dead_letter",
-                "audio_transcription_queue",
-                "audio_transcription_dead_letter",
                 "audio_due",
                 "audio_scheduled",
                 "audio_leased",
                 "audio_stale",
                 "audio_completed",
                 "audio_failed",
-                "image_extraction_queue",
-                "image_extraction_dead_letter",
                 "image_due",
                 "image_scheduled",
                 "image_leased",
@@ -133,17 +127,6 @@ def _schemas() -> dict[str, JsonSchema]:
                 "conversation_cycles",
             ],
             "properties": {
-                name: {"type": "integer", "minimum": 0}
-                for name in (
-                    "ia_queue",
-                    "ia_dead_letter",
-                    "audio_transcription_queue",
-                    "audio_transcription_dead_letter",
-                    "image_extraction_queue",
-                    "image_extraction_dead_letter",
-                )
-            }
-            | {
                 "conversation_cycles": {
                     "type": "object",
                     "additionalProperties": {"type": "integer", "minimum": 0},
@@ -171,18 +154,12 @@ def _schemas() -> dict[str, JsonSchema]:
             },
             "additionalProperties": False,
             "example": {
-                "ia_queue": 2,
-                "ia_dead_letter": 0,
-                "audio_transcription_queue": 1,
-                "audio_transcription_dead_letter": 0,
                 "audio_due": 1,
                 "audio_scheduled": 0,
                 "audio_leased": 1,
                 "audio_stale": 0,
                 "audio_completed": 12,
                 "audio_failed": 1,
-                "image_extraction_queue": 0,
-                "image_extraction_dead_letter": 1,
                 "image_due": 0,
                 "image_scheduled": 2,
                 "image_leased": 1,
@@ -554,13 +531,13 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         tag="Operações",
         summary="Check service readiness",
         description=(
-            "Checks Redis first and then PostgreSQL. A database readiness failure "
-            "is returned as 503 with a known detail object; an unmapped Redis failure "
-            "has no stable response contract."
+            "Checks PostgreSQL readiness only. A database readiness failure is "
+            "returned as 503 with the known detail object; Redis is not an "
+            "application runtime dependency."
         ),
         responses={
             "200": _response(
-                "Both dependencies are ready.",
+                "PostgreSQL is ready.",
                 _ref("HealthResponse"),
                 {"healthy": {"status": "ok"}},
             ),
@@ -575,11 +552,12 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         tag="Operações",
         summary="Inspect queue counts",
         description=(
-            "Returns legacy Redis queue/dead-letter counts, PostgreSQL-derived IA, "
+            "Returns only PostgreSQL-derived IA, "
             "audio and image due/scheduled/leased/recovery counts, completed and "
             "failed media counts, and grouped cycle status counts. "
-            "No authentication is currently configured for internal query operations, "
-            "and unmapped Redis failures remain server failures without a stable body."
+            "The formerly exposed Redis list fields are intentionally removed in "
+            "this unversioned compatibility change and are not fabricated as zero. "
+            "No authentication is currently configured for internal query operations."
         ),
         responses={
             "200": _response(
@@ -587,18 +565,12 @@ def _decorate_operations(document: dict[str, Any]) -> None:
                 _ref("QueueMetrics"),
                 {
                     "metrics": {
-                        "ia_queue": 2,
-                        "ia_dead_letter": 0,
-                        "audio_transcription_queue": 1,
-                        "audio_transcription_dead_letter": 0,
                         "audio_due": 1,
                         "audio_scheduled": 0,
                         "audio_leased": 1,
                         "audio_stale": 0,
                         "audio_completed": 12,
                         "audio_failed": 1,
-                        "image_extraction_queue": 0,
-                        "image_extraction_dead_letter": 1,
                         "image_due": 0,
                         "image_scheduled": 2,
                         "image_leased": 1,

@@ -203,15 +203,6 @@ async def test_message_contact_reference_schedules_hydration_without_inline_prov
 
     monkeypatch.setattr(routes, "request_contact_hydration", schedule)
     monkeypatch.setattr(routes, "reserve_transcription", lambda *_args: None)
-    redis = type(
-        "Redis",
-        (),
-        {
-            "set": lambda _self, *_args, **_kwargs: asyncio.sleep(0, result=True),
-            "get": lambda _self, *_args: asyncio.sleep(0, result=None),
-            "rpush": lambda _self, *_args: asyncio.sleep(0, result=1),
-        },
-    )()
     payload = {
         "event": "message.created",
         "data": {
@@ -234,9 +225,7 @@ async def test_message_contact_reference_schedules_hydration_without_inline_prov
         lambda *_args: asyncio.sleep(0, result=True),
     )
 
-    result = await routes.digisac_webhook(
-        request=None, response=Response(), redis=redis
-    )
+    result = await routes.digisac_webhook(request=None, response=Response())
 
     assert result["status"] == "received"
     assert scheduled == ["contact-1"]

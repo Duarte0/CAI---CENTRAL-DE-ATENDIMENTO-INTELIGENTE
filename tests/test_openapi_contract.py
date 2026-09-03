@@ -262,6 +262,17 @@ def test_openapi_projects_queries_and_operational_errors() -> None:
     }.issubset(
         queue_metrics["required"]
     )
+    assert not {
+        "ia_queue",
+        "ia_dead_letter",
+        "audio_transcription_queue",
+        "audio_transcription_dead_letter",
+        "image_extraction_queue",
+        "image_extraction_dead_letter",
+    } & set(queue_metrics["required"])
+    assert "PostgreSQL" in document["paths"]["/health"]["get"]["description"]
+    assert "Redis" in document["paths"]["/health"]["get"]["description"]
+    assert "not fabricated as zero" in document["paths"]["/queues"]["get"]["description"]
 
     cycles = document["paths"]["/conversations/{conversation_id}/cycles"]["get"]
     limit = next(

@@ -19,10 +19,7 @@ class Settings(BaseSettings):
     admin_ui_password: Optional[str] = None
     admin_session_secret: Optional[str] = None
 
-    # Database & Cache
-    redis_url: str = "redis://localhost:6379"
-    redis_max_connections: int = 10
-    redis_db: int = 0
+    # Database
     database_url: Optional[str] = None
     database_pool_min_size: int = 1
     database_pool_max_size: int = 10
