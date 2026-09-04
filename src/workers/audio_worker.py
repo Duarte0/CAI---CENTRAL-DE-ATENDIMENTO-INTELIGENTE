@@ -1,4 +1,4 @@
-"""Redis worker that downloads DigiSac voice messages and transcribes them."""
+"""PostgreSQL-polling worker that downloads and transcribes DigiSac audio."""
 
 import asyncio
 import logging

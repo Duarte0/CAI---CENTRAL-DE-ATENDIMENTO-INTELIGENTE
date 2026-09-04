@@ -1,9 +1,9 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037; retirada validada das listas legadas no issue 0052; views IA de status/resultado sem produtor Redis e sunset bounded no issue 0054; runtime Redis-free no issue 0055
-- **Versão:** 2.4
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037; retirada validada das listas legadas no issue 0052; views IA de status/resultado sem produtor Redis e sunset bounded no issue 0054; runtime Redis-free no issue 0055; issue 0056 mantém o storage retido até completar os gates sem tocar estado durável
+- **Versão:** 2.5
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049, 0050, 0052, 0054 e 0055
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049, 0050, 0052, 0054, 0055 e 0056
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
@@ -119,6 +119,13 @@ classificações, transcrições, extrações e métricas são reclamados ou lid
 PostgreSQL. O desligamento do serviço Redis não altera rows duráveis nem agendas;
 as ferramentas de reconciliação histórica continuam disponíveis somente na
 imagem `maintenance` e exigem endpoint explícito.
+
+**Disposição sem impacto no trabalho durável (issue 0056, 2026-09-04):** o
+storage histórico ainda está retido fora da topologia normal. Sua remoção só
+é permitida depois do gate de observação do issue 0054, do backup final validado
+e da inspeção exata do alvo. A disposição não pode remover ciclos, classificações,
+mídias, leases, retries ou qualquer outra linha PostgreSQL; falhas posteriores
+devem ser investigadas pelo estado durável, sem recriar filas Redis.
 
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
 **216 testes offline aprovados e 69 skips**, Alembic

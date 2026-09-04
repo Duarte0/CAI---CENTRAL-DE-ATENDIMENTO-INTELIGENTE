@@ -1,6 +1,6 @@
 # Implementation Plan
 
-_Planning baseline: 2026-09-03. Source, Alembic revisions, configuration, and
+_Planning baseline: 2026-09-04. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
 evidence, never production availability. The SPEC-0013 Phase 2 delivery is
 complete locally; production acceptance remains separate._
@@ -121,6 +121,15 @@ complete locally; production acceptance remains separate._
   Docker container/storage was not deleted. Focused source, route, OpenAPI,
   dependency and Compose guards plus the Redis-free named runtime smoke prove
   the boundary locally; this is not production-wide acceptance.
+- **[blocked | current checkout | 2026-09-04] Issue 0056 retained Redis
+  storage disposal pre-check.** The active Compose topology is Redis-free and
+  the named runtime is healthy. The exact historical target is the stopped
+  `cai-redis-1` container with volume `cai_redis_data`, with no PostgreSQL or
+  worker attachment. The Redis-free application containers started at
+  `2026-09-03T21:20:45Z`; issue 0054's required 86400-second observation gate
+  therefore ends at `2026-09-04T21:20:45Z`. Existing versioned dumps are
+  readable, but no final post-window dump or complete archived 0052–0055
+  report set is present. No container or volume was removed.
 
 ### Implemented with bounded evidence
 
@@ -152,8 +161,9 @@ complete locally; production acceptance remains separate._
 
 ### Approved follow-up backlog
 
-- **[open | staged operational decommission]** Redis cleanup and final storage
-  disposal (issues 0054 and 0056; issues 0052–0053 and 0055 completed). Issue 0052 retired only fully
+- **[blocked | staged operational decommission]** Redis cleanup and final
+  storage disposal (issues 0054 and 0056; issues 0052–0053 and 0055 completed).
+  Issue 0052 retired only fully
   inventoried legacy IA, audio and image queue entries; issue 0053 moved generic webhook idempotency
   from Redis to a PostgreSQL ledger; issue 0054 stops IA status/result
   compatibility writes and starts their required sunset observation; issue 0055 removed Redis from the application runtime
@@ -288,7 +298,8 @@ complete locally; production acceptance remains separate._
      dependencies and Compose are Redis-free while the retained storage remains
      outside the application topology for rollback;
    - issue 0056 permanently disposes the exact Redis container/storage target
-     only after Redis-free deployment, backup validation and explicit approval.
+     only after issue 0054 is closed, the observation window and backup/report
+     validation are complete, and explicit approval confirms the exact target.
 
    Dependencies and risks: 0053–0055 must not assume a mixed old/new
    deployment is safe; PostgreSQL is the durable authority, but idempotency and
@@ -298,14 +309,15 @@ complete locally; production acceptance remains separate._
    `FLUSHALL`, broad Docker volume cleanup, provider replay or deletion of
    PostgreSQL business data.
 
-   Current runtime evidence is recorded in issues 0052–0055: the final dry-run found
+   Current runtime evidence is recorded in issues 0052–0056: the final dry-run found
    zero entries in all six retired lists after removing 17,164 IA and 71 image
    entries. The protected Redis families and PostgreSQL durable totals remain
    outside this issue's deletion boundary; issue 0053 retains legacy
    `processed:*` markers for their natural TTL and does not delete them. Issue
    0054 likewise retains both compatibility families until its observation gate
    is complete. Issue 0055's named `cai` rebuild verified API health and worker
-   startup without Redis; the old Redis container/storage remains retained.
+   startup without Redis; issue 0056 identified the old Redis container/storage
+   exactly but did not remove it while the gate remains open.
 
 ## Dependencies, discrepancies, and sequencing
 
@@ -342,9 +354,9 @@ shell/session/BFF, read, and command-action increments. Issues 0048–0053 are
 complete locally, with issues 0052–0053 also accepted in the named `cai`
 runtime. Issue 0054 is implemented locally and ready for the named runtime
 handoff, but its destructive compatibility-key apply remains gated by the
-complete observation window. Issue 0054 remains gated by its complete TTL
-observation and bounded apply; issue 0056 defines the remaining destructive
-storage disposal. Issue
+complete observation window. The current 0056 pre-check is blocked until the
+0054 observation/apply, final backup validation and report archive are complete;
+issue 0056 defines the remaining destructive storage disposal. Issue
 0053 is complete locally and in the named `cai` runtime, with its legacy marker
 source retained for the following compatibility/decommission stages.
 The remaining items are product, operational authorization, or

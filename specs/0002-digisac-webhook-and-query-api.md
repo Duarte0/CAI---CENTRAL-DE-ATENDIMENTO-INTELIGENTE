@@ -1,9 +1,9 @@
 # SPEC-0002 — Webhook DigiSac e API de consulta
 
-- **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção, consultas sem versão e runtime PostgreSQL-only
-- **Versão:** 2.0
+- **Status:** baseline ativo, derivado da implementação; uso interno com HMAC de produção, consultas sem versão e runtime PostgreSQL-only; a disposição do storage Redis é um gate operacional separado e não altera o contrato HTTP
+- **Versão:** 2.1
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0055
+- **Rastreabilidade:** PRD §§5.1–5.2, 7 e 8; ARCHITECTURE §§3–4 e 10; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; SPEC-0001; issues 0049–0056
 - **Dependências:** SPEC-0001
 
 ## Objetivo e não objetivos
@@ -44,6 +44,12 @@ o banco, e `GET /queues` devolve somente métricas duráveis. A mudança dos cam
 de listas legadas é explícita no contrato OpenAPI e não fabrica zeros. Redis só
 é acessível por comandos históricos do profile `maintenance`, com
 `MAINTENANCE_REDIS_URL` explícita.
+
+A remoção final do container/volume histórico pertence ao issue 0056 e não
+altera `POST /webhook/digisac`, `GET /health`, `GET /queues` ou as consultas.
+Antes da disposição, o runtime deve passar pelo período de observação do issue
+0054 e por um backup PostgreSQL final validado; depois dela, a indisponibilidade
+de Redis continua sem efeito sobre a ingestão, idempotência ou métricas duráveis.
 
 ## Ingestão, validação e normalização
 

@@ -861,6 +861,44 @@ restaure uma imagem anterior ao issue 0053 sem uma ponte testada para o ledger
 transicional validada. A disposição do container/volume retido pertence ao
 issue 0056.
 
+### Disposição final do storage Redis (issue 0056)
+
+Esta é uma operação irreversível e só pode ocorrer depois de o issue 0054
+encerrar sua janela completa de 86400 segundos e seu apply bounded, de um
+backup PostgreSQL final ser listado/restaurado em um alvo descartável e de uma
+revisão explícita confirmar o alvo. Antes da deleção, resolva novamente o
+projeto, container, volume, mount e anexos:
+
+```bash
+docker compose -p cai config --services
+docker compose -p cai config --volumes
+docker inspect cai-redis-1
+docker volume inspect cai_redis_data
+docker ps -a --filter volume=cai_redis_data
+```
+
+No pré-check de 2026-09-04, o alvo histórico era exatamente
+`cai-redis-1`/`cai_redis_data`, com o container parado e sem PostgreSQL ou
+worker anexado, mas o gate 0054 e o backup final ainda estavam pendentes. Por
+isso nenhum alvo foi removido. Quando todos os gates estiverem registrados, a
+remoção deve usar somente os nomes revisados, verificar o container parado e
+confirmar a falha do `docker volume inspect` após a remoção:
+
+```bash
+docker rm -- cai-redis-1
+docker volume rm -- cai_redis_data
+docker volume inspect cai_redis_data  # deve falhar: volume removido
+```
+
+Se o nome, projeto, mount ou estado não coincidir, pare. Não use
+`docker compose down -v`, `docker volume prune`, `docker system prune`,
+`FLUSHDB` ou `FLUSHALL`, e nunca remova volumes PostgreSQL, backups, workers,
+classificações, ciclos, mídia, contatos ou ledgers. Após a deleção, confira
+`/health`, `/queues`, os quatro processos da aplicação, a conexão PostgreSQL e
+os logs; uma falha não autoriza recriar filas Redis. Os scripts históricos são
+mantidos para decisão de arquivamento, mas não constituem um runtime Redis
+suportado após o descarte.
+
 ### Sunset das views IA Redis (issue 0054)
 
 Após parar o worker antigo e iniciar a revisão sem o produtor Redis, capture e

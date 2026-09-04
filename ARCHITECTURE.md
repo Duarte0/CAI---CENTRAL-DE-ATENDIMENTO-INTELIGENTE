@@ -278,6 +278,26 @@ families above. The historical \`src/utils/backfill_redis_history.py\` utility
 remains available only in the maintenance boundary; the compatibility inventory
 must establish its historical disposition before any deletion.
 
+### Final storage disposal (issue 0056)
+
+The Redis-free runtime does not make the former Redis storage disposable by
+itself. The exact project-scoped container and volume must remain retained until
+issue 0054 completes its compatibility-key observation and bounded apply, the
+final PostgreSQL backup is validated in a disposable target, and the reviewed
+operator confirms the target. In the named `cai` runtime, the 2026-09-04
+pre-check resolved the stopped container `cai-redis-1` and volume
+`cai_redis_data`; no PostgreSQL or worker container was attached. The window
+had not completed, so neither target was deleted.
+
+After the gate, deletion is limited to the exact reviewed names and is followed
+by a failed inspect of that exact volume plus health, durable queue, worker and
+PostgreSQL checks. `docker volume prune`, `docker compose down -v`,
+`docker system prune`, `FLUSHDB` and `FLUSHALL` are prohibited. A post-delete
+failure is investigated through PostgreSQL durable state and never by recreating
+legacy Redis queues. Historical maintenance/backfill source remains archived
+under its separate retention decision and is not an active application
+dependency.
+
 ## 5. Finalization modes
 
 Persistent DigiSac-history finalization is the only supported mode. Ticket
@@ -510,6 +530,9 @@ For the issue 0053 handoff, the old API is stopped and drained before the
 `0025_webhook_event_keys` migration and reviewed import of live `processed:*`
 markers. The new API starts only after that import; source Redis markers are
 retained for their natural TTL and are not part of the active decision path.
+The former `cai-redis-1` container and `cai_redis_data` volume are outside this
+topology while issue 0056's final disposal gate is pending; their presence must
+not be interpreted as an application dependency.
 
 ## 12. Reliability and recovery invariants
 
@@ -591,8 +614,9 @@ records these delivery limitations:
   all active workers use PostgreSQL/provider contracts only; `/queues` no
   longer fabricates the six legacy Redis list fields. Historical Redis tools
   and their client live only in the separate `maintenance` image and require
-  `MAINTENANCE_REDIS_URL`. The retained Redis container/volume is not deleted;
-  issue `0056` owns that irreversible disposal.
+  `MAINTENANCE_REDIS_URL`. The retained Redis container/volume is not deleted
+  until issue `0054`'s observation/apply and issue `0056`'s backup and target
+  gates complete; issue `0056` owns that irreversible disposal.
 - Issue `0025` removes extracted webhook values from normal logs while
   preserving safe event, presence/type, and source metadata.
 - SPEC-0012 and issues `0038`–`0040` provide six authenticated internal

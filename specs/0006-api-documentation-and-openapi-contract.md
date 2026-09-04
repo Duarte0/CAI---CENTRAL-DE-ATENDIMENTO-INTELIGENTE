@@ -1,11 +1,11 @@
 # SPEC-0006 — Documentação da API HTTP e contrato OpenAPI
 
-- **Status:** implementado; delta v1.8 documenta as métricas duráveis de áudio/imagem, a remoção dos campos Redis de `/queues`, a fronteira do comando de manutenção do issue 0052, a idempotência PostgreSQL do webhook do issue 0053, a independência PostgreSQL das consultas de status/resultado após o issue 0054 e o runtime Redis-free do issue 0055
-- **Versão:** 1.8
+- **Status:** implementado; delta v1.9 documenta as métricas duráveis de áudio/imagem, a remoção dos campos Redis de `/queues`, a fronteira do comando de manutenção do issue 0052, a idempotência PostgreSQL do webhook do issue 0053, a independência PostgreSQL das consultas de status/resultado após o issue 0054, o runtime Redis-free do issue 0055 e a disposição operacional separada do issue 0056
+- **Versão:** 1.9
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
 - **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13;
   `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012; issues 0049–0050,
-  0053, 0054 e 0055
+  0053, 0054, 0055 e 0056
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004, SPEC-0005 e
   SPEC-0012
 
@@ -149,3 +149,9 @@ passou a documentar somente PostgreSQL e `/queues` passou a expor apenas as
 métricas duráveis, removendo explicitamente os seis campos de listas Redis sem
 fabricar zeros. O contrato foi verificado com testes de rota, OpenAPI e source
 guards do runtime.
+
+A remoção do storage Redis retido no issue 0056 não modifica rotas, schemas,
+status HTTP ou o contrato durável de `/health` e `/queues`. O smoke posterior à
+disposição deve confirmar novamente essas superfícies a partir do PostgreSQL;
+backup, identificação do alvo e deleção pertencem à operação de infraestrutura,
+não ao OpenAPI.
