@@ -6,12 +6,14 @@ creation is deliberately not performed here; deploys must apply Alembic
 migrations before starting the application.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -19,8 +21,15 @@ from psycopg_pool import ConnectionPool
 from src.core.config import settings
 from src.core.digisac_client import DigisacContact
 
+if TYPE_CHECKING:
+    from src.core.digisac_contact_repository import ContactHydrationRequestResult
+    from src.core.webhook_event_repository import (
+        WebhookEventCleanupReport,
+        WebhookEventDecision,
+    )
+
 logger = logging.getLogger(__name__)
-CURRENT_SCHEMA_REVISION = "0023_manual_reconciliation"
+CURRENT_SCHEMA_REVISION = "0025_webhook_event_keys"
 EXPECTED_SCHEMA_REVISION = CURRENT_SCHEMA_REVISION
 SUPPORTED_SCHEMA_REVISIONS = frozenset(
     {
@@ -43,6 +52,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "0017_digisac_acessorias_identity",
         "0018_department_mapping",
         "0019_acessorias_request_creation",
+        "0025_webhook_event_keys",
         CURRENT_SCHEMA_REVISION,
     }
 )
@@ -57,6 +67,7 @@ class SchemaCapabilities:
     classification_messages: bool = False
     conversation_cycles: bool = False
     contact_identity: bool = False
+    webhook_event_keys: bool = False
 
 
 _schema_capabilities = SchemaCapabilities()
@@ -198,6 +209,9 @@ def _verify_schema_sync() -> None:
                 ) IS NOT NULL,
                 to_regclass(
                     current_schema() || '.digisac_contacts'
+                ) IS NOT NULL,
+                to_regclass(
+                    current_schema() || '.webhook_event_keys'
                 ) IS NOT NULL
             """
         ).fetchone()
@@ -209,15 +223,18 @@ def _verify_schema_sync() -> None:
         classification_messages=bool(capabilities[2]),
         conversation_cycles=bool(capabilities[3]),
         contact_identity=bool(capabilities[4]),
+        webhook_event_keys=bool(capabilities[5]),
     )
     logger.info(
         "PostgreSQL schema verified: revision=%s identity=%s "
-        "idempotency=%s normalized_messages=%s conversation_cycles=%s",
+        "idempotency=%s normalized_messages=%s conversation_cycles=%s "
+        "webhook_event_keys=%s",
         row[0],
         _schema_capabilities.classification_identity_columns,
         _schema_capabilities.classification_idempotency_index,
         _schema_capabilities.classification_messages,
         _schema_capabilities.conversation_cycles,
+        _schema_capabilities.webhook_event_keys,
     )
     if not _schema_capabilities.conversation_cycles:
         raise RuntimeError(
@@ -232,6 +249,11 @@ def _verify_schema_sync() -> None:
     if not _schema_capabilities.contact_identity:
         raise RuntimeError(
             "DigiSac contact identity requires migration "
+            f"{CURRENT_SCHEMA_REVISION}"
+        )
+    if not _schema_capabilities.webhook_event_keys:
+        raise RuntimeError(
+            "webhook event idempotency requires migration "
             f"{CURRENT_SCHEMA_REVISION}"
         )
 
@@ -333,6 +355,18 @@ async def request_digisac_contact_hydration(
     )
 
 
+async def request_digisac_contact_hydration_result(
+    external_id: str, *, requested_at: str | datetime | None = None
+) -> ContactHydrationRequestResult:
+    from src.core.digisac_contact_repository import (
+        request_digisac_contact_hydration_result as repository_request_digisac_contact_hydration_result,
+    )
+
+    return await repository_request_digisac_contact_hydration_result(
+        external_id, requested_at=requested_at
+    )
+
+
 async def claim_digisac_contact_hydration(
     *, lease_seconds: int | None = None
 ) -> dict[str, Any] | None:
@@ -413,11 +447,14 @@ BLOCKED_CYCLE_STATUSES = _conversation_cycle_repository.BLOCKED_CYCLE_STATUSES
 RECOVERABLE_CYCLE_STATUSES = _conversation_cycle_repository.RECOVERABLE_CYCLE_STATUSES
 TERMINAL_CYCLE_STATUSES = _conversation_cycle_repository.TERMINAL_CYCLE_STATUSES
 claim_cycle = _conversation_cycle_repository.claim_cycle
+claim_next_cycle = _conversation_cycle_repository.claim_next_cycle
 close_cycle = _conversation_cycle_repository.close_cycle
 create_open_cycle = _conversation_cycle_repository.create_open_cycle
 get_content_states = _conversation_cycle_repository.get_content_states
 get_cycle = _conversation_cycle_repository.get_cycle
+get_cycles_by_public_ids = _conversation_cycle_repository.get_cycles_by_public_ids
 get_cycle_metrics = _conversation_cycle_repository.get_cycle_metrics
+get_cycle_work_metrics = _conversation_cycle_repository.get_cycle_work_metrics
 get_cycle_result = _conversation_cycle_repository.get_cycle_result
 get_latest_cycle = _conversation_cycle_repository.get_latest_cycle
 get_previous_cycle = _conversation_cycle_repository.get_previous_cycle
@@ -427,6 +464,48 @@ release_cycle_publication = _conversation_cycle_repository.release_cycle_publica
 save_cycle_messages = _conversation_cycle_repository.save_cycle_messages
 transition_cycle = _conversation_cycle_repository.transition_cycle
 wake_unblocked_media_cycles = _conversation_cycle_repository.wake_unblocked_media_cycles
+
+
+async def cleanup_expired_webhook_event_keys(
+    batch_size: int = 100,
+) -> WebhookEventCleanupReport:
+    from src.core.webhook_event_repository import (
+        cleanup_expired_webhook_event_keys as repository_cleanup,
+    )
+
+    return await repository_cleanup(batch_size)
+
+
+async def count_expired_webhook_event_keys() -> int:
+    from src.core.webhook_event_repository import (
+        count_expired_webhook_event_keys as repository_count,
+    )
+
+    return await repository_count()
+
+
+async def import_legacy_webhook_event_keys(entries: Sequence[tuple[str, int]]) -> int:
+    from src.core.webhook_event_repository import (
+        import_legacy_webhook_event_keys as repository_import,
+    )
+
+    return await repository_import(entries)
+
+
+async def record_webhook_event(event_digest: str) -> WebhookEventDecision:
+    from src.core.webhook_event_repository import (
+        record_webhook_event as repository_record,
+    )
+
+    return await repository_record(event_digest)
+
+
+async def try_mark_webhook_event(event_digest: str) -> bool:
+    from src.core.webhook_event_repository import (
+        try_mark_webhook_event as repository_try_mark,
+    )
+
+    return await repository_try_mark(event_digest)
 
 
 # Keep the historical facade import stable for IA sender-name projection.
@@ -445,7 +524,17 @@ get_image_extraction = _durable_media_repository.get_image_extraction
 get_pending_content_extractions = (
     _durable_media_repository.get_pending_content_extractions
 )
+claim_next_transcription = _durable_media_repository.claim_next_transcription
+claim_next_image_extraction = (
+    _durable_media_repository.claim_next_image_extraction
+)
 get_transcription = _durable_media_repository.get_transcription
+get_transcription_work_metrics = (
+    _durable_media_repository.get_transcription_work_metrics
+)
+get_image_extraction_work_metrics = (
+    _durable_media_repository.get_image_extraction_work_metrics
+)
 recover_stale_image_extractions = (
     _durable_media_repository.recover_stale_image_extractions
 )

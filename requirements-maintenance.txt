@@ -1,0 +1,3 @@
+# Dependencies used only by bounded historical Redis maintenance commands.
+# This file is never installed into the API or worker runtime image.
+redis==5.0.1

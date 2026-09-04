@@ -1,4 +1,3 @@
-import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -8,18 +7,15 @@ import pytest
 
 from src.core.config import settings
 from src.core.db import (
+    claim_next_image_extraction,
     close_cycle,
     get_cycle,
     get_image_extraction,
-    get_recoverable_cycles,
-    get_transcription,
     reserve_image_extraction,
-    reserve_transcription,
     save_cycle_messages,
     set_image_extraction_status,
-    set_transcription_status,
 )
-from src.workers import audio_worker, ia_worker, image_worker
+from src.workers import ia_worker, image_worker
 
 
 pytestmark = pytest.mark.postgres
@@ -75,159 +71,18 @@ def make_ia_worker(queue: QueueTransport) -> ia_worker.IAWorker:
     return worker
 
 
-async def due_cycle(conversation_id: str, close_event_key: str) -> dict[str, Any]:
-    cycle, _ = await close_cycle(
-        conversation_id=conversation_id,
-        protocol="test-protocol",
-        closed_at="2026-08-09T12:00:00Z",
-        close_event_key=close_event_key,
-    )
-    with psycopg.connect(settings.database_url) as connection:
-        connection.execute(
-            """
-            UPDATE conversation_processing_cycles
-            SET status = 'pending',
-                next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second',
-                lease_owner = NULL,
-                lease_expires_at = NULL,
-                enqueued_at = NULL
-            WHERE public_id = %s
-            """,
-            (cycle["public_id"],),
-        )
-    return cycle
-
-
 @pytest.mark.asyncio
-async def test_cycle_reconciliation_is_atomic_and_respects_guards():
-    eligible = await due_cycle("recovery-cycle-concurrent", "close-concurrent")
-    queue = QueueTransport()
-    await asyncio.gather(
-        make_ia_worker(queue)._reconcile_cycles(),
-        make_ia_worker(queue)._reconcile_cycles(),
-    )
-
-    cycle_jobs = [job for name, job in queue.published if name == "ia_queue"]
-    assert [job["cycle_id"] for job in cycle_jobs] == [str(eligible["public_id"])]
-    persisted = await get_cycle(str(eligible["public_id"]))
-    assert persisted is not None
-    assert persisted["enqueued_at"] is not None
-
-    guarded = {
-        "active": await due_cycle("recovery-cycle-active", "close-active"),
-        "future": await due_cycle("recovery-cycle-future", "close-future"),
-        "marked": await due_cycle("recovery-cycle-marked", "close-marked"),
-    }
-    with psycopg.connect(settings.database_url) as connection:
-        connection.execute(
-            """
-            UPDATE conversation_processing_cycles
-            SET lease_owner = 'other-worker',
-                lease_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute'
-            WHERE public_id = %s
-            """,
-            (guarded["active"]["public_id"],),
-        )
-        connection.execute(
-            """
-            UPDATE conversation_processing_cycles
-            SET next_attempt_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes'
-            WHERE public_id = %s
-            """,
-            (guarded["future"]["public_id"],),
-        )
-        connection.execute(
-            """
-            UPDATE conversation_processing_cycles
-            SET enqueued_at = CURRENT_TIMESTAMP
-            WHERE public_id = %s
-            """,
-            (guarded["marked"]["public_id"],),
-        )
-
-    await make_ia_worker(queue)._reconcile_cycles()
-    assert len([job for name, job in queue.published if name == "ia_queue"]) == 1
-    for cycle in guarded.values():
-        row = await get_cycle(str(cycle["public_id"]))
-        assert row is not None
-        if cycle is guarded["marked"]:
-            assert row["enqueued_at"] is not None
-        else:
-            assert row["enqueued_at"] is None
-
-
-@pytest.mark.asyncio
-async def test_cycle_publication_failure_releases_only_matching_claim():
-    failed = await due_cycle("recovery-cycle-failure", "close-failure")
-    successful = await due_cycle("recovery-cycle-success", "close-success")
-    queue = QueueTransport()
-    queue.fail_cycle_id = str(failed["public_id"])
-
-    await make_ia_worker(queue)._reconcile_cycles()
-
-    failed_row = await get_cycle(str(failed["public_id"]))
-    successful_row = await get_cycle(str(successful["public_id"]))
-    assert failed_row is not None and successful_row is not None
-    assert failed_row["status"] == "pending"
-    assert failed_row["enqueued_at"] is None
-    assert successful_row["enqueued_at"] is not None
-
-    queue.fail_cycle_id = None
-    await make_ia_worker(queue)._reconcile_cycles()
-    cycle_jobs = [job for name, job in queue.published if name == "ia_queue"]
-    assert sorted(job["cycle_id"] for job in cycle_jobs) == sorted(
-        [str(failed["public_id"]), str(successful["public_id"])]
-    )
-    assert await get_recoverable_cycles(limit=10) == []
-    with psycopg.connect(settings.database_url) as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM ia_classifications"
-        ).fetchone() == (0,)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["audio", "image"])
-async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
+@pytest.mark.parametrize("kind", ["image"])
+async def test_image_polling_claim_is_due_only_and_lease_owned(kind: str):
     message_ids = {
         "due": f"{kind}-recovery-due",
         "queued": f"{kind}-recovery-queued",
         "future": f"{kind}-recovery-future",
     }
-    if kind == "audio":
-        reserve = reserve_transcription
-        set_status = set_transcription_status
-        get_content = get_transcription
-        table = "message_transcriptions"
-        worker: Any = audio_worker.AudioTranscriptionWorker(
-            QueueTransport(
-                [
-                    {
-                        "message_id": message_ids["queued"],
-                        "conversation_id": "safe-ticket",
-                        "attempt": 1,
-                    }
-                ],
-                queued_queue="audio_transcription_queue",
-            )
-        )
-    else:
-        reserve = reserve_image_extraction
-        set_status = set_image_extraction_status
-        get_content = get_image_extraction
-        table = "message_image_extractions"
-        worker = image_worker.ImageExtractionWorker(
-            QueueTransport(
-                [
-                    {
-                        "message_id": message_ids["queued"],
-                        "conversation_id": "safe-ticket",
-                        "attempt": 1,
-                    }
-                ],
-                queued_queue="image_extraction_queue",
-            )
-        )
-
+    reserve = reserve_image_extraction
+    set_status = set_image_extraction_status
+    get_content = get_image_extraction
+    table = "message_image_extractions"
     for message_id in message_ids.values():
         assert await reserve(message_id, "safe-ticket", "test-model")
     with psycopg.connect(settings.database_url) as connection:
@@ -247,16 +102,32 @@ async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
         expected_statuses=("pending",),
     )
 
-    assert await worker.recover_stale_jobs() == 1
-    queue = worker.redis
-    queued_ids = {
-        json.loads(raw)["message_id"]
-        for raw in await queue.lrange(worker.queue, 0, -1)
-    }
-    assert queued_ids == {message_ids["due"], message_ids["queued"]}
-    assert (await get_content(message_ids["due"]))["enqueued_at"] is not None
-    assert (await get_content(message_ids["queued"]))["enqueued_at"] is not None
-    assert await worker.recover_stale_jobs() == 0
+    first = await claim_next_image_extraction(
+        owner="image-worker-a",
+        lease_seconds=300,
+        message_id=message_ids["due"],
+    )
+    assert first is not None
+    assert first["message_id"] == message_ids["due"]
+    assert first["lease_owner"] == "image-worker-a"
+    assert first["attempt_count"] == 1
+    assert (
+        await claim_next_image_extraction(
+            owner="image-worker-b",
+            lease_seconds=300,
+            message_id=message_ids["due"],
+        )
+        is None
+    )
+    assert (
+        await claim_next_image_extraction(
+            owner="image-worker-b",
+            lease_seconds=300,
+            message_id=message_ids["future"],
+        )
+        is None
+    )
+    assert (await get_content(message_ids["future"]))["status"] == "pending"
     future_row = await get_content(message_ids["future"])
     assert future_row is not None
     assert future_row["status"] == "pending"
@@ -264,44 +135,7 @@ async def test_media_recovery_is_due_only_and_queue_idempotent(kind: str):
 
 
 @pytest.mark.asyncio
-async def test_audio_transient_dead_letter_recovery_keeps_postgres_pending_and_safety_copy():
-    message_id = "audio-transient-dead-letter-db"
-    assert await reserve_transcription(message_id, "safe-ticket", "test-model")
-    assert await set_transcription_status(
-        message_id,
-        "failed",
-        error_message="transient_audio_failure:http_429",
-        expected_statuses=("pending",),
-    )
-
-    dead_letter = json.dumps(
-        {
-            "message_id": message_id,
-            "conversation_id": "safe-ticket",
-            "attempt": 3,
-        }
-    )
-    queue = QueueTransport(
-        [{"message_id": message_id, "conversation_id": "safe-ticket", "attempt": 3}],
-        queued_queue="audio_transcription_dead_letter",
-    )
-    queue.queues["audio_transcription_dead_letter"] = [dead_letter]
-    worker = audio_worker.AudioTranscriptionWorker(queue)
-
-    assert await worker.recover_transient_dead_letters() == 1
-    row = await get_transcription(message_id)
-    assert row is not None
-    assert row["status"] == "pending"
-    assert row["next_attempt_at"] is not None
-    assert {
-        json.loads(raw)["message_id"]
-        for raw in await queue.lrange("audio_transcription_queue", 0, -1)
-    } == {message_id}
-    assert await queue.lrange("audio_transcription_dead_letter", 0, -1) == [dead_letter]
-
-
-@pytest.mark.asyncio
-async def test_successful_image_recovery_wakes_only_its_blocked_cycle(monkeypatch):
+async def test_successful_image_recovery_wakes_only_its_blocked_cycle_without_ia_queue(monkeypatch):
     target, _ = await close_cycle(
         conversation_id="recovery-image-target",
         protocol="test-protocol",
@@ -368,7 +202,7 @@ async def test_successful_image_recovery_wakes_only_its_blocked_cycle(monkeypatc
         "extract_image_message",
         lambda _message_id: "safe recovered image text",
     )
-    await image_worker.ImageExtractionWorker(queue).process_job(
+    await image_worker.ImageExtractionWorker(owner="image-test").process_job(
         {
             "message_id": "image-recovery-target",
             "conversation_id": "recovery-image-target",
@@ -380,8 +214,7 @@ async def test_successful_image_recovery_wakes_only_its_blocked_cycle(monkeypatc
     assert target_image["status"] == "completed"
 
     await make_ia_worker(queue)._reconcile_cycles()
-    cycle_jobs = [job for name, job in queue.published if name == "ia_queue"]
-    assert [job["cycle_id"] for job in cycle_jobs] == [str(target["public_id"])]
+    assert [job for name, job in queue.published if name == "ia_queue"] == []
     assert (await get_cycle(str(target["public_id"])))['status'] == "waiting_media"
     assert (await get_cycle(str(unrelated["public_id"])))['status'] == "media_blocked"
     with psycopg.connect(settings.database_url) as connection:

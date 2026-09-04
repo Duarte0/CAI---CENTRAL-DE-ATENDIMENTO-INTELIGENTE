@@ -1,9 +1,12 @@
-"""Copy existing Redis IA results into the durable PostgreSQL history.
+"""Maintenance-only importer for pre-0054 Redis IA result views.
 
 Redis only retains the final result and status after ticket processing completes;
 the original buffer (context and message IDs) has already been deleted.  The
 backfill therefore preserves the available result fields and records empty
-context/message IDs for legacy rows.
+context/message IDs for legacy rows.  The active IA worker never imports this
+module.  Run it only after the bounded compatibility inventory has recorded the
+historical disposition; logs intentionally contain categories and counts, never
+Redis keys or result payloads.
 """
 
 import argparse
@@ -16,10 +19,11 @@ from typing import Any
 from src.core.config import settings
 from src.core.db import (
     classification_exists,
+    close_database,
     initialize_database,
     insert_classification,
 )
-from src.core.redis_client import create_redis_client
+from scripts.redis_maintenance_client import create_redis_client
 
 
 logger = logging.getLogger(__name__)
@@ -45,11 +49,11 @@ async def backfill(dry_run: bool = False) -> tuple[int, int, int]:
             try:
                 result = json.loads(raw_result)
             except (TypeError, json.JSONDecodeError):
-                logger.warning("Skipping invalid Redis result: %s", key)
+                logger.warning("Skipping invalid Redis result: reason=invalid_json")
                 invalid += 1
                 continue
             if not isinstance(result, dict):
-                logger.warning("Skipping non-object Redis result: %s", key)
+                logger.warning("Skipping invalid Redis result: reason=non_object")
                 invalid += 1
                 continue
 
@@ -76,6 +80,7 @@ async def backfill(dry_run: bool = False) -> tuple[int, int, int]:
             inserted += 1
     finally:
         await redis_client.aclose()
+        await close_database()
     return inserted, skipped, invalid
 
 

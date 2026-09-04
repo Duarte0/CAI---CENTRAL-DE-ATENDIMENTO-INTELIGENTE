@@ -6,9 +6,15 @@ import pytest
 
 from src.core.config import settings
 from src.core.db import (
+    claim_next_image_extraction,
+    claim_next_transcription,
+    get_image_extraction,
+    get_transcription,
     insert_classification,
     recover_stale_transcriptions,
     reserve_transcription,
+    reserve_image_extraction,
+    set_image_extraction_status,
     set_transcription_status,
 )
 from src.utils.backfill_classification_messages import (
@@ -232,3 +238,156 @@ async def test_future_media_schedule_is_claimed_once_when_due():
         ]
     )
     assert sum(len(items) for items in claims) == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_polling_claim_is_atomic_due_aware_and_lease_owned():
+    message_id = "audio-polling-concurrent"
+    assert await reserve_transcription(
+        message_id, "conversation-audio-polling", "test-model"
+    )
+
+    claims = await asyncio.gather(
+        *[
+            claim_next_transcription(owner=f"audio-worker-{index}", lease_seconds=300)
+            for index in range(10)
+        ]
+    )
+    received = [claim for claim in claims if claim is not None]
+    assert len(received) == 1
+    claimed = received[0]
+    assert claimed["message_id"] == message_id
+    assert claimed["status"] == "processing"
+    assert claimed["attempt_count"] == 1
+    assert claimed["lease_owner"].startswith("audio-worker-")
+    assert claimed["lease_expires_at"] is not None
+    assert await claim_next_transcription(owner="late-worker", lease_seconds=300) is None
+
+    row = await get_transcription(message_id)
+    assert row is not None
+    assert row["status"] == "processing"
+    assert row["enqueued_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_audio_polling_does_not_claim_future_retry_and_recovers_expired_lease():
+    future_id = "audio-polling-future"
+    stale_id = "audio-polling-stale"
+    assert await reserve_transcription(future_id, "conversation", "test-model")
+    assert await reserve_transcription(stale_id, "conversation", "test-model")
+    future = datetime.now(timezone.utc) + timedelta(minutes=10)
+    assert await set_transcription_status(
+        future_id,
+        "pending",
+        next_attempt_at=future,
+        expected_statuses=("pending",),
+    )
+    stale_claim = await claim_next_transcription(owner="old-worker", lease_seconds=300)
+    assert stale_claim is not None
+    assert stale_claim["message_id"] == stale_id
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE message_transcriptions
+            SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+            WHERE message_id = %s
+            """,
+            (stale_id,),
+        )
+
+    assert await claim_next_transcription(
+        owner="before-due", lease_seconds=300, message_id=future_id
+    ) is None
+    recovered = await claim_next_transcription(
+        owner="new-worker", lease_seconds=300, message_id=stale_id
+    )
+    assert recovered is not None
+    assert recovered["previous_status"] == "processing"
+    assert recovered["lease_owner"] == "new-worker"
+    assert recovered["attempt_count"] == 2
+    assert recovered["error_message"] == "recovered after processing lease expired"
+
+
+@pytest.mark.asyncio
+async def test_audio_completion_requires_current_lease_owner():
+    message_id = "audio-polling-owner"
+    assert await reserve_transcription(message_id, "conversation", "test-model")
+    claim = await claim_next_transcription(owner="current-worker", lease_seconds=300)
+    assert claim is not None
+    assert (
+        await set_transcription_status(
+            message_id,
+            "completed",
+            text="stale completion",
+            expected_updated_at=claim["updated_at"],
+            expected_lease_owner="other-worker",
+        )
+        is None
+    )
+    assert await set_transcription_status(
+        message_id,
+        "completed",
+        text="valid completion",
+        expected_updated_at=claim["updated_at"],
+        expected_lease_owner="current-worker",
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_polling_claim_is_atomic_due_aware_and_lease_owned():
+    message_id = "image-polling-concurrent"
+    assert await reserve_image_extraction(
+        message_id, "conversation-image-polling", "test-model"
+    )
+
+    claims = await asyncio.gather(
+        *[
+            claim_next_image_extraction(
+                owner=f"image-worker-{index}", lease_seconds=300
+            )
+            for index in range(10)
+        ]
+    )
+    received = [claim for claim in claims if claim is not None]
+    assert len(received) == 1
+    claimed = received[0]
+    assert claimed["message_id"] == message_id
+    assert claimed["status"] == "processing"
+    assert claimed["attempt_count"] == 1
+    assert claimed["lease_owner"].startswith("image-worker-")
+    assert claimed["lease_expires_at"] is not None
+    assert await claim_next_image_extraction(
+        owner="late-worker", lease_seconds=300
+    ) is None
+
+    row = await get_image_extraction(message_id)
+    assert row is not None
+    assert row["status"] == "processing"
+    assert row["enqueued_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_image_completion_requires_current_lease_owner():
+    message_id = "image-polling-owner"
+    assert await reserve_image_extraction(message_id, "conversation", "test-model")
+    claim = await claim_next_image_extraction(
+        owner="current-worker", lease_seconds=300
+    )
+    assert claim is not None
+    assert (
+        await set_image_extraction_status(
+            message_id,
+            "completed",
+            text="stale completion",
+            expected_updated_at=claim["updated_at"],
+            expected_lease_owner="other-worker",
+        )
+        is None
+    )
+    assert await set_image_extraction_status(
+        message_id,
+        "completed",
+        text="valid completion",
+        expected_updated_at=claim["updated_at"],
+        expected_lease_owner="current-worker",
+    )

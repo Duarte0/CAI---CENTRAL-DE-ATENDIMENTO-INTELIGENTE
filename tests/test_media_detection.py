@@ -72,15 +72,7 @@ async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
         reserved.append((message_id, conversation_id, model))
         return True
 
-    class Redis:
-        def __init__(self):
-            self.jobs: list[tuple[str, str]] = []
-
-        async def rpush(self, queue: str, job: str):
-            self.jobs.append((queue, job))
-
     monkeypatch.setattr(routes, "reserve_image_extraction", fake_reserve)
-    redis = Redis()
     message = DigisacMessage(
         ticketId="ticket-id",
         id="image-document-id",
@@ -89,9 +81,8 @@ async def test_enqueue_image_extraction_accepts_image_document(monkeypatch):
         file={"name": "proof.jpg", "mimetype": "image/jpeg"},
     )
 
-    assert await routes.enqueue_image_extraction(redis, message) is True
+    assert await routes.enqueue_image_extraction(message) is True
     assert reserved and reserved[0][:2] == ("image-document-id", "ticket-id")
-    assert redis.jobs[0][0] == "image_extraction_queue"
 
 
 def test_history_normalizes_image_document_and_blocks_failed_extraction():

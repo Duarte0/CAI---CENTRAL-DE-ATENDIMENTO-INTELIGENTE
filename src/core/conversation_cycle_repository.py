@@ -311,6 +311,39 @@ async def get_cycle(public_id: str) -> dict[str, Any] | None:
     return await asyncio.to_thread(_get_cycle_sync, public_id)
 
 
+def _get_cycles_by_public_ids_sync(
+    public_ids: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    _require_cycle_schema()
+    normalized = tuple(
+        dict.fromkeys(public_id.strip() for public_id in public_ids if public_id.strip())
+    )
+    if not normalized:
+        return {}
+    with get_database_pool().connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT public_id, status, next_attempt_at, lease_expires_at,
+                       completed_at, updated_at
+                FROM conversation_processing_cycles
+                WHERE public_id::text = ANY(%s)
+                """,
+                (list(normalized),),
+            ).fetchall()
+    return {
+        str(row["public_id"]): _row_dict(row) or {}
+        for row in rows
+    }
+
+
+async def get_cycles_by_public_ids(
+    public_ids: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    """Return safe cycle summaries for a bounded operational inventory."""
+    return await asyncio.to_thread(_get_cycles_by_public_ids_sync, public_ids)
+
+
 def _get_latest_cycle_sync(conversation_id: str) -> dict[str, Any] | None:
     _require_cycle_schema()
     with get_database_pool().connection() as connection:
@@ -537,6 +570,63 @@ async def claim_cycle(
     return await asyncio.to_thread(
         _claim_cycle_sync,
         public_id,
+        owner=owner,
+        lease_seconds=lease_seconds,
+    )
+
+
+def _claim_next_cycle_sync(
+    *, owner: str, lease_seconds: int
+) -> dict[str, Any] | None:
+    """Atomically lease one due cycle without a transport queue."""
+    _require_cycle_schema()
+    with get_database_pool().connection() as connection:
+        with connection.transaction():
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    """
+                    WITH candidate AS (
+                        SELECT id
+                        FROM conversation_processing_cycles
+                        WHERE status = ANY(%s)
+                          AND (next_attempt_at IS NULL
+                               OR next_attempt_at <= CURRENT_TIMESTAMP)
+                          AND (lease_expires_at IS NULL
+                               OR lease_expires_at <= CURRENT_TIMESTAMP)
+                        ORDER BY COALESCE(next_attempt_at, updated_at), id
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    UPDATE conversation_processing_cycles AS cycle
+                    SET lease_owner = %s,
+                        lease_expires_at = CURRENT_TIMESTAMP
+                            + (%s * INTERVAL '1 second'),
+                        enqueued_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    FROM candidate
+                    WHERE cycle.id = candidate.id
+                    RETURNING cycle.*
+                    """,
+                    (
+                        list(RECOVERABLE_CYCLE_STATUSES),
+                        owner,
+                        lease_seconds,
+                    ),
+                ).fetchone()
+    return _row_dict(row)
+
+
+async def claim_next_cycle(
+    *, owner: str, lease_seconds: int
+) -> dict[str, Any] | None:
+    """Lease the next due persistent finalization cycle.
+
+    PostgreSQL is the work authority: a row is selected and leased in one
+    transaction, so polling workers never need to publish or consume a Redis
+    job copy.
+    """
+    return await asyncio.to_thread(
+        _claim_next_cycle_sync,
         owner=owner,
         lease_seconds=lease_seconds,
     )
@@ -803,6 +893,50 @@ def _cycle_metrics_sync() -> dict[str, int]:
 
 async def get_cycle_metrics() -> dict[str, int]:
     return await asyncio.to_thread(_cycle_metrics_sync)
+
+
+def _cycle_work_metrics_sync() -> dict[str, int]:
+    """Return PostgreSQL-derived finalization work counters."""
+    if not database._schema_capabilities.conversation_cycles:
+        return {"due": 0, "scheduled": 0, "leased": 0}
+    with get_database_pool().connection() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE status = ANY(%s)
+                      AND (next_attempt_at IS NULL
+                           OR next_attempt_at <= CURRENT_TIMESTAMP)
+                      AND (lease_expires_at IS NULL
+                           OR lease_expires_at <= CURRENT_TIMESTAMP)
+                ) AS due,
+                COUNT(*) FILTER (
+                    WHERE status = ANY(%s)
+                      AND next_attempt_at > CURRENT_TIMESTAMP
+                ) AS scheduled,
+                COUNT(*) FILTER (
+                    WHERE status = ANY(%s)
+                      AND lease_expires_at > CURRENT_TIMESTAMP
+                ) AS leased
+            FROM conversation_processing_cycles
+            """,
+            (
+                list(RECOVERABLE_CYCLE_STATUSES),
+                list(RECOVERABLE_CYCLE_STATUSES),
+                list(RECOVERABLE_CYCLE_STATUSES),
+            ),
+        ).fetchone()
+    if row is None:
+        return {"due": 0, "scheduled": 0, "leased": 0}
+    return {
+        "due": int(row[0]),
+        "scheduled": int(row[1]),
+        "leased": int(row[2]),
+    }
+
+
+async def get_cycle_work_metrics() -> dict[str, int]:
+    return await asyncio.to_thread(_cycle_work_metrics_sync)
 
 
 def _get_cycle_result_sync(public_id: str) -> dict[str, Any] | None:

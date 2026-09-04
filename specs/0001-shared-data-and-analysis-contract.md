@@ -1,20 +1,20 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; decisões de produto registradas abaixo
-- **Versão:** 1.5
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; issue 0053 moveu a idempotência genérica de webhook para PostgreSQL; issue 0054 retirou o produtor das views IA de status/resultado e deixou sua limpeza para o sunset bounded; issue 0055 removeu Redis do runtime e deixou seu acesso somente no contexto de manutenção; issue 0056 registrou a pré-disposição do storage sem executar sua remoção enquanto o gate 0054 permanece aberto; decisões de produto registradas abaixo
+- **Versão:** 1.13
 - **Prioridade/Fase:** P0 / baseline de requisitos
-- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0018_department_mapping`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035 e 0037
+- **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0025_webhook_event_keys`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050, 0051, 0052, 0053, 0054, 0055 e 0056
 - **Dependências:** nenhuma
 
 ## Objetivo e não objetivos
 
-Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável; Redis é somente transporte e coordenação transitória.
+Definir os contratos transversais de dados, classificação e segurança que tornam uma análise auditável, idempotente e recuperável. PostgreSQL é a fonte durável e a única dependência de dados/trabalho do runtime da aplicação; Redis não participa mais do runtime e só pode ser acessado por comandos históricos explicitamente isolados no contexto de manutenção.
 
-Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados. O issue 0037 adiciona somente uma auditoria manual, bounded e repetível para famílias Redis órfãs, sem apagar dados duráveis nem transformar a operação em job de retenção.
+Esta especificação registra retenção indefinida, sem exclusão ou arquivamento automático. Exclusão manual direta no PostgreSQL pode ocorrer caso a caso. Não há mudanças de schema de retenção, jobs de limpeza ou automação orientada pela LGPD planejados. Os issues 0037 e 0052 adicionam somente auditorias manuais, bounded e repetíveis para famílias Redis órfãs e listas legadas já fora do transporte ativo; não apagam dados duráveis nem transformam a operação em job de retenção.
 
 ## Estado de referência
 
-`PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0018_department_mapping`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
+`PRD.md` e `ARCHITECTURE.md` são baselines presentes, derivados da implementação. Código, migrations e configuração determinam o comportamento atual; esta especificação consolida o contrato que o trabalho pendente deve preservar. O schema é Alembic-owned até `0025_webhook_event_keys`; inicialização da aplicação deve apenas verificar o schema e não pode criar nem mutar tabelas.
 
 **Evidência de implementação (2026-08-14):** issue 0010 alinhou o prompt do
 worker com `VALID_INTENT_TYPES`, incluindo `financial` na lista permitida e na
@@ -56,10 +56,96 @@ reconciliação PostgreSQL; sua allowlist remove apenas famílias órfãs revisa
 retém `ia_processing` inconclusivo e não toca `processed:*`, resultados
 transitórios, filas, dead-letters ou registros PostgreSQL.
 
+**Transcrição durável (2026-09-02):** o issue 0049 estende a fronteira: a
+reserva, agenda, owner, lease, retry e resultado de áudio vivem em
+`message_transcriptions`; `audio_worker` não precisa de Redis nem publica listas.
+Listas legadas de áudio são somente evidência de cutover e não podem ser usadas
+como fonte de backlog.
+
+**Hydration de contatos (2026-09-03):** o issue 0051 mantém referências
+repetidas no limite PostgreSQL: locks por contato e a decisão normal não podem
+limpar ou antecipar um `next_attempt_at` futuro. `pending`, `running`, falha
+devida e hydration sucedida são observados como no-op apropriado; o poller
+continua dono de claims, lease expiry e retry. Não há nova fila Redis nem retry
+forçado sem contrato administrativo aprovado.
+
+**Extração de imagem durável (2026-09-02):** o issue 0050 aplica a mesma
+fronteira a `message_image_extractions`; reserva, agenda, owner, lease, retry e
+resultado são PostgreSQL, e `image_worker` reclama linhas due diretamente sem
+publicar ou consumir `image_extraction_queue`. A lista e a dead-letter legadas
+permanecem apenas para inventário bounded e retirada manual validada. Redis
+continua permitido somente para coordenação transitória e famílias explicitamente
+retidas; não é autoridade, transporte de mídia ou fonte das views IA de
+status/resultado.
+
+**Retirada validada de filas legadas (2026-09-03):** o issue 0052 adiciona o
+target Docker/perfil Compose `maintenance` e o coordenador
+`scripts.retire_validated_legacy_redis_queues`. O dry-run completo registra
+operador, revisão, projeto Compose, estado de `/health` e `/queues`, revisão do
+schema, invariantes agregadas do PostgreSQL e inventários das seis listas
+legadas. Relatórios guardam apenas digests SHA-256 dos valores Redis. O apply
+exige relatório revisado, snapshot posterior sem crescimento/troca, recovery
+point aprovado, confirmação exata e uma família por vez; usa somente `LREM`
+exato nas entradas validadas. Valores malformados, desconhecidos e
+dead-letters transitórios permanecem; o comando não republica, chama provider,
+altera PostgreSQL ou toca outras famílias Redis.
+
+**Idempotência genérica de webhook em PostgreSQL (2026-09-03):** o issue 0053
+move a decisão de uma entrega vencedora para `webhook_event_keys`, com digest
+SHA-256 minúsculo, `first_seen_at`, `expires_at` de uma hora e índice para
+limpeza bounded. A decisão usa uma única operação PostgreSQL concorrente:
+entregas dentro da janela retornam `duplicate`, e somente um conflito expirado
+pode ser substituído. A indisponibilidade do banco falha fechadamente e não
+autoriza um `202` de aceite. O ledger não guarda corpo, texto, contato, segredo,
+URL assinada ou resposta de provider; limpeza é independente do caminho de
+requisição, limitada por lote e observável apenas por contagens.
+
+O handoff de `processed:*` é uma operação única e explícita: a API antiga é
+parada e drenada, um dry-run completo com revisão/backup é arquivado, os
+marcadores ainda vivos são importados sem apagar suas chaves Redis, e só então
+a API PostgreSQL-only é iniciada. Uma fotografia nova ou truncada interrompe o
+apply. Isso evita a lacuna de uma implantação mista; a remoção das chaves
+retidas continua pertencendo aos issues 0054–0056.
+
+**Views IA Redis aposentadas (2026-09-03):** o issue 0054 removeu de
+`src/workers/ia_worker.py` a publicação de `ia_status:*` e `ia_result:*`,
+removeu `RESULT_TTL_SECONDS` da configuração do worker e retirou a dependência
+Redis do serviço IA. As rotas públicas continuam consultando os repositórios
+PostgreSQL. O comando `scripts.retire_ia_redis_compatibility` faz inventário
+bounded com buckets de TTL, digests de entrada e matches duráveis sem expor
+valores; o importador histórico foi mantido somente no perfil `maintenance`.
+No runtime `cai`, o dry-run encontrou 80 chaves de cada família, 80 resultados
+com match durável e zero resultado válido sem correspondência; o relatório
+sanitizado foi identificado pelo digest
+`527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`. Após 30
+segundos, as contagens permaneceram 80/80. Nenhuma chave foi removida nesta
+etapa: o apply requer decisão histórica, segunda fotografia e uma janela
+completa de 86400 segundos.
+
+**Runtime PostgreSQL-only (2026-09-03):** o issue 0055 removeu o cliente Redis,
+a inicialização/ping da API, a dependência do webhook, os campos de listas de
+`GET /queues`, a configuração `REDIS_*`, o pacote Redis do runtime e o serviço
+Redis do `docker-compose.yml`. As reservas de áudio/imagem, idempotência,
+health, métricas duráveis, ciclos, status/resultados e workers permanecem
+PostgreSQL-only. O cliente e os comandos históricos foram movidos para a
+imagem/profile `maintenance`, exigindo `MAINTENANCE_REDIS_URL` explícita; a
+imagem `api` não instala Redis nem contém esses scripts. O container Redis e
+seu volume não foram removidos por esta issue e permanecem fora da topologia
+aplicacional para o procedimento separado do issue 0056.
+
+**Pré-disposição do storage Redis (issue 0056, 2026-09-04):** a disposição é
+uma operação operacional irreversível, sem alteração de schema ou da
+autoridade PostgreSQL. A verificação deve aguardar o fechamento do issue 0054,
+um backup PostgreSQL final listado/restaurável em alvo descartável e a revisão
+do container/volume exatos, com zero anexos ativos. No runtime nomeado `cai`, o
+alvo identificado foi `cai-redis-1`/`cai_redis_data`, mas a janela de 86400
+segundos ainda não terminou; nenhum container, volume, dado PostgreSQL ou
+backup foi removido.
+
 ## Contrato de dados e integridade
 
-1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias e ciclos persistentes. Redis **deve** limitar-se a filas, locks, idempotência temporária e status/resultados com TTL.
-2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos.
+1. PostgreSQL **deve** persistir classificações, vínculos ordenados de mensagens, estados/resultados de mídia, histórico de atribuição, diretórios DigiSac e Acessórias, ciclos persistentes e a decisão genérica de idempotência de webhook. O ciclo IA e as mídias elegíveis **devem** ser reclamados por lease PostgreSQL; o runtime da aplicação não pode depender de Redis. Filas e famílias legadas só podem ser consultadas ou removidas por ferramentas de manutenção bounded, reconciliadas e explicitamente confirmadas.
+2. Cada classificação **deve** ter identidade interna e `public_id` UUIDv7 único. Quando `idempotency_key` for fornecida, ela **deve** ser única e não vazia; tentativas concorrentes com a mesma chave **devem** devolver a mesma classificação sem duplicar linhas ou vínculos. O digest genérico de webhook **deve** ser único no ledger enquanto `expires_at` não vencer, com substituição expirada atômica e retenção equivalente a uma hora.
 3. `classification_messages` e `conversation_cycle_messages` **devem** preservar a ordem que fundamenta o resultado. Um vínculo de mensagem e sua posição **devem** ser únicos dentro da classificação ou ciclo correspondente. Uma mensagem **não pode** pertencer a dois ciclos persistentes.
 4. Timestamps duráveis **devem** usar `TIMESTAMPTZ`; listas e snapshots estruturados **devem** usar JSONB onde o schema o define. Identificadores externos não resolvidos **devem** permanecer preservados, sem nomes ou transferências inventados.
 5. Alterações de schema **devem** ser Alembic aditivas e compatíveis. Backfills **devem** oferecer auditoria/dry-run, aplicação repetível e rollback em erro. Um downgrade que possa apagar classificações, ciclos ou agendamentos duráveis **deve** recusar-se explicitamente antes de perder dados.
@@ -74,15 +160,36 @@ transitórios, filas, dead-letters ou registros PostgreSQL.
 ## Observabilidade e compatibilidade
 
 - Logs **devem** conter motivo sanitizado, categoria/outcome e IDs seguros suficientes para correlacionar falhas, sem conteúdo sensível; diagnósticos do parser podem conter somente metadados estruturais limitados.
+- A retirada de listas legadas **deve** ocorrer em contexto de manutenção
+  separado do `api`, com `DATABASE_URL` e `MAINTENANCE_REDIS_URL` protegidos, revisão do
+  checkout, operador, relatório arquivado e recovery point registrado. Apply
+  **deve** ser por família, precedido de dry-run completo e segundo snapshot;
+  valores Redis brutos, credenciais, corpos, payloads e URLs assinadas não
+  podem entrar no relatório.
+- O sunset de `ia_status:*` e `ia_result:*` **deve** usar somente
+  `scripts.retire_ia_redis_compatibility`, exigir reconciliação histórica,
+  digests de chave/entrada, segunda fotografia e uma observação de pelo menos
+  um TTL completo antes do apply. O comando **não pode** tocar `processed:*`,
+  filas, `ia_processing` ou dados PostgreSQL.
+- A disposição final do storage Redis **deve** exigir issue 0054 concluído,
+  backup PostgreSQL final validado em alvo descartável, inspeção do projeto,
+  nome, ID, mount e anexos do volume exato, e revisão explícita. A operação
+  **não pode** usar `docker volume prune`, `docker compose down -v`,
+  `FLUSHDB`, `FLUSHALL` ou atingir volumes PostgreSQL, backups, workers,
+  classificações, ciclos, mídia, contatos ou ledgers.
+- Solicitações normais de hydration **devem** distinguir nos logs sanitizados
+  uma nova solicitação, duplicação, backoff futuro preservado, falha já devida
+  e estado sucedido/current; nenhum desses eventos pode antecipar
+  `next_attempt_at` ou introduzir fila Redis.
 - Os diagnósticos de extração do webhook **devem** registrar somente evento seguro,
   presença/tipo e caminho de origem; valores extraídos, corpo bruto, URLs e
   segredos não podem atravessar essa fronteira de log.
-- `GET /health` **deve** verificar Redis e PostgreSQL e retornar `503` quando o banco não estiver pronto.
+- `GET /health` **deve** verificar somente PostgreSQL e retornar `503` quando o banco não estiver pronto; indisponibilidade de Redis não pode impedir o runtime da aplicação.
 - Os dados **devem** ser retidos indefinidamente por seu valor histórico, analítico e futuro uso na construção de FAQ sobre o corpus de classificações. Não são planejados migração de retenção, job de limpeza ou automação LGPD; exclusão manual direta no PostgreSQL é permitida caso a caso.
 
 ## Testes e aceitação
 
-Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Migrations/backfills **devem** ser verificados contra banco descartável.
+Testes de evolução PostgreSQL e de identificadores **devem** cobrir UUIDv7, unicidade, idempotência concorrente do ledger de webhook, ordem/constraints de vínculos e agenda durável. Testes do worker **devem** cobrir contrato IA, taxonomia, título/protocolo, rejeição de saída incompleta e ausência de conteúdo sensível nos diagnósticos do parser. Testes de hydration **devem** provar que referências repetidas preservam um backoff futuro e deixam falhas devidas para o poller. Migrations/backfills **devem** ser verificados contra banco descartável, e o handoff de marcadores deve ser report-bound, sem apagar sua fonte Redis.
 
 - A mesma chave concorrente produz uma única classificação e o mesmo `public_id` para todos os chamadores.
 - Nenhuma saída sem os quatro campos contratuais produz um resultado persistido válido.

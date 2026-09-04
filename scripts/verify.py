@@ -19,7 +19,7 @@ COMPOSE_FILE = ROOT / "docker-compose.test.yml"
 TEST_DATABASE = "cai_test"
 TEST_USER = "cai_test"
 TEST_PASSWORD = "cai_test"
-EXPECTED_SCHEMA = "0023_manual_reconciliation"
+EXPECTED_SCHEMA = "0025_webhook_event_keys"
 
 
 class RunnerFailure(RuntimeError):

@@ -52,8 +52,9 @@ recovered only when their persisted error is demonstrably transient.
 
 - Durable, unbounded retry for transient audio/provider/network failures.
 - `Retry-After` parsing and audio-specific retry/backoff configuration.
-- Automatic recovery of legacy transient audio dead-letters.
-- Queue/dead-letter deduplication by `message_id`.
+- Bounded import of legacy transient audio dead-letters into PostgreSQL during
+  the queue cutover (issue 0049).
+- Queue/dead-letter deduplication by `message_id` during the legacy cutover.
 - Removal of a matching dead-letter only after successful persistence of the
   transcription.
 - Unit and PostgreSQL-backed recovery coverage where applicable.
@@ -73,12 +74,11 @@ recovered only when their persisted error is demonstrably transient.
    shared retry-delay helpers.
 2. Change transient audio failures to persist `pending` with a future
    `next_attempt_at`, regardless of the global classification attempt limit.
-3. Add periodic dead-letter recovery that inspects persisted audio rows, reopens
-   only failed rows with transient errors, preserves the dead-letter safety copy,
-   and publishes one deduplicated retry job.
-4. Remove matching audio dead-letters only after nonempty transcription text is
-   persisted as `completed`; release the publication marker if Redis publish
-   fails.
+3. Add bounded dead-letter recovery that inspects persisted audio rows and
+   reopens only failed rows with transient errors. Issue 0049 then lets
+   PostgreSQL polling discover the retry without publishing a Redis job.
+4. Retain legacy dead-letter evidence until the durable row is completed; the
+   issue 0049 cutover script may remove only validated safe entries explicitly.
 5. Add focused tests for retries beyond three attempts, provider timing,
    permanent failures, dead-letter recovery, deduplication, and success cleanup.
 6. Update `README.md`, `ARCHITECTURE.md`, and `IMPLEMENTATION_PLAN.md`, then
@@ -97,9 +97,10 @@ recovered only when their persisted error is demonstrably transient.
 - [x] `Retry-After` is honored with the configured provider margin and local
   backoff.
 - [x] Transient retries do not depend on `MAX_RETRY_ATTEMPTS`.
-- [x] Permanent failures become `failed` and enter the audio dead-letter.
-- [x] Existing transient dead-letters are recovered without duplicating queue
-  entries or removing their safety copies prematurely.
+- [x] Permanent failures become durable `failed` rows; legacy dead-letter
+  copies were retained only for the bounded issue 0049 cutover.
+- [x] Existing transient dead-letters can be imported without duplicating
+  durable work or removing their safety copies prematurely.
 - [x] A matching dead-letter is removed only after successful nonempty
   transcription persistence.
 - [x] Failed/non-transient dead-letters are not automatically retried.
@@ -122,16 +123,18 @@ Implemented durable audio retry parity with image recovery. Transient HTTP,
 provider, timeout, and connection failures now remain pending with
 provider-aware `Retry-After` and local backoff independent of
 `MAX_RETRY_ATTEMPTS`. Legacy dead-letters are reopened only from persisted
-transient evidence; Redis queue/dead-letter entries are deduplicated by
-`message_id`, one dead-letter safety copy remains until successful non-empty
-transcription persistence, and all stored/logged error metadata is sanitized.
-Permanent failures remain terminal and are recorded in the audio dead-letter
-with the incremented attempt.
+transient evidence; before issue 0049 they were deduplicated in Redis by
+`message_id`, one dead-letter safety copy remained until successful non-empty
+transcription persistence, and all stored/logged error metadata was sanitized.
+Permanent failures remain terminal and are recorded in the durable
+`message_transcriptions` row with the incremented attempt; any legacy dead-letter
+copy is a cutover artifact, not an active work queue.
 
 Files changed: `src/workers/audio_worker.py`, `tests/test_audio_worker.py`,
 `tests/test_operational_recovery_db.py`, `README.md`, `ARCHITECTURE.md`,
 `IMPLEMENTATION_PLAN.md`, `specs/0003-durable-finalization-and-media.md`, and
-`specs/README.md`. No migration or public API change was needed.
+`specs/README.md`. Issue 0049 subsequently moves the active retry transport to
+PostgreSQL and keeps this issue's retry/error contract intact.
 
 ### Validation
 

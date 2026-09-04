@@ -19,10 +19,7 @@ class Settings(BaseSettings):
     admin_ui_password: Optional[str] = None
     admin_session_secret: Optional[str] = None
 
-    # Database & Cache
-    redis_url: str = "redis://localhost:6379"
-    redis_max_connections: int = 10
-    redis_db: int = 0
+    # Database
     database_url: Optional[str] = None
     database_pool_min_size: int = 1
     database_pool_max_size: int = 10
@@ -39,7 +36,6 @@ class Settings(BaseSettings):
 
     # Worker Settings
     ia_timeout_seconds: int = 60
-    result_ttl_seconds: int = 86400
 
     # AI Settings
     model_name: str = "openai/gpt-oss-120b"
@@ -58,7 +54,6 @@ class Settings(BaseSettings):
     audio_retry_base_seconds: float = 2.0
     audio_retry_max_delay_seconds: float = 15 * 60
     audio_retry_provider_margin_seconds: float = 1.0
-    audio_dead_letter_recovery_interval_seconds: float = 60.0
     image_vision_model: str = "qwen/qwen3.6-27b"
     image_vision_max_completion_tokens: int = 5000
     image_max_bytes: int = 4 * 1024 * 1024
@@ -67,7 +62,6 @@ class Settings(BaseSettings):
     image_retry_base_seconds: float = 2.0
     image_retry_max_delay_seconds: float = 15 * 60
     image_retry_provider_margin_seconds: float = 1.0
-    image_dead_letter_recovery_interval_seconds: float = 60.0
     ia_retry_base_seconds: float = 2.0
     ia_retry_max_delay_seconds: float = 15 * 60
     ia_retry_provider_margin_seconds: float = 1.0
@@ -93,6 +87,7 @@ class Settings(BaseSettings):
     digisac_history_retry_base_seconds: float = 2.0
     digisac_contact_backfill_per_page: int = 5000
     digisac_contact_hydration_interval_seconds: float = 5.0
+    finalization_poll_interval_seconds: float = 0.5
     finalization_reconcile_interval_seconds: float = 5.0
     finalization_lease_seconds: int = 300
     media_status_recheck_seconds: float = 30.0
@@ -158,16 +153,15 @@ class Settings(BaseSettings):
         "digisac_history_request_timeout_seconds",
         "digisac_history_retry_base_seconds",
         "digisac_contact_hydration_interval_seconds",
+        "finalization_poll_interval_seconds",
         "finalization_reconcile_interval_seconds",
         "media_status_recheck_seconds",
         "audio_retry_base_seconds",
         "audio_retry_max_delay_seconds",
         "audio_retry_provider_margin_seconds",
-        "audio_dead_letter_recovery_interval_seconds",
         "image_retry_base_seconds",
         "image_retry_max_delay_seconds",
         "image_retry_provider_margin_seconds",
-        "image_dead_letter_recovery_interval_seconds",
         "ia_retry_base_seconds",
         "ia_retry_max_delay_seconds",
         "ia_retry_provider_margin_seconds",

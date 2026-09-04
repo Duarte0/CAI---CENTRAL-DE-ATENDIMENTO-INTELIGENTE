@@ -1,11 +1,11 @@
-"""Redis worker that extracts visible information from DigiSac images."""
+"""PostgreSQL-polling worker that extracts visible information from images."""
 
 import asyncio
 import base64
-import json
 import logging
 import re
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -14,15 +14,11 @@ from groq import Groq
 
 from src.core.config import settings
 from src.core.db import (
+    claim_next_image_extraction,
     close_database,
-    get_image_extraction,
     initialize_database,
-    recover_stale_image_extractions,
-    release_image_publication,
-    reserve_image_extraction,
     set_image_extraction_status,
 )
-from src.core.redis_client import AsyncRedis, create_redis_client
 from src.core.provider_retry import (
     TransientProviderError,
     retry_after_from_text,
@@ -66,7 +62,9 @@ def _retry_after_seconds(exc: BaseException) -> float | None:
     return retry_after_seconds(exc)
 
 
-def _is_transient_failure_text(message: str | None) -> bool:
+def _is_transient_failure_text(  # pyright: ignore[reportUnusedFunction]
+    message: str | None,
+) -> bool:
     if not message:
         return False
     lowered = message.lower()
@@ -82,7 +80,9 @@ def _is_transient_failure_text(message: str | None) -> bool:
     )
 
 
-def _retry_delay(exc: TransientImageExtractionError, attempt: int) -> float:
+def _retry_delay(  # pyright: ignore[reportUnusedFunction]
+    exc: TransientImageExtractionError, attempt: int
+) -> float:
     return retry_delay(
         attempt=attempt,
         base_seconds=settings.image_retry_base_seconds,
@@ -305,38 +305,59 @@ def extract_image_message(
 
 
 class ImageExtractionWorker:
-    def __init__(self, redis_client: AsyncRedis) -> None:
-        self.redis = redis_client
-        self.queue = "image_extraction_queue"
-        self.dead_letter = "image_extraction_dead_letter"
+    def __init__(self, owner: str | None = None) -> None:
+        self.owner = owner or f"image-worker:{uuid.uuid4()}"
         self.rate_limited_until = 0.0
 
     async def process_job(self, job: dict[str, Any]) -> None:
+        """Compatibility hook that claims one specific durable message."""
         message_id = job.get("message_id")
         if not isinstance(message_id, str) or not message_id:
             raise ValueError("Image job missing message_id")
-        lease = await set_image_extraction_status(
-            message_id, "processing", increment_attempt=True
+        claim = await claim_next_image_extraction(
+            owner=self.owner,
+            lease_seconds=settings.content_recovery_lease_seconds,
+            message_id=message_id,
         )
-        if lease is None:
+        if claim is None:
             logger.info(
-                "Skipping duplicate or stale image job: message_id=%s",
+                "Skipping duplicate, scheduled or unavailable image row: "
+                "message_id=%s",
                 message_id,
             )
             return
-        await self._remove_matching_queue_items(message_id)
+        await self._process_claim(claim)
+
+    def _retry_delay(self, exc: TransientImageExtractionError, attempt: int) -> float:
+        return retry_delay(
+            attempt=attempt,
+            base_seconds=settings.image_retry_base_seconds,
+            max_delay_seconds=settings.image_retry_max_delay_seconds,
+            provider_margin_seconds=settings.image_retry_provider_margin_seconds,
+            provider_delay_seconds=exc.retry_after_seconds,
+        )
+
+    async def _process_claim(self, claim: dict[str, Any]) -> None:
+        message_id = str(claim["message_id"])
+        lease = claim.get("updated_at")
+        if isinstance(lease, str):
+            lease = datetime.fromisoformat(lease.replace("Z", "+00:00"))
+        if not isinstance(lease, datetime):
+            raise RuntimeError("Image claim did not contain an updated_at token")
+        attempt = int(claim.get("attempt_count") or 0)
         try:
             text = await asyncio.to_thread(extract_image_message, message_id)
+            if not text.strip():
+                raise RuntimeError("empty image extraction")
+            text = text.strip()
         except Exception as exc:
-            attempt = int(job.get("attempt", 0)) + 1
             transient = isinstance(exc, TransientImageExtractionError)
             if transient:
-                delay = _retry_delay(exc, attempt)
-                retry_at = time.time() + delay
+                delay = self._retry_delay(exc, attempt)
+                retry_at = datetime.now(timezone.utc).timestamp() + delay
                 self.rate_limited_until = max(
                     self.rate_limited_until, retry_at
                 )
-                job.update(attempt=attempt, not_before=retry_at)
                 transitioned = await set_image_extraction_status(
                     message_id,
                     "pending",
@@ -345,6 +366,7 @@ class ImageExtractionWorker:
                         retry_at, tz=timezone.utc
                     ),
                     expected_updated_at=lease,
+                    expected_lease_owner=self.owner,
                 )
                 if transitioned is None:
                     logger.info(
@@ -367,16 +389,15 @@ class ImageExtractionWorker:
                 "failed",
                 error_message=str(exc),
                 expected_updated_at=lease,
+                expected_lease_owner=self.owner,
             )
-            if transitioned is not None:
-                await self.redis.rpush(
-                    self.dead_letter,
-                    json.dumps({**job, "attempt": attempt}),
-                )
-            logger.exception(
-                "Image extraction failed: message_id=%s attempt=%s",
+            logger.error(
+                "Image extraction failed: message_id=%s attempt=%s "
+                "transitioned=%s error=%s",
                 message_id,
                 attempt,
+                transitioned is not None,
+                str(exc),
             )
             return
 
@@ -385,6 +406,7 @@ class ImageExtractionWorker:
             "completed",
             text=text,
             expected_updated_at=lease,
+            expected_lease_owner=self.owner,
         )
         if transitioned is None:
             logger.info(
@@ -392,198 +414,32 @@ class ImageExtractionWorker:
                 message_id,
             )
             return
-        removed = await self._remove_matching_dead_letters(message_id)
-        if removed:
-            logger.info(
-                "Removed stale image dead letters after success: "
-                "message_id=%s count=%s",
-                message_id,
-                removed,
-            )
         logger.info("Image extraction completed: message_id=%s", message_id)
 
-    async def _remove_matching_dead_letters(self, message_id: str) -> int:
-        removed = 0
-        raw_items = await self.redis.lrange(self.dead_letter, 0, -1)
-        for raw in dict.fromkeys(raw_items):
-            try:
-                parsed: Any = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                job = cast(dict[str, Any], parsed)
-                if job.get("message_id") == message_id:
-                    removed += await self.redis.lrem(self.dead_letter, 0, raw)
-        return removed
-
-    async def _remove_matching_queue_items(self, message_id: str) -> int:
-        removed = 0
-        raw_items = await self.redis.lrange(self.queue, 0, -1)
-        for raw in dict.fromkeys(raw_items):
-            try:
-                parsed: Any = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                queued_job = cast(dict[str, Any], parsed)
-                if queued_job.get("message_id") == message_id:
-                    removed += await self.redis.lrem(self.queue, 0, raw)
-        if removed:
-            logger.info(
-                "Removed duplicate image queue items: message_id=%s count=%s",
-                message_id,
-                removed,
-            )
-        return removed
-
-    async def recover_transient_dead_letters(self) -> int:
-        """Republish legacy transient failures without deleting their safety copy."""
-        raw_items = await self.redis.lrange(self.dead_letter, 0, -1)
-        jobs_by_message: dict[str, tuple[str, dict[str, Any]]] = {}
-        for raw in raw_items:
-            try:
-                parsed: Any = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if not isinstance(parsed, dict):
-                continue
-            job = cast(dict[str, Any], parsed)
-            message_id = job.get("message_id")
-            if isinstance(message_id, str) and message_id:
-                jobs_by_message.setdefault(message_id, (raw, job))
-
-        published = 0
-        for message_id, (_raw, job) in jobs_by_message.items():
-            row = await get_image_extraction(message_id)
-            if row is None:
-                continue
-            if row["status"] == "completed":
-                await self._remove_matching_dead_letters(message_id)
-                continue
-            error_message = row.get("error_message")
-            if row["status"] != "failed" or not _is_transient_failure_text(
-                error_message if isinstance(error_message, str) else None
-            ):
-                continue
-            reserved = await reserve_image_extraction(
-                message_id,
-                row.get("conversation_id"),
-                str(row.get("model") or settings.image_vision_model),
-            )
-            if not reserved:
-                continue
-            attempt = max(int(job.get("attempt", 0)), 0)
-            retry_error = TransientImageExtractionError(
-                "legacy transient image dead letter",
-                # A stored provider delay is relative to the original failure
-                # and is stale by the time the reconciler sees it.
-                retry_after_seconds=0.0,
-            )
-            delay = _retry_delay(retry_error, attempt + 1)
-            retry_at = time.time() + delay
-            scheduled_at = datetime.fromtimestamp(
-                retry_at, tz=timezone.utc
-            )
-            transitioned = await set_image_extraction_status(
-                message_id,
-                "pending",
-                error_message=str(retry_error),
-                next_attempt_at=scheduled_at,
-                expected_statuses=("pending",),
-            )
-            if transitioned is None:
-                continue
-            published += 1
-            logger.warning(
-                "Recovered transient image dead letter: message_id=%s "
-                "attempt=%s delay=%.3fs",
-                message_id,
-                attempt,
-                delay,
-            )
-        return published
-
-    async def recover_stale_jobs(self) -> int:
-        rows = await recover_stale_image_extractions(
+    async def poll_once(self) -> bool:
+        """Claim and process one due row, returning whether work was found."""
+        if self.rate_limited_until > time.time():
+            return False
+        claim = await claim_next_image_extraction(
+            owner=self.owner,
             lease_seconds=settings.content_recovery_lease_seconds,
-            batch_size=settings.content_recovery_batch_size,
         )
-        queued_message_ids: set[str] = set()
-        for raw in await self.redis.lrange(self.queue, 0, -1):
-            try:
-                parsed: Any = json.loads(raw)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict):
-                queued_job = cast(dict[str, Any], parsed)
-                queued_id = queued_job.get("message_id")
-                if isinstance(queued_id, str) and queued_id:
-                    queued_message_ids.add(queued_id)
-        published = 0
-        for row in rows:
-            message_id = str(row["message_id"])
-            if message_id in queued_message_ids:
-                logger.debug(
-                    "Image publication already present in Redis: message_id=%s",
-                    message_id,
-                )
-                continue
-            attempt_count = int(row["attempt_count"])
-            job = {
-                "message_id": message_id,
-                "conversation_id": row["conversation_id"],
-                "attempt": max(attempt_count, 0),
-            }
-            try:
-                await self.redis.rpush(self.queue, json.dumps(job))
-            except Exception as exc:
-                await release_image_publication(
-                    message_id,
-                    f"recovery queue publish failed: {exc}",
-                )
-                raise
-            published += 1
-            queued_message_ids.add(message_id)
-        if published:
-            logger.warning("Recovered stale image jobs: count=%s", published)
-        return published
+        if claim is None:
+            return False
+        await self._process_claim(claim)
+        return True
 
     async def process(self) -> None:
         logger.info("Image extraction worker started")
-        next_recovery_at = 0.0
-        next_dead_letter_recovery_at = 0.0
         while True:
             try:
                 rate_limit_remaining = self.rate_limited_until - time.time()
                 if rate_limit_remaining > 0:
                     await asyncio.sleep(min(rate_limit_remaining, 1.0))
                     continue
-                if time.monotonic() >= next_dead_letter_recovery_at:
-                    await self.recover_transient_dead_letters()
-                    next_dead_letter_recovery_at = (
-                        time.monotonic()
-                        + settings.image_dead_letter_recovery_interval_seconds
-                    )
-                if time.monotonic() >= next_recovery_at:
-                    await self.recover_stale_jobs()
-                    next_recovery_at = (
-                        time.monotonic()
-                        + settings.content_reconcile_interval_seconds
-                    )
-                raw = await self.redis.lpop(self.queue)
-                if not raw:
-                    await asyncio.sleep(1)
-                    continue
-                parsed_job: Any = json.loads(raw)
-                if not isinstance(parsed_job, dict):
-                    raise ValueError("Image queue item must be a JSON object")
-                job = cast(dict[str, Any], parsed_job)
-                not_before = float(job.get("not_before", 0))
-                if not_before > time.time():
-                    await self.redis.rpush(self.queue, raw)
-                    await asyncio.sleep(min(not_before - time.time(), 1))
-                    continue
-                await self.process_job(job)
+                processed = await self.poll_once()
+                if not processed:
+                    await asyncio.sleep(settings.content_extraction_poll_seconds)
             except Exception:
                 logger.exception("Unexpected image worker loop failure")
                 await asyncio.sleep(1)
@@ -594,11 +450,9 @@ async def main() -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO)
     )
     await initialize_database()
-    redis_client = create_redis_client()
     try:
-        await ImageExtractionWorker(redis_client).process()
+        await ImageExtractionWorker().process()
     finally:
-        await redis_client.aclose()
         await close_database()
 
 

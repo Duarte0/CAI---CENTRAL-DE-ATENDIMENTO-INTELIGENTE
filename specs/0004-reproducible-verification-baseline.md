@@ -1,9 +1,9 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** implementado; baseline canônico e verificação operacional concluídos
-- **Versão:** 1.7
+- **Status:** implementado; baseline canônico, verificação operacional e smoke Redis-free concluídos; o issue 0056 adiciona uma verificação operacional de prontidão que não é executada pelo runner canônico
+- **Versão:** 2.1
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
-- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003
+- **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0051, 0055 e 0056
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003
 
 ## Status de implementação
@@ -72,6 +72,38 @@ imagem. O issue 0016 também confirmou a migration head
 `0018_department_mapping` e a cobertura de identidade, hydration, backfill de
 contatos, resolução conservadora e mapeamento departamental; isso não comprova
 Redis, fornecedores, réplicas ou produção.
+
+**Atualização do baseline (issue 0050, 2026-09-02):** compileall e Pyright
+estrito passaram; a etapa offline teve **280 passed, 84 skipped**; e a etapa
+PostgreSQL descartável, com Alembic head `0024_durable_media_leases`, teve
+**34 passed** nos grupos focados de mídia, ciclo, transcrição e concorrência.
+Os skips permanecem limitados à ausência intencional de
+`CAI_TEST_DATABASE_URL` na etapa offline.
+
+**Preservação de backoff de hydration (issue 0051, 2026-09-03):** a cobertura
+de identidade inclui decisões concorrentes para referências repetidas durante
+falha futura, preservação exata de `next_attempt_at`, handoff de falha devida
+ao poller e no-op de hydration sucedida/current. Não houve migration nova nem
+dependência Redis adicionada; compileall e Pyright passaram, a suíte offline
+teve **280 passed, 86 skipped**, e a etapa PostgreSQL teve **86 passed, 280
+deselected** com head `0024_durable_media_leases` e `APP_TIMEZONE=UTC`. Os
+resultados continuam evidência local/descartável.
+
+**Runtime sem Redis (issue 0055, 2026-09-03):** o runner canônico passou
+compileall, Pyright, **297 passed, 90 skipped** offline e **90 passed, 297
+deselected** em PostgreSQL 16 descartável com head `0025_webhook_event_keys`.
+Os testes adicionais cobrem health PostgreSQL-only, métricas duráveis de
+`/queues`, ausência dos seis campos Redis legados, Compose sem serviço/volume
+Redis, requisitos separados e exclusão do cliente histórico da imagem da API.
+O named runtime `cai` foi reconstruído com a API/IA sem Redis; esta evidência é
+local e específica do runtime nomeado, não comprova produção.
+
+O issue 0056 não amplia o runner canônico com comandos destrutivos. Sua
+verificação operacional separada exige observar a janela completa do issue
+0054, validar o backup PostgreSQL em um alvo descartável e inspecionar somente
+o container/volume Redis exatos antes da disposição. A ausência desses artefatos
+mantém a disposição pendente; nenhuma verificação local autoriza prune, `down -v`
+ou alteração de PostgreSQL.
 
 ## Objetivo e não objetivos
 

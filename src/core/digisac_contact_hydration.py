@@ -11,9 +11,10 @@ from src.core.db import (
     claim_digisac_contact_hydration,
     mark_digisac_contact_hydration_failure,
     mark_digisac_contact_hydration_success,
-    request_digisac_contact_hydration,
+    request_digisac_contact_hydration_result,
     upsert_digisac_contact,
 )
+from src.core.digisac_contact_repository import ContactHydrationRequestResult
 from src.core.digisac_client import (
     DigisacClient,
     DigisacClientError,
@@ -33,7 +34,17 @@ async def request_contact_hydration(
     external_id: str, *, requested_at: str | None = None
 ) -> bool:
     """Record a deduplicated need without contacting DigiSac."""
-    return await request_digisac_contact_hydration(
+    result = await request_contact_hydration_result(
+        external_id, requested_at=requested_at
+    )
+    return result.requested
+
+
+async def request_contact_hydration_result(
+    external_id: str, *, requested_at: str | None = None
+) -> ContactHydrationRequestResult:
+    """Return the sanitized decision for a normal message-triggered request."""
+    return await request_digisac_contact_hydration_result(
         external_id, requested_at=requested_at
     )
 

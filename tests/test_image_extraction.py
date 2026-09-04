@@ -1,5 +1,6 @@
 from types import SimpleNamespace
-import json
+from datetime import datetime, timezone
+import inspect
 import time
 
 import pytest
@@ -260,18 +261,7 @@ async def test_worker_persists_successful_vision_response(monkeypatch):
         "extract_image_message",
         lambda _message_id: "Comprovante pago no valor de R$ 250,00.",
     )
-
-    class Redis:
-        async def rpush(self, *_args):
-            raise AssertionError("successful job must not be requeued")
-
-        async def lrange(self, *_args):
-            return []
-
-        async def lrem(self, *_args):
-            raise AssertionError("there are no dead letters to remove")
-
-    worker = image_worker.ImageExtractionWorker(Redis())
+    worker = image_worker.ImageExtractionWorker(owner="image-test")
     await worker.process_job(
         {
             "message_id": "image-1",
@@ -284,16 +274,27 @@ async def test_worker_persists_successful_vision_response(monkeypatch):
     assert row is not None
     assert row["status"] == "completed"
     assert row["text"] == "Comprovante pago no valor de R$ 250,00."
+    assert row["lease_owner"] is None
 
 
 @pytest.mark.asyncio
 async def test_transient_rate_limit_retries_beyond_global_attempt_limit(monkeypatch):
+    claims = []
     transitions = []
+
+    async def claim(**kwargs):
+        claims.append(kwargs)
+        return {
+            "message_id": "image-rate-limit",
+            "attempt_count": settings.max_retry_attempts + 1,
+            "updated_at": "2026-09-02T12:00:00+00:00",
+        }
 
     async def set_status(message_id, status, **kwargs):
         transitions.append((message_id, status, kwargs))
         return object()
 
+    monkeypatch.setattr(image_worker, "claim_next_image_extraction", claim)
     monkeypatch.setattr(image_worker, "set_image_extraction_status", set_status)
     monkeypatch.setattr(
         image_worker,
@@ -307,22 +308,7 @@ async def test_transient_rate_limit_retries_beyond_global_attempt_limit(monkeypa
     monkeypatch.setattr(settings, "image_retry_base_seconds", 2.0)
     monkeypatch.setattr(settings, "image_retry_max_delay_seconds", 900.0)
     monkeypatch.setattr(settings, "image_retry_provider_margin_seconds", 1.0)
-
-    class Redis:
-        def __init__(self):
-            self.published = []
-
-        async def rpush(self, queue, raw):
-            self.published.append((queue, json.loads(raw)))
-
-        async def lrange(self, *_args):
-            return []
-
-        async def lrem(self, *_args):
-            return 0
-
-    redis = Redis()
-    worker = image_worker.ImageExtractionWorker(redis)
+    worker = image_worker.ImageExtractionWorker(owner="image-test")
     before = time.time()
     await worker.process_job(
         {
@@ -332,75 +318,102 @@ async def test_transient_rate_limit_retries_beyond_global_attempt_limit(monkeypa
         }
     )
 
-    assert [item[1] for item in transitions] == ["processing", "pending"]
-    assert redis.published == []
-    retry_transition = transitions[1][2]
+    assert claims == [
+        {
+            "owner": "image-test",
+            "lease_seconds": settings.content_recovery_lease_seconds,
+            "message_id": "image-rate-limit",
+        }
+    ]
+    assert [item[1] for item in transitions] == ["pending"]
+    retry_transition = transitions[0][2]
     assert retry_transition["next_attempt_at"].timestamp() >= before + 14.17
     assert worker.rate_limited_until >= before + 14.17
 
 
 @pytest.mark.asyncio
-async def test_recovers_legacy_transient_dead_letter_without_removing_safety_copy(
-    monkeypatch,
-):
-    dead_letter = json.dumps(
-        {
-            "message_id": "image-dead",
-            "conversation_id": "ticket-1",
-            "attempt": 2,
-        }
-    )
-
-    async def get_row(_message_id):
-        return {
-            "message_id": "image-dead",
-            "conversation_id": "ticket-1",
-            "model": "vision-test",
-            "status": "failed",
-            "error_message": (
-                "Groq vision request failed: Error code: 429 - "
-                "Please try again in 13.17s."
-            ),
-        }
-
-    async def reserve(*_args):
-        return True
-
+async def test_permanent_image_failure_is_durable_without_dead_letter(monkeypatch):
     transitions = []
+
+    async def claim(**_kwargs):
+        return {
+            "message_id": "image-invalid",
+            "attempt_count": 1,
+            "updated_at": "2026-09-02T12:00:00+00:00",
+        }
 
     async def set_status(message_id, status, **kwargs):
         transitions.append((message_id, status, kwargs))
         return object()
 
-    monkeypatch.setattr(image_worker, "get_image_extraction", get_row)
-    monkeypatch.setattr(image_worker, "reserve_image_extraction", reserve)
+    monkeypatch.setattr(image_worker, "claim_next_image_extraction", claim)
     monkeypatch.setattr(image_worker, "set_image_extraction_status", set_status)
-    monkeypatch.setattr(settings, "image_retry_provider_margin_seconds", 1.0)
+    monkeypatch.setattr(
+        image_worker,
+        "extract_image_message",
+        lambda _message_id: (_ for _ in ()).throw(
+            RuntimeError("DigiSac file is not an image")
+        ),
+    )
 
-    class Redis:
-        def __init__(self):
-            self.published = []
-            self.removed = []
+    worker = image_worker.ImageExtractionWorker(owner="image-test")
+    await worker.process_job({"message_id": "image-invalid"})
 
-        async def lrange(self, queue, _start, _end):
-            assert queue == "image_extraction_dead_letter"
-            return [dead_letter]
+    assert transitions == [
+        (
+            "image-invalid",
+            "failed",
+            {
+                "error_message": "DigiSac file is not an image",
+                "expected_updated_at": datetime(2026, 9, 2, 12, tzinfo=timezone.utc),
+                "expected_lease_owner": "image-test",
+            },
+        )
+    ]
 
-        async def rpush(self, queue, raw):
-            self.published.append((queue, json.loads(raw)))
 
-        async def lrem(self, *args):
-            self.removed.append(args)
-            return 1
+@pytest.mark.asyncio
+async def test_empty_image_extraction_is_not_completed(monkeypatch):
+    transitions = []
 
-    redis = Redis()
-    worker = image_worker.ImageExtractionWorker(redis)
-    before = time.time()
-    assert await worker.recover_transient_dead_letters() == 1
+    async def claim(**_kwargs):
+        return {
+            "message_id": "image-empty",
+            "attempt_count": 1,
+            "updated_at": "2026-09-02T12:00:00+00:00",
+        }
 
-    assert redis.removed == []
-    assert redis.published == []
-    assert transitions[0][0:2] == ("image-dead", "pending")
-    scheduled = transitions[0][2]["next_attempt_at"].timestamp()
-    assert scheduled >= before + 8.0
-    assert scheduled < before + 14.17
+    async def set_status(message_id, status, **kwargs):
+        transitions.append((message_id, status, kwargs))
+        return object()
+
+    monkeypatch.setattr(image_worker, "claim_next_image_extraction", claim)
+    monkeypatch.setattr(image_worker, "set_image_extraction_status", set_status)
+    monkeypatch.setattr(image_worker, "extract_image_message", lambda _id: "  ")
+
+    await image_worker.ImageExtractionWorker(owner="image-test").process_job(
+        {"message_id": "image-empty"}
+    )
+
+    assert transitions[0][1] == "failed"
+    assert transitions[0][2]["expected_lease_owner"] == "image-test"
+
+
+@pytest.mark.asyncio
+async def test_image_cooldown_happens_before_database_claim(monkeypatch):
+    worker = image_worker.ImageExtractionWorker(owner="image-test")
+    worker.rate_limited_until = time.time() + 30
+
+    async def fail_claim(**_kwargs):
+        raise AssertionError("cooldown must prevent claim")
+
+    monkeypatch.setattr(image_worker, "claim_next_image_extraction", fail_claim)
+
+    assert await worker.poll_once() is False
+
+
+def test_image_worker_has_no_redis_transport_operations():
+    source = inspect.getsource(image_worker.ImageExtractionWorker).lower()
+    assert "redis" not in source
+    for operation in ("lpop", "lrange", "rpush", "lrem", "dead_letter"):
+        assert operation not in source

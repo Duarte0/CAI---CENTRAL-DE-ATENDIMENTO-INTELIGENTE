@@ -1,6 +1,6 @@
 # Implementation Plan
 
-_Planning baseline: 2026-08-21. Source, Alembic revisions, configuration, and
+_Planning baseline: 2026-09-04. Source, Alembic revisions, configuration, and
 tests describe the current checkout; this plan records sequencing and local
 evidence, never production availability. The SPEC-0013 Phase 2 delivery is
 complete locally; production acceptance remains separate._
@@ -11,22 +11,31 @@ complete locally; production acceptance remains separate._
 
 - **[completed] Core durable CAI workflow** (PRD §§5–8; SPEC-0001–0004).
   FastAPI webhook ingestion, PostgreSQL-backed cycles, persistent DigiSac
-  history reconstruction, Groq classification, Redis coordination, and
+  history reconstruction, Groq classification, PostgreSQL polling/lease for IA
+  finalization, with historical Redis access isolated to maintenance, and
   separate durable audio/image processing are implemented. PostgreSQL state is
-  reserved before queue publication; lease, due-retry, reconciliation, and
-  idempotency paths recover interrupted work. Terminal image failure blocks
-  only dependent cycles; terminal audio failure becomes a warning.
+  reserved before media transport; IA finalization, audio transcription and
+  image extraction are claimed by PostgreSQL polling/lease. Lease, due-retry,
+  reconciliation, and idempotency paths recover interrupted work. Terminal image
+  failure blocks only dependent cycles; terminal audio failure also remains
+  blocked by the media gate.
 - **[completed] Persistent-only finalization and privacy hardening**
-  (SPEC-0001–0003; issues 0005, 0024, 0025). The legacy Redis
+  (SPEC-0001–0003; issues 0005, 0024, 0025, 0048). The legacy Redis
   buffer/debounce mode and raw-payload diagnostic routes are removed. Parser
   and webhook diagnostics retain bounded metadata without raw model output,
-  extracted customer values, secrets, or payload bodies.
+  extracted customer values, secrets, or payload bodies. Issue 0048 also
+  removed `ia_queue`/`ia_dead_letter` from the active IA path: due work is
+  claimed directly in PostgreSQL, while a bounded manual inventory retires only
+  validated legacy queue entries.
 - **[completed] Durable schema and recovery foundations** (SPEC-0001, 0003;
-  issues 0004, 0027–0033, 0037). Alembic owns the schema through
-  `0022_identity_discovery_command`; persistence boundaries for contacts,
-  cycles, assignments, media, classifications, and DigiSac directory state are
-  isolated behind repositories. Audio transient retry parity and bounded Redis
-  residue cleanup are implemented with recovery coverage.
+  issues 0004, 0027–0033, 0037, 0049–0053). Alembic owns the schema through
+  `0025_webhook_event_keys`; persistence boundaries for contacts, cycles,
+  assignments, media, classifications, and DigiSac directory state are isolated
+  behind repositories. Audio transient retry parity, PostgreSQL polling/lease,
+  and bounded legacy-list cutover for audio and image are implemented with
+  recovery coverage. Revision `0024_durable_media_leases` supplies the shared
+  media lease columns and indexes; issues 0050 and 0051 required no additional
+  migration.
 - **[completed] Acessórias directory through Request creation**
   (SPEC-0007–0011; issues 0012–0022, 0026, 0034, 0036). Directory sync,
   canonical ticket `contact.id`, conservative identity candidates/manual
@@ -41,17 +50,91 @@ complete locally; production acceptance remains separate._
   rediscovery. It uses `ADMIN_API_TOKEN`, PostgreSQL command idempotency, and
   Alembic `0021`/`0022`; it neither calls providers nor changes historical
   cycle resolution or Request state.
-- **[completed | current checkout] Offline verification.** On 2026-08-21,
+- **[historical | 2026-08-21] Offline verification.**
   `PYTHONPATH=/app python -m pytest -q` passed **238** and skipped **76**.
-  The skips are the intentionally unconfigured `CAI_TEST_DATABASE_URL`
-  PostgreSQL family. The most recent recorded disposable runner evidence is
-  compileall and strict Pyright clean, Alembic head `0022`, and PostgreSQL
-  pytest **76 passed, 238 deselected** (issue 0040). The opt-in local webhook
-  smoke remains import-safe and outside canonical automation.
+  The skips were the intentionally unconfigured `CAI_TEST_DATABASE_URL`
+  PostgreSQL family. The opt-in local webhook smoke remains import-safe and
+  outside canonical automation.
+- **[completed | current checkout | 2026-09-02] Issue 0049 verification.** The
+  full offline suite passed **273 passed, 82 skipped**. A disposable PostgreSQL
+  database applied Alembic head `0024_durable_media_leases` and passed **19
+  focused tests** for atomic audio claims, due scheduling, stale leases,
+  lease-owner completion and existing image recovery. Compileall and diff
+  checks also passed; this is local evidence, not provider or production
+  acceptance.
+- **[completed | current checkout | 2026-09-02] Issue 0050 verification.** The
+  full offline suite passed **280 passed, 84 skipped**. A disposable PostgreSQL
+  database applied Alembic head `0024_durable_media_leases` and passed **34
+  focused tests** covering atomic image claims, due scheduling, lease ownership,
+  retry persistence, media gating, webhook/IA admission and the audio/image
+  regression families. Compileall and diff checks also passed. Legacy image
+  lists were not deleted or replayed; the bounded inventory/apply script is
+  explicit and dry-run by default. This is local evidence, not provider or
+  production acceptance.
+- **[completed | current checkout | 2026-09-03] Issue 0052 maintenance
+  implementation.** The dedicated Docker `maintenance` target/profile now
+  contains the bounded scripts without expanding the `api` image. The
+  coordinator requires a pinned revision, operator, protected connection
+  context, archived dry-run report and approved PostgreSQL recovery point;
+  apply is one family at a time, rechecks runtime/durable invariants and exact
+  list-value digests, and performs only validated one-at-a-time `LREM`. Local
+  focused script/coordinator coverage passed **15 tests**. The controlled `cai`
+  runtime procedure then removed 17,164 IA entries, 71 image entries and 0
+  audio entries with a reviewed recovery point; its final dry-run found all
+  six lists empty while durable totals remained intact. This is acceptance
+  evidence for that named runtime, not a claim about other deployments.
+- **[completed | current checkout | 2026-09-03] Issue 0053 verification and
+  cutover.** Generic webhook idempotency now uses the atomic PostgreSQL ledger
+  `webhook_event_keys` from Alembic `0025_webhook_event_keys`; the digest and
+  one-hour expiry contract are unchanged, and the active service contains no
+  Redis dependency. Concurrent acceptance, expiry replacement, bounded cleanup,
+  fail-closed database behavior, media ordering, route compatibility and
+  report-bound legacy-marker handoff are covered by focused tests. The named
+  `cai` runtime was stopped at the old/new boundary, backed up, migrated,
+  imported live `processed:*` markers without source deletion, and restarted
+  with the PostgreSQL-only decision path. Exact counts and recovery-point
+  references are recorded in issue 0053. The canonical runner passed **290
+  passed, 90 skipped** offline and **90 passed, 290 deselected** on PostgreSQL
+  16 with head `0025_webhook_event_keys`; the named runtime imported 171 live
+  markers and retained all 171 Redis source keys. This is named-runtime
+  evidence, not a production-wide claim.
+- **[implemented | observation pending | current checkout | 2026-09-03] Issue
+  0054 IA Redis compatibility sunset.** `ia_worker` now persists and exposes
+  status/result only through PostgreSQL, with no Redis client, `SET`, or
+  `RESULT_TTL_SECONDS` wiring. Public routes remain unchanged; OpenAPI and
+  worker regression coverage make the dependency boundary explicit. The
+  maintenance-only `scripts.retire_ia_redis_compatibility` command inventories
+  only `ia_status:*`/`ia_result:*`, records sanitized TTL/value digests and
+  durable matches, and requires a full 86400-second observation window plus an
+  explicit historical decision before deletion. In the named `cai` runtime,
+  the dry-run found 80 keys in each family and 80 durable result matches; both
+  counts stayed at 80 after 30 seconds. The implementation is deployed, but
+  the issue remains open until the full window and bounded apply are verified.
+- **[completed | current checkout | 2026-09-03] Issue 0055 Redis-free
+  application runtime.** API, webhook admission, health, durable queue metrics
+  and IA worker no longer import, initialize, ping or require Redis. The six
+  legacy `/queues` fields were removed explicitly instead of fabricated as
+  zero. Runtime requirements and `.env.example` no longer carry Redis settings;
+  the client and historical commands use only the separate `maintenance`
+  image/profile with explicit `MAINTENANCE_REDIS_URL`. Compose no longer
+  defines the Redis service/volume or API/worker dependency, while the retained
+  Docker container/storage was not deleted. Focused source, route, OpenAPI,
+  dependency and Compose guards plus the Redis-free named runtime smoke prove
+  the boundary locally; this is not production-wide acceptance.
+- **[blocked | current checkout | 2026-09-04] Issue 0056 retained Redis
+  storage disposal pre-check.** The active Compose topology is Redis-free and
+  the named runtime is healthy. The exact historical target is the stopped
+  `cai-redis-1` container with volume `cai_redis_data`, with no PostgreSQL or
+  worker attachment. The Redis-free application containers started at
+  `2026-09-03T21:20:45Z`; issue 0054's required 86400-second observation gate
+  therefore ends at `2026-09-04T21:20:45Z`. Existing versioned dumps are
+  readable, but no final post-window dump or complete archived 0052–0055
+  report set is present. No container or volume was removed.
 
 ### Implemented with bounded evidence
 
-- **[completed | local-only evidence]** Provider integrations, Redis runtime,
+- **[completed | local-only evidence]** Provider integrations, historical Redis
+  maintenance boundary,
   Docker deployment, secret-manager provisioning, and production acceptance.
   Source and local/disposable tests prove contracts, not current provider
   behavior, multi-process rate limits, deployed Redis, credentials, replicas,
@@ -63,15 +146,43 @@ complete locally; production acceptance remains separate._
   Older `0020`/`203+68` results remain dated historical evidence only; no local
   or disposable result is production/provider/Redis acceptance.
 
-### No current implementation backlog signal
+- **[completed | current checkout | 2026-09-03] Issue 0051 verification.**
+  Normal repeated contact references now return a sanitized decision under the
+  PostgreSQL contact-row lock. Pending/running/succeeded rows remain no-op;
+  failed rows with a future `next_attempt_at` retain the exact schedule, and
+  due failures remain for the hydration poller. The existing boolean request
+  facade remains compatible, no Redis state or migration was added, and the
+  focused identity tests cover concurrent preservation and due handoff. This
+  is local evidence, not provider or production acceptance. The canonical
+  runner passed compileall, Pyright, **280 passed, 86 skipped** offline and
+  **86 passed, 280 deselected** in PostgreSQL with head
+  `0024_durable_media_leases` under `APP_TIMEZONE=UTC`; the override isolates
+  the known timezone discrepancy in `test_department_mapping.py`.
 
+### Approved follow-up backlog
+
+- **[blocked | staged operational decommission]** Redis cleanup and final
+  storage disposal (issues 0054 and 0056; issues 0052–0053 and 0055 completed).
+  Issue 0052 retired only fully
+  inventoried legacy IA, audio and image queue entries; issue 0053 moved generic webhook idempotency
+  from Redis to a PostgreSQL ledger; issue 0054 stops IA status/result
+  compatibility writes and starts their required sunset observation; issue 0055 removed Redis from the application runtime
+  and Compose; issue 0056 disposes the retained Redis volume only after an
+  explicit observation window and backup review. The sequence preserves
+  retained `processed:*`, durable PostgreSQL state, historical recovery tooling and
+  rollback boundaries until each dedicated issue closes.
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
-  `pass` occurrences are exception-control flow; the 76 skips are the explicit
-  database prerequisite policy.
+  `pass` occurrences are exception-control flow; the current 86 skips are the
+  explicit database prerequisite policy.
+- **[completed]** Issue 0050 migrated image extraction to PostgreSQL polling and
+  left only bounded, manual visibility of legacy Redis lists. Issue 0051
+  preserves contact hydration backoff; it is already DB-only and is not part
+  of queue removal.
 - **[superseded/deprecated]** Issue 0023 is deprecated: its active/inactive
   directory concern was superseded by the later directory-contract alignment,
-  not an open duplicate build item. Issues 0001–0022 and 0024–0041 are closed.
+  not an open duplicate build item. Issues 0001–0022, 0024–0041 and 0048–0051
+  are closed.
 
 ## Priority plan
 
@@ -165,6 +276,49 @@ complete locally; production acceptance remains separate._
    checks, and explicit acceptance criteria. This cannot be inferred from the
    local runner and must not be bundled with feature build work.
 
+### Phase 6 — Redis cleanup and decommission
+
+6. **[P1 | in progress | issues 0054–0056] Remove legacy Redis work residue, migrate
+   the remaining transient contracts, and dispose storage only after a
+   controlled observation window.**
+
+   Sequence:
+
+   - issue 0052 is completed: its `maintenance` image/profile and coordinator
+     retired the fully inventoried IA, audio and image queue/dead-letter
+     entries without replay or PostgreSQL mutation. Apply was report-bound,
+     digest-checked, family-scoped and confirmation-gated;
+   - issue 0053 is completed: it replaces Redis webhook idempotency with an
+     expiring, concurrency-safe PostgreSQL ledger and coordinates the
+     `processed:*` handoff before the new API starts;
+   - issue 0054 is implemented: the IA worker no longer depends on Redis or
+     writes `ia_status:*`/`ia_result:*`; the maintenance report, historical
+     disposition and full TTL observation must finish before its bounded apply;
+   - issue 0055 is completed: API/IA runtime, health, queue observability,
+     dependencies and Compose are Redis-free while the retained storage remains
+     outside the application topology for rollback;
+   - issue 0056 permanently disposes the exact Redis container/storage target
+     only after issue 0054 is closed, the observation window and backup/report
+     validation are complete, and explicit approval confirms the exact target.
+
+   Dependencies and risks: 0053–0055 must not assume a mixed old/new
+   deployment is safe; PostgreSQL is the durable authority, but idempotency and
+   compatibility cutovers need explicit handoff. Unknown Redis consumers,
+   queue growth, unmatched entries, invalid historical results or an
+   unvalidated backup block the sequence. No issue permits `FLUSHDB`,
+   `FLUSHALL`, broad Docker volume cleanup, provider replay or deletion of
+   PostgreSQL business data.
+
+   Current runtime evidence is recorded in issues 0052–0056: the final dry-run found
+   zero entries in all six retired lists after removing 17,164 IA and 71 image
+   entries. The protected Redis families and PostgreSQL durable totals remain
+   outside this issue's deletion boundary; issue 0053 retains legacy
+   `processed:*` markers for their natural TTL and does not delete them. Issue
+   0054 likewise retains both compatibility families until its observation gate
+   is complete. Issue 0055's named `cai` rebuild verified API health and worker
+   startup without Redis; issue 0056 identified the old Redis container/storage
+   exactly but did not remove it while the gate remains open.
+
 ## Dependencies, discrepancies, and sequencing
 
 | Status | Finding | Planning impact |
@@ -182,7 +336,12 @@ complete locally; production acceptance remains separate._
   OpenAPI baseline work (0007–0011), Acessórias Milestones A–E (0012–0022,
   0026), audio retry parity (0027), persistence/provider boundary refactors
   (0028–0036), Redis residue audit/cleanup (0037), and SPEC-0012 admin API
-  slices (0038–0040), and the documentation reconciliation (0041).
+  slices (0038–0040), the documentation reconciliation (0041), PostgreSQL
+  polling/lease for persistent IA finalization (0048), PostgreSQL polling for
+  audio transcription and image extraction (0049–0050), contact hydration
+  backoff preservation (0051), validated legacy queue retirement (0052),
+  PostgreSQL webhook idempotency (0053), IA compatibility retirement boundary
+  (0054), and Redis-free application runtime (0055).
 - **[superseded/non-work]** Legacy Redis finalization, raw-payload debug
   endpoints, fixed-port test Compose work, automatic retention/archival,
   mounted `/v1`/`/v2` aliases, hosted CI, provider/model replacement, and
@@ -191,6 +350,17 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Request lifecycle,
-broader IA policy, and production acceptance remain separate blocked plan
-items.
+shell/session/BFF, read, and command-action increments. Issues 0048–0053 are
+complete locally, with issues 0052–0053 also accepted in the named `cai`
+runtime. Issue 0054 is implemented locally and ready for the named runtime
+handoff, but its destructive compatibility-key apply remains gated by the
+complete observation window. The current 0056 pre-check is blocked until the
+0054 observation/apply, final backup validation and report archive are complete;
+issue 0056 defines the remaining destructive storage disposal. Issue
+0053 is complete locally and in the named `cai` runtime, with its legacy marker
+source retained for the following compatibility/decommission stages.
+The remaining items are product, operational authorization, or
+production-acceptance gates.
+Request
+lifecycle, broader IA policy, and production acceptance remain separate blocked
+plan items.

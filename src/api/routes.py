@@ -28,16 +28,16 @@ from src.core.db import (
     database_is_ready,
     get_cycle,
     get_cycle_metrics,
+    get_cycle_work_metrics,
+    get_image_extraction_work_metrics,
+    get_transcription_work_metrics,
     get_cycle_result,
     get_latest_cycle,
     initialize_database,
     list_cycles,
     record_ticket_assignment,
-    release_image_publication,
-    release_transcription_publication,
     reserve_transcription,
     reserve_image_extraction,
-    transition_cycle,
     upsert_digisac_contact,
 )
 from src.core.digisac_contact_hydration import (
@@ -49,7 +49,6 @@ from src.core.digisac_directory import directory_sync_loop
 from src.core.message_filter import is_bot_message
 from src.core.media import is_image_message
 from src.core.models import ConversationProcessing, WebhookPayload
-from src.core.redis_client import AsyncRedis, create_redis_client
 from src.utils.idempotency import IdempotencyService
 
 
@@ -172,52 +171,6 @@ def _cycle_event_key(
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-async def _publish_cycle(
-    redis: AsyncRedis, cycle: Mapping[str, Any], *, attempt: int = 0
-) -> None:
-    public_id = cycle.get("public_id")
-    conversation_id = cycle.get("conversation_id")
-    if not public_id or not conversation_id:
-        raise ValueError("cycle is missing its persistent identity")
-    status_value = str(cycle.get("status") or "pending")
-    marked = await transition_cycle(
-        str(public_id),
-        status_value,
-        expected_statuses=(status_value,),
-        fields={"enqueued_at": datetime.now(timezone.utc)},
-    )
-    if marked is None:
-        return
-    try:
-        await redis.rpush(
-            "ia_queue",
-            json.dumps(
-                {
-                    "cycle_id": str(public_id),
-                    "conversation_id": str(conversation_id),
-                    "protocol": cycle.get("protocol"),
-                    "attempt": attempt,
-                    "not_before": (
-                        datetime.fromisoformat(
-                            str(cycle["next_attempt_at"])
-                        ).timestamp()
-                        if cycle.get("next_attempt_at")
-                        else 0
-                    ),
-                },
-                ensure_ascii=False,
-            ),
-        )
-    except Exception:
-        await transition_cycle(
-            str(public_id),
-            status_value,
-            expected_statuses=(status_value,),
-            fields={"enqueued_at": None},
-        )
-        raise
-
-
 async def capture_ticket_assignment(
     payload: Mapping[str, Any], data: Mapping[str, Any], ticket_id: str
 ) -> bool:
@@ -300,10 +253,8 @@ async def capture_contact_snapshot(
     return False
 
 
-async def enqueue_audio_transcription(
-    redis: AsyncRedis, message: DigisacMessage
-) -> bool:
-    """Persist a durable reservation before publishing the lightweight job."""
+async def enqueue_audio_transcription(message: DigisacMessage) -> bool:
+    """Persist an idempotent audio reservation for PostgreSQL polling."""
     if message.message_type not in AUDIO_MESSAGE_TYPES or not message.message_id:
         return False
     reserved = await reserve_transcription(
@@ -313,29 +264,11 @@ async def enqueue_audio_transcription(
     )
     if not reserved:
         return False
-    try:
-        await redis.rpush(
-            "audio_transcription_queue",
-            json.dumps(
-                {
-                    "message_id": message.message_id,
-                    "conversation_id": message.conversation_id,
-                    "attempt": 0,
-                }
-            ),
-        )
-    except Exception as exc:
-        await release_transcription_publication(
-            message.message_id, f"queue publish failed: {exc}"
-        )
-        raise
     return True
 
 
-async def enqueue_image_extraction(
-    redis: AsyncRedis, message: DigisacMessage
-) -> bool:
-    """Persist an idempotent reservation before publishing a vision job."""
+async def enqueue_image_extraction(message: DigisacMessage) -> bool:
+    """Persist an idempotent image reservation for PostgreSQL polling."""
     if not is_image_message(message.message_type, message.file) or not message.message_id:
         return False
     reserved = await reserve_image_extraction(
@@ -345,22 +278,6 @@ async def enqueue_image_extraction(
     )
     if not reserved:
         return False
-    try:
-        await redis.rpush(
-            "image_extraction_queue",
-            json.dumps(
-                {
-                    "message_id": message.message_id,
-                    "conversation_id": message.conversation_id,
-                    "attempt": 0,
-                }
-            ),
-        )
-    except Exception as exc:
-        await release_image_publication(
-            message.message_id, f"queue publish failed: {exc}"
-        )
-        raise
     return True
 
 
@@ -368,7 +285,6 @@ async def enqueue_image_extraction(
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     require_admin_api_token()
     await initialize_database()
-    app.state.redis = create_redis_client()
     directory_task = asyncio.create_task(directory_sync_loop())
     contact_hydration_task = asyncio.create_task(contact_hydration_loop())
     try:
@@ -380,7 +296,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await directory_task
         with suppress(asyncio.CancelledError):
             await contact_hydration_task
-        await app.state.redis.aclose()
         await close_database()
 
 
@@ -411,45 +326,37 @@ async def validation_error_handler(
     return await request_validation_exception_handler(request, exc)
 
 
-def get_redis(request: Request) -> AsyncRedis:
-    return cast(AsyncRedis, request.app.state.redis)
-
-
 @app.get("/health")
-async def health(redis: AsyncRedis = Depends(get_redis)) -> dict[str, str]:
-    await redis.ping()
+async def health() -> dict[str, str]:
     if not await database_is_ready():
         raise HTTPException(status_code=503, detail="database unavailable")
     return {"status": "ok"}
 
 
 @app.get("/queues")
-async def queue_metrics(
-    redis: AsyncRedis = Depends(get_redis),
-) -> dict[str, Any]:
-    """Small operational view of the Redis-backed work queues."""
-    (
-        ia_queue,
-        dead_letter,
-        audio_queue,
-        audio_dead_letter,
-        image_queue,
-        image_dead_letter,
-    ) = await asyncio.gather(
-        redis.llen("ia_queue"),
-        redis.llen("ia_dead_letter"),
-        redis.llen("audio_transcription_queue"),
-        redis.llen("audio_transcription_dead_letter"),
-        redis.llen("image_extraction_queue"),
-        redis.llen("image_extraction_dead_letter"),
+async def queue_metrics() -> dict[str, Any]:
+    """Operational view of durable PostgreSQL work counts."""
+    cycle_work, audio_work, image_work = await asyncio.gather(
+        get_cycle_work_metrics(),
+        get_transcription_work_metrics(),
+        get_image_extraction_work_metrics(),
     )
     result: dict[str, Any] = {
-        "ia_queue": ia_queue,
-        "ia_dead_letter": dead_letter,
-        "audio_transcription_queue": audio_queue,
-        "audio_transcription_dead_letter": audio_dead_letter,
-        "image_extraction_queue": image_queue,
-        "image_extraction_dead_letter": image_dead_letter,
+        "audio_due": audio_work["due"],
+        "audio_scheduled": audio_work["scheduled"],
+        "audio_leased": audio_work["leased"],
+        "audio_stale": audio_work["stale"],
+        "audio_completed": audio_work["completed"],
+        "audio_failed": audio_work["failed"],
+        "image_due": image_work["due"],
+        "image_scheduled": image_work["scheduled"],
+        "image_leased": image_work["leased"],
+        "image_stale": image_work["stale"],
+        "image_completed": image_work["completed"],
+        "image_failed": image_work["failed"],
+        "ia_due": cycle_work["due"],
+        "ia_scheduled": cycle_work["scheduled"],
+        "ia_leased": cycle_work["leased"],
     }
     result["conversation_cycles"] = await get_cycle_metrics()
     return result
@@ -496,7 +403,6 @@ async def digisac_webhook(
     request: Request,
     response: Response,
     _: None = Depends(verify_webhook_signature),
-    redis: AsyncRedis = Depends(get_redis),
 ) -> dict[str, Any]:
     """Ingest DigiSac events into the persistent cycle and media flows."""
     payload_data, _payload = await parse_webhook_payload(request)
@@ -598,15 +504,12 @@ async def digisac_webhook(
             contact_external_id=_canonical_ticket_contact_external_id(data),
         )
         if created:
-            try:
-                await _publish_cycle(redis, cycle)
-            except Exception:
-                logger.exception(
-                    "Cycle persisted but queue publication failed: "
-                    "cycle_id=%s conversation_id=%s",
-                    cycle["public_id"],
-                    ticket_id,
-                )
+            logger.info(
+                "Cycle persisted for PostgreSQL finalization polling: "
+                "cycle_id=%s conversation_id=%s",
+                cycle["public_id"],
+                ticket_id,
+            )
         return {
             "status": "ticket_closed" if created else "ticket_already_closed",
             "conversation_id": ticket_id,
@@ -713,12 +616,12 @@ async def digisac_webhook(
         "event": message.event,
         "timestamp": (message.timestamp.isoformat() if message.timestamp else None),
     }
-    idempotency = IdempotencyService(redis)
+    idempotency = IdempotencyService()
     event_id = idempotency.generate_event_id(idempotency_data)
-    # Reserve/enqueue before event idempotency: if Redis publishing fails, the
-    # failed DB row can be reserved again when DigiSac retries the same webhook.
-    transcription_queued = await enqueue_audio_transcription(redis, message)
-    image_extraction_queued = await enqueue_image_extraction(redis, message)
+    # Reserve before event idempotency so a duplicate webhook cannot erase a
+    # durable media row. Admission persists directly for PostgreSQL polling.
+    transcription_queued = await enqueue_audio_transcription(message)
+    image_extraction_queued = await enqueue_image_extraction(message)
     if not await idempotency.try_mark_processed(event_id):
         return {"status": "duplicate", "conversation_id": conversation_id}
     return {

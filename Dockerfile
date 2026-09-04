@@ -29,6 +29,10 @@ COPY main.py /app/main.py
 COPY alembic/ /app/alembic/
 COPY alembic.ini /app/alembic.ini
 
+# Historical backfill is a maintenance-only tool. Keep it out of the
+# application image so a normal API/worker container cannot run the importer.
+RUN rm /app/src/utils/backfill_redis_history.py
+
 ENV PYTHONPATH=/app \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -42,6 +46,22 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else sys.exit(1)"
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM api AS maintenance
+
+# The maintenance image is deliberately separate from the application target.
+# It carries the bounded Redis retirement commands, while api remains free of
+# operational scripts and keeps its existing runtime surface.
+USER root
+COPY requirements-maintenance.txt /app/requirements-maintenance.txt
+RUN pip install --no-cache-dir -r /app/requirements-maintenance.txt
+COPY scripts/ /app/scripts/
+COPY src/utils/backfill_redis_history.py /app/src/utils/backfill_redis_history.py
+RUN chown -R app:app /app/scripts
+RUN chown app:app /app/src/utils/backfill_redis_history.py
+USER app
+
+CMD ["sleep", "infinity"]
 
 FROM base AS ralph
 

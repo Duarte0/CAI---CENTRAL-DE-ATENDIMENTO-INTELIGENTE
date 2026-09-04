@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 import logging
 import time
@@ -9,7 +8,6 @@ from typing import Any, Dict, cast
 from groq import Groq
 
 from src.core.config import settings
-from src.core.analysis import with_protocol
 from src.core.acessorias_requests import create_request_for_cycle
 from src.core.acessorias_preparation import prepare_cycle_for_request
 from src.core.db import (  # noqa: F401
@@ -17,15 +15,11 @@ from src.core.db import (  # noqa: F401
     get_pending_content_extractions,
     get_content_states,
     get_previous_cycle,
-    get_recoverable_cycles,
     initialize_database,
     insert_classification,
-    claim_cycle,
+    claim_next_cycle,
     reserve_image_extraction,
     reserve_transcription,
-    release_cycle_publication,
-    release_image_publication,
-    release_transcription_publication,
     resolve_user_names,
     resolve_ticket_assignments,
     save_cycle_messages,
@@ -45,7 +39,6 @@ from src.core.finalization import (
     render_context,
 )
 from src.core.ia_classification import build_prompt, parse_result, system_prompt
-from src.core.redis_client import AsyncRedis, create_redis_client
 from src.core.provider_retry import (
     ProviderRetryWindowActive,
     TransientProviderError,
@@ -58,11 +51,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class IAWorker:
-    def __init__(self, redis_client: AsyncRedis):
-        self.redis = redis_client
-        self.queue = "ia_queue"
-        self.dead_letter = "ia_dead_letter"
-
+    def __init__(self):
         # Usa GROQ_API_KEY
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
@@ -83,70 +72,43 @@ class IAWorker:
                 self.max_tokens,
             )
         self.max_retries = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
-        self.result_ttl_seconds = int(os.getenv("RESULT_TTL_SECONDS", 86400))
         self.prompt_version = settings.prompt_version
         self.provider_blocked_until = 0.0
         self.provider_window_resume_pending = False
 
     async def process(self) -> None:
-        """Process persistent conversation-cycle jobs from Redis."""
+        """Poll and process persistent conversation cycles from PostgreSQL."""
         logger.info("🤖 IA Worker started with Groq")
-        await self._process_cycle_queue()
+        await self._process_cycles()
 
-    async def _process_cycle_queue(self) -> None:
+    async def _process_cycles(self) -> None:
         owner = f"{uuid.uuid4().hex}:{os.getpid()}"
         next_reconcile = 0.0
-        logger.info("Persistent conversation finalization worker started")
+        logger.info("Persistent conversation finalization PostgreSQL poller started")
         while True:
-            item: str | None = None
             try:
+                if await self._pause_for_provider_window():
+                    continue
                 if time.monotonic() >= next_reconcile:
                     await self._reconcile_cycles()
                     next_reconcile = (
                         time.monotonic()
                         + settings.finalization_reconcile_interval_seconds
                     )
-                if await self._pause_for_provider_window():
-                    continue
-                item = await self.redis.lpop(self.queue)
-                if not item:
-                    await asyncio.sleep(0.5)
-                    continue
-                parsed: Any = json.loads(item)
-                if not isinstance(parsed, dict):
-                    raise ValueError("finalization job must be a JSON object")
-                job = cast(dict[str, Any], parsed)
-                cycle_id = job.get("cycle_id")
-                if not isinstance(cycle_id, str) or not cycle_id:
-                    raise ValueError("finalization job is missing cycle_id")
-                not_before = float(job.get("not_before", 0) or 0)
-                if not_before > time.time():
-                    await self.redis.rpush(self.queue, item)
-                    await asyncio.sleep(min(not_before - time.time(), 1.0))
-                    item = None
-                    continue
-                provider_remaining = self._provider_window_remaining()
-                if provider_remaining > 0:
-                    await self.redis.rpush(self.queue, item)
-                    item = None
-                    await asyncio.sleep(min(provider_remaining, 1.0))
-                    continue
                 self._log_provider_window_resumed()
-                cycle = await claim_cycle(
-                    cycle_id,
+                cycle = await claim_next_cycle(
                     owner=owner,
                     lease_seconds=settings.finalization_lease_seconds,
                 )
                 if cycle is None:
+                    await asyncio.sleep(settings.finalization_poll_interval_seconds)
                     continue
                 try:
-                    await self._process_cycle(cycle, job)
+                    await self._process_cycle(cycle, {})
                 except Exception as exc:
-                    await self._record_cycle_failure(cycle, job, exc)
+                    await self._record_cycle_failure(cycle, {}, exc)
             except Exception:
                 logger.exception("Finalization worker loop failed")
-                if item:
-                    await self.redis.rpush(self.dead_letter, item)
                 await asyncio.sleep(1)
 
     async def _reconcile_cycles(self) -> None:
@@ -159,34 +121,6 @@ class IAWorker:
                 "Media-blocked cycles became recoverable: count=%s",
                 len(awakened),
             )
-        cycles = await get_recoverable_cycles(limit=100)
-        published = 0
-        for cycle in cycles:
-            cycle_id = str(cycle["public_id"])
-            job = {
-                "cycle_id": cycle_id,
-                "conversation_id": cycle["conversation_id"],
-                "protocol": cycle.get("protocol"),
-                "attempt": cycle["attempt_count"],
-                "not_before": (
-                    datetime.fromisoformat(str(cycle["next_attempt_at"])).timestamp()
-                    if cycle.get("next_attempt_at")
-                    else 0
-                ),
-            }
-            try:
-                await self.redis.rpush(
-                    self.queue, json.dumps(job, ensure_ascii=False)
-                )
-                published += 1
-            except Exception:
-                await release_cycle_publication(cycle_id)
-                logger.exception(
-                    "Failed to republish recoverable cycle: cycle_id=%s",
-                    cycle_id,
-                )
-        if published:
-            logger.debug("Published due finalization cycles: count=%s", published)
 
     async def _prepare_and_create_request(
         self, cycle_id: str
@@ -258,39 +192,26 @@ class IAWorker:
                     conversation_id,
                     settings.audio_transcription_model,
                 )
-                queue = "audio_transcription_queue"
-            else:
-                reserved = await reserve_image_extraction(
+                if reserved:
+                    logger.info(
+                        "Audio transcription admitted to PostgreSQL polling: "
+                        "message_id=%s conversation_id=%s",
+                        message_id,
+                        conversation_id,
+                    )
+                continue
+            reserved = await reserve_image_extraction(
+                message_id,
+                conversation_id,
+                settings.image_vision_model,
+            )
+            if reserved:
+                logger.info(
+                    "Image extraction admitted to PostgreSQL polling: "
+                    "message_id=%s conversation_id=%s",
                     message_id,
                     conversation_id,
-                    settings.image_vision_model,
                 )
-                queue = "image_extraction_queue"
-            if reserved:
-                try:
-                    await self.redis.rpush(
-                        queue,
-                        json.dumps(
-                            {
-                                "message_id": message_id,
-                                "conversation_id": conversation_id,
-                                "attempt": (
-                                    int(state.get("attempt_count") or 0)
-                                    if state
-                                    else 0
-                                ),
-                            }
-                        ),
-                    )
-                except Exception as exc:
-                    error = f"queue publish failed: {exc}"
-                    if message_type in AUDIO_TYPES:
-                        await release_transcription_publication(
-                            message_id, error
-                        )
-                    else:
-                        await release_image_publication(message_id, error)
-                    raise
 
     def _next_media_check_at(
         self,
@@ -716,27 +637,6 @@ class IAWorker:
                 cycle_id,
                 type(exc).__name__,
             )
-        result = with_protocol(result, cycle.get("protocol"))
-        if identity.public_id is not None:
-            result["classification_public_id"] = str(identity.public_id)
-        result["cycle_id"] = cycle_id
-        await self.redis.set(
-            f"ia_result:{conversation_id}",
-            json.dumps(result, ensure_ascii=False),
-            ex=self.result_ttl_seconds,
-        )
-        await self.redis.set(
-            f"ia_status:{conversation_id}",
-            json.dumps(
-                {
-                    "conversation_id": conversation_id,
-                    "cycle_id": cycle_id,
-                    "status": final_status,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ),
-            ex=self.result_ttl_seconds,
-        )
         logger.info(
             "Conversation cycle completed: cycle_id=%s conversation_id=%s "
             "status=%s message_count=%s audio_count=%s image_count=%s "
@@ -843,7 +743,7 @@ class IAWorker:
     async def _record_cycle_failure(
         self,
         cycle: dict[str, Any],
-        job: dict[str, Any],
+        _job: dict[str, Any],
         exc: Exception,
     ) -> None:
         cycle_id = str(cycle["public_id"])
@@ -927,10 +827,6 @@ class IAWorker:
                     "lease_owner": None,
                     "lease_expires_at": None,
                 },
-            )
-            await self.redis.rpush(
-                self.dead_letter,
-                json.dumps({**job, "attempt": attempt}, ensure_ascii=False),
             )
         else:
             not_before = datetime.now(timezone.utc) + timedelta(
@@ -1074,18 +970,12 @@ class IAWorker:
 
 async def main() -> None:
     """Função principal"""
-    redis_client = None
     try:
         await initialize_database()
-        redis_client = create_redis_client()
-        await redis_client.ping()
-        logger.info("✅ Conectado ao Redis")
-        await IAWorker(redis_client).process()
+        await IAWorker().process()
     except Exception as e:
         logger.error(f"❌ Erro de inicialização/execução do worker: {e}")
     finally:
-        if redis_client is not None:
-            await redis_client.aclose()
         await close_database()
 
 

@@ -242,6 +242,37 @@ def test_openapi_projects_queries_and_operational_errors() -> None:
     }.issubset(schemas)
     assert set(document["paths"]["/health"]["get"]["responses"]) == {"200", "503"}
     assert set(document["paths"]["/queues"]["get"]["responses"]) == {"200"}
+    queue_metrics = schemas["QueueMetrics"]
+    assert {
+        "ia_due",
+        "ia_scheduled",
+        "ia_leased",
+        "audio_due",
+        "audio_scheduled",
+        "audio_leased",
+        "audio_stale",
+        "audio_completed",
+        "audio_failed",
+        "image_due",
+        "image_scheduled",
+        "image_leased",
+        "image_stale",
+        "image_completed",
+        "image_failed",
+    }.issubset(
+        queue_metrics["required"]
+    )
+    assert not {
+        "ia_queue",
+        "ia_dead_letter",
+        "audio_transcription_queue",
+        "audio_transcription_dead_letter",
+        "image_extraction_queue",
+        "image_extraction_dead_letter",
+    } & set(queue_metrics["required"])
+    assert "PostgreSQL" in document["paths"]["/health"]["get"]["description"]
+    assert "Redis" in document["paths"]["/health"]["get"]["description"]
+    assert "not fabricated as zero" in document["paths"]["/queues"]["get"]["description"]
 
     cycles = document["paths"]["/conversations/{conversation_id}/cycles"]["get"]
     limit = next(

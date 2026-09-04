@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import psycopg
@@ -9,8 +10,10 @@ import requests
 from fastapi import Response
 
 from src.api import routes
+from src.core import webhook_event_repository
 from src.core import db as db_module
 from src.core import digisac_contact_repository as contact_repository
+from src.core.digisac_contact_repository import ContactHydrationRequestDecision
 from src.core.digisac_client import (
     DigisacClient,
     DigisacClientError,
@@ -23,7 +26,9 @@ from src.core.db import (
     claim_digisac_contact_hydration,
     get_digisac_contact,
     get_digisac_contact_hydration,
+    mark_digisac_contact_hydration_failure,
     request_digisac_contact_hydration,
+    request_digisac_contact_hydration_result,
     upsert_digisac_contact,
 )
 
@@ -198,15 +203,6 @@ async def test_message_contact_reference_schedules_hydration_without_inline_prov
 
     monkeypatch.setattr(routes, "request_contact_hydration", schedule)
     monkeypatch.setattr(routes, "reserve_transcription", lambda *_args: None)
-    redis = type(
-        "Redis",
-        (),
-        {
-            "set": lambda _self, *_args, **_kwargs: asyncio.sleep(0, result=True),
-            "get": lambda _self, *_args: asyncio.sleep(0, result=None),
-            "rpush": lambda _self, *_args: asyncio.sleep(0, result=1),
-        },
-    )()
     payload = {
         "event": "message.created",
         "data": {
@@ -223,10 +219,13 @@ async def test_message_contact_reference_schedules_hydration_without_inline_prov
         return payload, None
 
     monkeypatch.setattr(routes, "parse_webhook_payload", parse)
-
-    result = await routes.digisac_webhook(
-        request=None, response=Response(), redis=redis
+    monkeypatch.setattr(
+        webhook_event_repository,
+        "try_mark_webhook_event",
+        lambda *_args: asyncio.sleep(0, result=True),
     )
+
+    result = await routes.digisac_webhook(request=None, response=Response())
 
     assert result["status"] == "received"
     assert scheduled == ["contact-1"]
@@ -325,6 +324,9 @@ async def test_contact_hydration_is_deduplicated_claimed_and_recoverable():
     state = await get_digisac_contact_hydration("contact-2")
     assert state is not None
     assert state["status"] == "succeeded"
+    result = await request_digisac_contact_hydration_result("contact-2")
+    assert result.decision is ContactHydrationRequestDecision.SUCCEEDED_CURRENT
+    assert result.requested is False
 
 
 @pytest.mark.postgres
@@ -346,3 +348,83 @@ async def test_hydration_failure_preserves_last_valid_contact_data():
     assert state is not None
     assert state["status"] == "failed"
     assert state["failure_category"] == "transient"
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_repeated_contact_reference_preserves_future_hydration_backoff(
+    caplog: pytest.LogCaptureFixture,
+):
+    caplog.set_level(logging.INFO, logger="src.core.digisac_contact_repository")
+    assert await request_digisac_contact_hydration("contact-backoff") is True
+    claim = await claim_digisac_contact_hydration(lease_seconds=60)
+    assert claim is not None
+    assert await mark_digisac_contact_hydration_failure(
+        "contact-backoff",
+        "transient",
+        retryable=True,
+        expected_lease_until=claim["lease_until"],
+    ) is True
+
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE digisac_contact_hydrations AS h
+            SET next_attempt_at = CURRENT_TIMESTAMP + INTERVAL '1 hour'
+            FROM digisac_contacts AS c
+            WHERE c.id = h.contact_id AND c.external_id = %s
+            """,
+            ("contact-backoff",),
+        )
+
+    before = await get_digisac_contact_hydration("contact-backoff")
+    assert before is not None
+    results = await asyncio.gather(
+        *[
+            request_digisac_contact_hydration_result("contact-backoff")
+            for _ in range(10)
+        ]
+    )
+    assert {
+        result.decision for result in results
+    } == {ContactHydrationRequestDecision.FAILED_BACKOFF_PRESERVED}
+    assert all(result.requested is False for result in results)
+
+    after = await get_digisac_contact_hydration("contact-backoff")
+    assert after is not None
+    assert after["status"] == "failed"
+    assert after["next_attempt_at"] == before["next_attempt_at"]
+    assert await claim_digisac_contact_hydration(lease_seconds=60) is None
+    assert "decision=failed_backoff_preserved" in caplog.text
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_due_failed_contact_is_left_for_the_hydration_poller():
+    assert await request_digisac_contact_hydration("contact-due") is True
+    claim = await claim_digisac_contact_hydration(lease_seconds=60)
+    assert claim is not None
+    assert await mark_digisac_contact_hydration_failure(
+        "contact-due",
+        "transient",
+        retryable=True,
+        expected_lease_until=claim["lease_until"],
+    ) is True
+
+    with psycopg.connect(settings.database_url) as connection:
+        connection.execute(
+            """
+            UPDATE digisac_contact_hydrations AS h
+            SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
+            FROM digisac_contacts AS c
+            WHERE c.id = h.contact_id AND c.external_id = %s
+            """,
+            ("contact-due",),
+        )
+
+    result = await request_digisac_contact_hydration_result("contact-due")
+    assert result.decision is ContactHydrationRequestDecision.FAILED_DUE
+    state = await get_digisac_contact_hydration("contact-due")
+    assert state is not None
+    assert state["status"] == "failed"
+    assert await claim_digisac_contact_hydration(lease_seconds=60) is not None

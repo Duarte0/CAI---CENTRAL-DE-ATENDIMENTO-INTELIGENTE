@@ -1,10 +1,11 @@
 # SPEC-0006 — Documentação da API HTTP e contrato OpenAPI
 
-- **Status:** implementado; delta v1.2 documenta a superfície administrativa autenticada já montada, sem mudança de comportamento HTTP
-- **Versão:** 1.2
+- **Status:** implementado; delta v1.9 documenta as métricas duráveis de áudio/imagem, a remoção dos campos Redis de `/queues`, a fronteira do comando de manutenção do issue 0052, a idempotência PostgreSQL do webhook do issue 0053, a independência PostgreSQL das consultas de status/resultado após o issue 0054, o runtime Redis-free do issue 0055 e a disposição operacional separada do issue 0056
+- **Versão:** 1.9
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
 - **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13;
-  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012
+  `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012; issues 0049–0050,
+  0053, 0054, 0055 e 0056
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003, SPEC-0004, SPEC-0005 e
   SPEC-0012
 
@@ -21,8 +22,8 @@ prefixo de versão:
 
 | Tag futura | Método e path | Fonte de resposta atual | Finalidade |
 | --- | --- | --- | --- |
-| Operações | `GET /health` | `dict[str, str]` | Readiness de Redis e PostgreSQL. |
-| Operações | `GET /queues` | dicionário montado pelo handler | Métricas de filas, dead letters e ciclos por status. |
+| Operações | `GET /health` | `dict[str, str]` | Readiness de PostgreSQL. |
+| Operações | `GET /queues` | dicionário montado pelo handler | Métricas duráveis PostgreSQL de trabalho e ciclos por status. |
 | Webhook DigiSac | `POST /webhook/digisac` | dicionários variantes | Ingestão de eventos DigiSac. |
 | Conversas | `GET /conversations/{conversation_id}/status` | `ConversationProcessing` | Estado do ciclo mais recente. |
 | Conversas | `GET /conversations/{conversation_id}/result` | linha de resultado projetada pelo banco | Última classificação disponível. |
@@ -52,7 +53,7 @@ O código é a fonte de verdade para este contrato. Em particular, `Conversation
    `/v1/...`, `/v2/...`, diagnósticos de webhook removidos, UI administrativa ou
    rotas não montadas como implementadas.
 5. Estruturas repetidas **must** usar `components/schemas` e `$ref` quando isto não ocultar uma variação real. Candidatas incluem classificação, status de processamento, resumo/registro de ciclo, resultado, métricas, respostas de webhook e erros por formato real.
-6. Como o contrato de erro atual não é uniforme, a documentação **must not** inventar um `Error` universal. Ela **must** documentar separadamente o objeto `{"detail": "..."}` dos `HTTPException` conhecidos e o formato padrão FastAPI de erro de validação (`422`) quando ele ocorrer; falhas não mapeadas pelo código permanecem resposta de servidor, sem formato de negócio prometido.
+6. Como o contrato de erro atual não é uniforme, a documentação **must not** inventar um `Error` universal. Ela **must** documentar separadamente o objeto `{"detail": "..."}` dos `HTTPException` conhecidos e o formato padrão FastAPI de erro de validação (`422`) quando ele ocorrer; falhas não mapeadas pelo código permanecem resposta de servidor, sem formato de negócio prometido. A aplicação não possui mais uma falha de runtime específica de Redis.
 7. O OpenAPI **must** usar exemplos fictícios, sanitizados e consistentes com seus schemas. Nenhum exemplo, descrição ou metadado **must not** conter segredo, token, URL assinada/de download, cabeçalho/corpo bruto de webhook ou mídia binária.
 
 Como o repositório concentra documentação de consumidor no `README.md` e não possui uma árvore `docs/`, a seção “API HTTP” publicada deve permanecer a introdução concisa para propósito, `http://localhost:8000` em desenvolvimento, superfície suportada, HMAC do webhook, ausência atual de autenticação nas consultas internas, Bearer `ADMIN_API_TOKEN` somente na administração interna, formato geral de resultados, erros, estados de processamento, links para `/openapi.json`, `/docs` e `/redoc`, e o aviso de versionamento sem prefixo. A referência detalhada permanece no OpenAPI, Swagger UI e ReDoc; isso não autoriza uma UI administrativa.
@@ -65,15 +66,15 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
 2. Os exemplos de `ticket.*` **must** demonstrar `data.id`, `isOpen`, `protocol` quando aplicável e identificadores de atribuição seguros. Os de `message.*` **must** demonstrar `data.id`, `ticketId`, `type`, `isFromMe`, texto ou metadados de arquivo seguros. Tipos atualmente tratados são `chat`, `document`, `ptt`, `audio`, `voice` e `image`; um `document` com MIME `image/*` é processado como imagem. O schema **must not** exigir ou expor URL de arquivo, credenciais ou binário.
 3. Quando `WEBHOOK_SECRET` estiver configurado, `X-Digisac-Signature` **must** ser documentado como header obrigatório para esta operação, com HMAC-SHA256 do corpo bruto, aceitando digest hexadecimal puro ou `sha256=<digest>`. A dependência valida antes de parse/normalização; assinatura ausente ou inválida retorna `401` com `{"detail": "Missing webhook signature"}` ou `{"detail": "Invalid webhook signature"}`. Quando o segredo não estiver configurado, a dependência atual não exige header; a documentação **must** representar essa condicionalidade, sem publicar valor de segredo nem prometer que produção aceite chamadas sem HMAC.
 4. JSON inválido, payload que não é objeto, ou `data` que não é objeto **must** documentar `400` e os detalhes atuais: `Invalid JSON payload`, `Webhook payload must be an object` e `Malformed Digisac payload: 'data' must be an object`. A validação HMAC vem antes desses erros quando habilitada.
-5. O retorno normal **must** documentar `202` e as variantes reais: `received` (`conversation_id`, flags `transcription_queued` e `image_extraction_queued`), `duplicate` (`conversation_id`), `ticket_created` (`conversation_id`, `cycle_id`, `cycle_created`), `ticket_reopened` (mais `queued: false`), `ticket_updated` (`queued: false`), e `ticket_closed`/`ticket_already_closed` (`cycle_id`, `queued`).
+5. O retorno normal **must** documentar `202` e as variantes reais: `received` (`conversation_id`, flags `transcription_queued` e `image_extraction_queued`), `duplicate` (`conversation_id`), `ticket_created` (`conversation_id`, `cycle_id`, `cycle_created`), `ticket_reopened` (mais `queued: false`), `ticket_updated` (`queued: false`), e `ticket_closed`/`ticket_already_closed` (`cycle_id`, `queued`). `duplicate` é decidido pelo ledger PostgreSQL de digest com janela de uma hora; a operação não publica o digest nem o payload na resposta.
 6. O retorno `200` **must** documentar evento ignorado como `{"status":"ignored","reason":"..."}` e usar apenas razões sanitizadas observadas: `unsupported_event`, `missing_ticket_id`, `missing_protocol`, `is_from_bot`, `bot_origin_fallback`, `missing_is_from_me`, `unsupported_message_type`, `empty_message_text` e `missing_or_invalid_data`. As variações que incluem `conversation_id` **must** ser mostradas somente onde o handler a retorna. Esses eventos não criam trabalho; duplicação de mensagem retorna `202` com `status: duplicate`, e a identidade durável de ciclo/mídia evita duplicação mesmo em repetição.
-7. A operação **must** declarar que o aceite assíncrono não significa classificação concluída. Reserva durável precede publicação de mídia; fechamento persiste ciclo antes de publicação, e falha de publicação não desfaz o ciclo. Esses são comportamentos operacionais de contrato, não promessas de SLA.
+7. A operação **must** declarar que o aceite assíncrono não significa classificação concluída. Reserva durável precede publicação de mídia; fechamento persiste ciclo para polling PostgreSQL, sem publicar `ia_queue`. Esses são comportamentos operacionais de contrato, não promessas de SLA.
 
 ### Operações — `GET /health` e `GET /queues`
 
-1. `GET /health` **must** documentar sucesso `200` como `{"status":"ok"}`. Se `database_is_ready()` retornar falso, o handler retorna `503` com `{"detail":"database unavailable"}`. Redis é testado antes disso; exceção de Redis não é convertida pelo handler em um `503` com corpo estável, portanto a documentação **must not** prometer um formato/código específico para essa falha não mapeada.
-2. `GET /queues` **must** documentar `200` com inteiros `ia_queue`, `ia_dead_letter`, `audio_transcription_queue`, `audio_transcription_dead_letter`, `image_extraction_queue`, `image_extraction_dead_letter` e `conversation_cycles`. `conversation_cycles` é um mapa de contagens agrupadas por status e pode ser `{}` quando a capability de ciclos não estiver disponível; não é lista de jobs, dead-letter payload ou conteúdo de Redis. A especificação **must not** expor chaves Redis, mensagens ou detalhes de worker que a rota não devolve.
-3. Ambas as operações não possuem autenticação/autorização adicional no código atual. Falhas não mapeadas de Redis/banco **must** ser descritas apenas como falhas de servidor quando necessário, sem criar contrato uniforme inexistente.
+1. `GET /health` **must** documentar sucesso `200` como `{"status":"ok"}`. Se `database_is_ready()` retornar falso, o handler retorna `503` com `{"detail":"database unavailable"}`. Redis não é consultado e sua indisponibilidade não pode impedir esse contrato.
+2. `GET /queues` **must** documentar `200` somente com os inteiros PostgreSQL `ia_due`, `ia_scheduled`, `ia_leased`, `audio_due`, `audio_scheduled`, `audio_leased`, `audio_stale`, `audio_completed`, `audio_failed`, `image_due`, `image_scheduled`, `image_leased`, `image_stale`, `image_completed`, `image_failed` e `conversation_cycles`. Os campos Redis `ia_queue`, `ia_dead_letter`, `audio_transcription_queue`, `audio_transcription_dead_letter`, `image_extraction_queue` e `image_extraction_dead_letter` foram removidos explicitamente e não podem ser fabricados como zero. `conversation_cycles` é um mapa de contagens agrupadas por status e pode ser `{}` quando a capability de ciclos não estiver disponível.
+3. Ambas as operações não possuem autenticação/autorização adicional no código atual. A indisponibilidade do banco retorna o `503` documentado; não há dependência de Redis no runtime.
 
 ### Conversas e ciclos
 
@@ -84,7 +85,7 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
 5. `GET /cycles/{cycle_id}/status` **must** documentar todos e somente os campos serializados da linha de `conversation_processing_cycles` atual: `id`, `public_id`, `conversation_id`, `sequence_number`, `protocol`, `cycle_started_at`, `ticket_closed_at`, `cycle_start_strategy`, `open_event_key`, `close_event_key`, `status`, `attempt_count`, `transient_retry_count`, `error_phase`, `error_message`, `warning_count`, `snapshot_json`, `rendered_context`, `model_context`, `context_reduction_applied`, `context_reduction_json`, `history_recovery_attempt`, `history_page_count`, `processing_time_ms`, `classification_id`, `next_attempt_at`, `enqueued_at`, `lease_owner`, `lease_expires_at`, `created_at`, `updated_at` e `completed_at`. UUIDs e timestamps **must** ter formatos OpenAPI apropriados; campos JSON permanecem objetos/listas de forma permissiva quando o código não fixa sua estrutura. Ciclo inexistente retorna `404` com `{"detail":"Cycle not found"}`.
 6. `GET /cycles/{cycle_id}/result` **must** reutilizar o schema de resultado de conversa. Ciclo inexistente retorna `404` com `{"detail":"Cycle not found"}`; ciclo existente sem classificação retorna `404` com `{"detail":"Cycle result not available"}`. `completed` e `completed_with_warnings` são terminais, mas a disponibilidade é determinada pelo `classification_public_id` que o handler consulta, não somente pelo texto do status.
 7. Para resultados de classificação, o schema reutilizável **must** refletir o JSON retornado pelo `LEFT JOIN`, inclusive nulabilidade de classificação antes da guarda interna. A taxonomia efetivamente persistida/produzida para `intent_type` é `question`, `problem`, `request`, `complaint`, `payment`, `billing`, `financial`, `document`, `protocol` e `other`; `department` e `agent` são listas construídas pela aplicação. Exemplos de sucesso **must** usar uma classificação concluída e dados fictícios.
-8. Os quatro endpoints de resultado/status **must** explicar estados intermediários versus terminais, disponibilidade posterior do resultado e `404`; não devem inferir SLA, polling interval ou êxito de processamento a partir de `202` do webhook. Parâmetros path inválidos não possuem validação de formato declarada no handler atual; a documentação **must not** inventar `422` de UUID para eles.
+8. Os quatro endpoints de resultado/status **must** explicar estados intermediários versus terminais, disponibilidade posterior do resultado e `404`; não devem inferir SLA, polling interval ou êxito de processamento a partir de `202` do webhook. Status e resultado são projeções dos repositórios PostgreSQL e não dependem das views Redis aposentadas `ia_status:*`/`ia_result:*`. Parâmetros path inválidos não possuem validação de formato declarada no handler atual; a documentação **must not** inventar `422` de UUID para eles.
 
 ## Segurança, privacidade e compatibilidade
 
@@ -105,7 +106,7 @@ Como o repositório concentra documentação de consumidor no `README.md` e não
    removidos e UI não montada. O teste **must** conferir métodos, tags, paths,
    parâmetros path e `limit`, responses relevantes, `$ref` reutilizáveis e
    exemplos válidos contra seus schemas.
-2. Os testes **must** verificar segurança do webhook: header e explicação HMAC condicional, `401` antes de parse, ausência de segredo nos exemplos/documento e nenhuma security scheme fictícia em consultas. Também **must** verificar `400`, `200` ignorado, `202` aceito/duplicado, `404` de entidade/resultado, `422` de `limit`, `503` de banco em health e a distinção entre falha de Redis não mapeada e contrato `503` do banco.
+2. Os testes **must** verificar segurança do webhook: header e explicação HMAC condicional, `401` antes de parse, ausência de segredo nos exemplos/documento e nenhuma security scheme fictícia em consultas. Também **must** verificar `400`, `200` ignorado, `202` aceito/duplicado, `404` de entidade/resultado, `422` de `limit`, `503` de banco em health, falha fechada quando o ledger PostgreSQL não decide, ausência dos seis campos Redis legados e contrato durável de `/queues`.
 3. Os schemas de resposta **must** ser comparados contra `ConversationProcessing`, a projeção de `get_cycle_result`, a linha exposta por `get_cycle`/`list_cycles` e o dicionário real de `queue_metrics`; mudanças em handler, modelo ou migration que alterem resposta **must** atualizar a documentação e seus testes no mesmo change.
 4. Testes de UI/endpoints de documentação **must** confirmar que `/openapi.json`, `/docs` e `/redoc` respondem corretamente. A página de `README.md` **must** apontar apenas para esses paths e base URL de desenvolvimento confirmados.
 5. A validação de repositório **must** usar os comandos existentes: `PYTHONPATH=/app python -m pytest -q --ignore=tests/test_webhook_local.py`, `npx --yes pyright` quando novos modelos/tipagem entrarem no escopo, e o runner completo `PYTHONPATH=/app python scripts/verify.py` quando a mudança alcançar a suíte/matriz canônica. `tests/test_webhook_local.py` permanece opt-in e não entra na automação canônica sem API local iniciada.
@@ -119,7 +120,7 @@ Critérios verificáveis de aceitação:
 
 ## Gaps e decisões abertas
 
-Não há decisão de produto pendente para a publicação concluída. Permanecem três limitações de implementação que qualquer issue posterior **must** registrar sem resolvê-las silenciosamente: (1) respostas de ciclo, resultado, webhook e filas não têm `response_model` explícito e parte do ciclo é devolvida como `SELECT *`; qualquer redução/estabilização de campos exige mudança de API separada; (2) `ProcessingStatus` declara `processing`, mas esse valor não é permitido pelo schema persistido que alimenta a rota de status; o documento registra a divergência sem apresentar `processing` como emitido; (3) só indisponibilidade de banco em `/health` é mapeada para `503`, enquanto falhas de Redis não têm resposta de dependência estável. Essas limitações não invalidam a documentação publicada, mas bloqueiam prometer enforcement ou erro operacional mais forte que o código atual.
+Não há decisão de produto pendente para a publicação concluída. Permanecem duas limitações de implementação que qualquer issue posterior **must** registrar sem resolvê-las silenciosamente: (1) respostas de ciclo, resultado, webhook e filas não têm `response_model` explícito e parte do ciclo é devolvida como `SELECT *`; qualquer redução/estabilização de campos exige mudança de API separada; (2) `ProcessingStatus` declara `processing`, mas esse valor não é permitido pelo schema persistido que alimenta a rota de status; o documento registra a divergência sem apresentar `processing` como emitido. A dependência Redis do `/health` e dos campos legados de `/queues` foi removida pelo issue 0055.
 
 ## Notas de implementação
 
@@ -139,3 +140,18 @@ compileall, Pyright estrito, **238 passed, 76 skipped** offline, Alembic
 `0022_identity_discovery_command` e **76 passed, 238 deselected** no PostgreSQL
 16 descartável. Os skips e a matriz descartável não comprovam Redis, DigiSac,
 Groq, secret manager, réplicas, deployment ou produção.
+
+No issue 0054, as descrições OpenAPI de status e resultado passaram a declarar
+explicitamente a projeção PostgreSQL e a ausência de dependência das views
+`ia_status:*`/`ia_result:*`. Os handlers e respostas não foram alterados; as
+rotas continuam com os mesmos códigos, `404` e campos. No issue 0055, `/health`
+passou a documentar somente PostgreSQL e `/queues` passou a expor apenas as
+métricas duráveis, removendo explicitamente os seis campos de listas Redis sem
+fabricar zeros. O contrato foi verificado com testes de rota, OpenAPI e source
+guards do runtime.
+
+A remoção do storage Redis retido no issue 0056 não modifica rotas, schemas,
+status HTTP ou o contrato durável de `/health` e `/queues`. O smoke posterior à
+disposição deve confirmar novamente essas superfícies a partir do PostgreSQL;
+backup, identificação do alvo e deleção pertencem à operação de infraestrutura,
+não ao OpenAPI.

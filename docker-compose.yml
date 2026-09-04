@@ -18,20 +18,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   migrate:
     build:
       context: .
@@ -47,6 +33,30 @@ services:
     command: alembic upgrade ${ALEMBIC_TARGET_REVISION:-head}
     restart: "no"
 
+  maintenance:
+    profiles: ["maintenance"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: maintenance
+    env_file: .env
+    environment:
+      MAINTENANCE_REDIS_URL: ${MAINTENANCE_REDIS_URL:-}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
+      TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ${MAINTENANCE_REPORT_DIR:-./reports}:/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    command: ["sleep", "infinity"]
+    restart: "no"
+
   api:
     build:
       context: .
@@ -56,13 +66,10 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
       TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       migrate:
@@ -82,13 +89,10 @@ services:
       target: api
     env_file: .env
     environment:
-      REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
       TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       migrate:
@@ -110,13 +114,10 @@ services:
       target: api
     env_file: .env
     environment:
-      REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
       TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       migrate:
@@ -138,13 +139,10 @@ services:
       target: api
     env_file: .env
     environment:
-      REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
       TZ: ${APP_TIMEZONE:-America/Sao_Paulo}
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       migrate:
@@ -174,16 +172,12 @@ services:
       - codex_auth:/root/.codex
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cai}
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  redis_data:
   codex_auth:

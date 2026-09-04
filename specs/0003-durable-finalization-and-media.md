@@ -1,15 +1,15 @@
 # SPEC-0003 — Finalização durável, contexto e mídia
 
-- **Status:** baseline ativo, derivado da implementação; finalização persistente única; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037
-- **Versão:** 1.7
+- **Status:** baseline ativo, derivado da implementação; finalização persistente única por polling/lease PostgreSQL nos issues 0048–0050; áudio e imagem sem transporte Redis ativo nos issues 0049–0050; limite de ciclo consumido pelo mapeamento corrigido no issue 0020; retry durável de áudio alinhado à recuperação de mídia no issue 0027; gate compartilhado de áudio/imagem até conteúdo não vazio no issue 0046; boundaries estruturais nos issues 0029, 0031 e 0035; auditoria manual de resíduos Redis no issue 0037; retirada validada das listas legadas no issue 0052; views IA de status/resultado sem produtor Redis e sunset bounded no issue 0054; runtime Redis-free no issue 0055; issue 0056 mantém o storage retido até completar os gates sem tocar estado durável
+- **Versão:** 2.5
 - **Prioridade/Fase:** P0/P1 / operação durável e verificação
-- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`; SPEC-0001–0002; issues 0037 e 0046
+- **Rastreabilidade:** PRD §§5.3–5.4, 6 e 8; ARCHITECTURE §§4–7 e 12; `IMPLEMENTATION_PLAN.md`; Alembic `0013_conversation_cycles`, `0014_durable_retry_scheduling`, `0024_durable_media_leases`; SPEC-0001–0002; issues 0037, 0046, 0048, 0049, 0050, 0052, 0054, 0055 e 0056
 - **Dependências:** SPEC-0001, SPEC-0002
 
 ## Status de implementação
 
-Os contratos de ciclo persistente, reserva de mídia, agenda, publicação,
-recuperação e gate compartilhado de áudio/imagem estão implementados no código
+Os contratos de ciclo persistente, reserva de mídia, agenda, polling/lease
+PostgreSQL, recuperação e gate compartilhado de áudio/imagem estão implementados no código
 atual. A verificação operacional mais recente foi executada no runner
 PostgreSQL 16 descartável em 2026-08-26 com **78 testes aprovados, 258
 desselecionados**, incluindo áudio terminal bloqueado, áudio pendente em espera,
@@ -59,11 +59,87 @@ imagem, sua dead-letter, `ia_processing` e todo o estado durável permaneceram
 intactos; a operação é manual, allowlisted e não altera o contrato de reserva,
 publicação, retry ou recuperação.
 
+**Finalização por polling PostgreSQL (2026-09-02):** o issue 0048 removeu
+`ia_queue` e `ia_dead_letter` do caminho ativo da IA. Fechamento apenas persiste
+o ciclo; o worker consulta um candidato due, aplica lease e processa a mesma
+linha numa transação de claim com `FOR UPDATE SKIP LOCKED`. `next_attempt_at`
+e a expiração do lease são a única elegibilidade. `enqueued_at` permanece como
+campo de compatibilidade/observabilidade, não como marcador de publicação. Os
+contadores `ia_due`, `ia_scheduled` e `ia_leased` vêm do PostgreSQL; o comando
+manual `scripts/retire_legacy_ia_queue.py` inventaria uma fatia bounded da lista
+legada e só remove, em modo explícito, itens com ciclo durável conhecido.
+
+**Transcrição de áudio por polling PostgreSQL (2026-09-02):** o issue 0049
+removeu `audio_transcription_queue` e `audio_transcription_dead_letter` do
+caminho ativo. A reserva de `message_transcriptions` não publica mais no Redis;
+`audio_worker` reclama uma linha due com `FOR UPDATE SKIP LOCKED`, owner e lease
+explícitos. Retry transitório grava somente `next_attempt_at` e o erro
+sanitizado; falha permanente grava `failed` no PostgreSQL. Queda do processo é
+recuperada pela expiração do lease, sem lista de segurança ou deduplicação em
+Redis. O script `scripts/retire_legacy_audio_queue.py` inventaria as duas listas,
+ permite importar dead-letters transitórios com evidência persistida e só remove
+ entradas seguras em modo explícito e bounded.
+
+**Extração de imagem por polling PostgreSQL (2026-09-02):** o issue 0050
+removeu `image_extraction_queue` e `image_extraction_dead_letter` do caminho
+ativo. `image_worker` reclama uma linha due de
+`message_image_extractions` com `FOR UPDATE SKIP LOCKED`, owner e lease; retry
+transitório grava `next_attempt_at`, e falha permanente grava `failed` sem
+criar outra cópia Redis. O script
+`scripts/retire_legacy_image_queue.py` inventaria as listas legadas, preserva
+IDs desconhecidos/malformados e dead-letters transitórios, e só remove valores
+validados após confirmação explícita.
+
+**Retirada coordenada do legado (2026-09-03):** o issue 0052 consolidou a
+execução no contexto `maintenance`, fora da imagem `api`. Um relatório dry-run
+completo cobre `ia_queue`/`ia_dead_letter`, as duas listas de áudio e as duas
+listas de imagem, além de `/health`, `/queues`, schema e invariantes agregadas.
+O apply é limitado a uma família, exige recovery point e confirmação exata,
+revalida uma segunda fotografia e remove apenas valores validados por `LREM`.
+O PostgreSQL continua sendo a autoridade para ciclos, transcrições, extrações,
+agendas, leases e resultados; dead-letters transitórios, entradas desconhecidas
+e malformadas continuam preservados.
+
+**Aposentadoria das views IA Redis (2026-09-03):** o issue 0054 removeu a
+publicação de `ia_status:*`/`ia_result:*` do `ia_worker`; classificação, ciclo,
+status e resultado permanecem no PostgreSQL. A consulta pública não usa essas
+views e o worker IA não depende mais de Redis. O comando
+`scripts.retire_ia_redis_compatibility` foi separado para a imagem/profile
+`maintenance`, com inventário bounded, buckets de TTL, digests sem valores,
+reconciliação com classificação durável e apply condicionado a decisão histórica,
+segunda fotografia e janela completa de TTL. A operação de remoção ainda não foi
+executada; no runtime `cai`, o dry-run encontrou 80 chaves em cada família e
+todos os 80 resultados tiveram match durável, sem crescimento observado após 30
+segundos. Filas legadas, `processed:*`, `ia_processing` e dados PostgreSQL estão
+fora da fronteira.
+
+**Runtime sem Redis (2026-09-03):** o issue 0055 removeu Redis da API, do
+`ia_worker` e da topologia Compose. Claims, leases, retries, reservas, ciclos,
+classificações, transcrições, extrações e métricas são reclamados ou lidos no
+PostgreSQL. O desligamento do serviço Redis não altera rows duráveis nem agendas;
+as ferramentas de reconciliação histórica continuam disponíveis somente na
+imagem `maintenance` e exigem endpoint explícito.
+
+**Disposição sem impacto no trabalho durável (issue 0056, 2026-09-04):** o
+storage histórico ainda está retido fora da topologia normal. Sua remoção só
+é permitida depois do gate de observação do issue 0054, do backup final validado
+e da inspeção exata do alvo. A disposição não pode remover ciclos, classificações,
+mídias, leases, retries ou qualquer outra linha PostgreSQL; falhas posteriores
+devem ser investigadas pelo estado durável, sem recriar filas Redis.
+
 A verificação canônica de 2026-08-20 passou compileall, Pyright estrito,
 **216 testes offline aprovados e 69 skips**, Alembic
 `0020_cycle_contact_provenance` e **69 testes PostgreSQL aprovados, 216
 desselecionados** no runner descartável. Os skips e resultados locais não
 comprovam Redis, fornecedores ou produção.
+
+Em 2026-09-02, a validação do issue 0050 passou compileall, Pyright estrito,
+**280 testes aprovados e 84 skips** offline e **34 testes PostgreSQL** em banco
+descartável com head `0024_durable_media_leases`. A cobertura inclui claim
+concorrente de imagem, due/future schedule, lease/ownership, retry persistido,
+gate de mídia, admissão por webhook/IA e regressões de áudio/imagem. Nenhum
+resíduo Redis foi removido ou reproduzido; essa evidência não comprova provider,
+deployment ou produção.
 
 ## Objetivo e não objetivos
 
@@ -72,10 +148,15 @@ Definir a finalização por histórico DigiSac e os contratos de mídia, context
 ## Modo persistente, ciclo e concorrência
 
 1. Abertura/reabertura **deve** criar ou recuperar um ciclo persistente e
-   fechamento **deve** persistir o ciclo antes de publicar o job. Falha de
-   publicação não pode apagar o ciclo e **deve** permitir reconciliação.
-2. O ciclo **deve** registrar sequência por ticket, chaves de abertura/fechamento, snapshot seguro, vínculo ordenado de mensagens, status, `next_attempt_at`, marca de publicação e lease. Claims/transições **devem** usar estado esperado e exclusão concorrente; apenas um trabalhador pode reclamar o mesmo trabalho elegível.
-3. `next_attempt_at` **deve** ser a fonte de elegibilidade. Reconciliadores **não podem** republicar antes dele nem duplicar job marcado como publicado. Backoff local e `Retry-After` **devem** usar o horário mais tardio aplicável.
+   fechamento **deve** persistir o ciclo elegível ao polling PostgreSQL. O
+   webhook não publica `ia_queue`; uma falha posterior de Redis não apaga nem
+   torna invisível o ciclo durável.
+2. O ciclo **deve** registrar sequência por ticket, chaves de abertura/fechamento, snapshot seguro, vínculo ordenado de mensagens, status, `next_attempt_at` e lease. Claims/transições **devem** usar estado esperado e exclusão concorrente; apenas um trabalhador pode reclamar o mesmo trabalho elegível.
+3. `next_attempt_at` **deve** ser a fonte de elegibilidade. O claim de um ciclo
+   due **deve** selecionar e gravar owner/expiração na mesma transação com
+   `FOR UPDATE SKIP LOCKED`; a expiração do lease recupera crash/restart. Backoff
+   local e `Retry-After` **devem** usar o horário mais tardio aplicável. Janela
+   local de provider é verificada antes de reconciliar mídia ou reclamar ciclo.
 4. A chave `ia:cycle:{cycle_id}` e a identidade persistida da classificação **devem** impedir análise terminal duplicada. Conclusão **deve** persistir classificação, snapshot e estado terminal; avisos resultam em `completed_with_warnings`.
 
 ## Histórico e contexto
@@ -90,23 +171,28 @@ Definir a finalização por histórico DigiSac e os contratos de mídia, context
 
 ## Mídia, falhas e recuperação
 
-1. Áudio/imagem **devem** possuir reserva PostgreSQL antes da fila Redis. Estado, tentativa, publicação, lease e transição **devem** impedir conclusão obsoleta após recuperação concorrente.
+1. Áudio/imagem **devem** possuir reserva PostgreSQL antes de qualquer transporte. Ambos devem ser reclamados diretamente do PostgreSQL; filas Redis legadas não participam do trabalho ativo e o runtime não depende de Redis. Estado, tentativa, publicação, lease e transição **devem** impedir conclusão obsoleta após recuperação concorrente.
 2. Mídia pendente ou recuperável **deve** levar o ciclo a `waiting_media` até a tentativa elegível. Somente estado `completed` com texto extraído não vazio **pode** satisfazer o gate de contexto.
 3. Falha terminal de áudio ou imagem **deve** levar somente ciclos dependentes a `media_blocked`; tais ciclos **não podem** ser classificados, receber marcador sintético ou gerar `completed_with_warnings` por mídia ausente. Recuperação bem-sucedida posterior **deve** acordar apenas os ciclos bloqueados que dependem dela.
 4. Falhas transitórias, incluindo 429, 503 e timeout, **devem** manter estado durável, respeitar `Retry-After` e não consumir indevidamente a tentativa terminal. Falha permanente **deve** registrar motivo sanitizado. Recuperação direcionada **não pode** remover dead-letter não relacionado.
 
 ## Remoção do legado, observabilidade e verificação
 
-Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúdo sensível. Testes de banco descartável **devem** cobrir paginação, fronteira, filtro/renderização, claim/lease concorrente, persistência antes da fila, agenda futura, reconciliação sem duplicação, áudio/imagem bloqueados e acordados no modo persistente.
+Filas, dead letters e ciclos por estado **devem** ser consultáveis sem conteúdo sensível. `ia_due`, `ia_scheduled` e `ia_leased`, além dos contadores `audio_*` e `image_*` de due, agendado, lease, stale, completed e failed, **devem** ser derivados de PostgreSQL. As listas Redis de IA e mídia são somente visibilidade histórica fora do runtime; sua retirada **deve** seguir relatório completo, digests sem valores brutos, segunda fotografia e confirmação delimitada no contexto de manutenção. Testes de banco descartável **devem** cobrir paginação, fronteira, filtro/renderização, claim/lease concorrente, persistência antes do polling, agenda futura, cooldown sem claim, crash/restart sem Redis, reconciliação de mídia e áudio/imagem bloqueados e acordados no modo persistente.
 
-- Uma queda entre persistência e publicação é recuperável sem duplicar classificação.
+- Uma queda entre persistência e polling é recuperável sem duplicar classificação.
 - Áudio ou imagem terminalmente falha nunca gera classificação do ciclo dependente.
 - Múltiplos recuperadores reclamam apenas um job devido.
 
 ## Decisão registrada
 
 O modo Redis-buffer, a flag, suas chaves, debounce, tratamento no worker e
-cobertura específica foram removidos. Somente o fluxo por histórico permanece;
-Redis é transporte e coordenação transitória do fluxo persistente. Resíduos
-históricos não ativos são tratados somente pela auditoria manual e bounded do
-issue 0037; `ia_processing` não é apagado por inferência.
+cobertura específica foram removidos. A fila Redis persistente de finalização
+IA também foi retirada: somente o fluxo por histórico com polling/lease
+PostgreSQL permanece. As views IA de status/resultado deixaram de ser publicadas
+no Redis pelo issue 0054; o issue 0055 removeu Redis do runtime da aplicação.
+Resíduos históricos dessas views e listas só podem ser acessados pelo comando
+bounded de maintenance após o período de observação definido.
+Resíduos históricos não ativos são tratados somente por
+auditoria manual bounded; `ia_processing`, itens malformados, IDs desconhecidos
+e dead-letters transitórios não importados não são apagados por inferência.

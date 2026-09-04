@@ -102,44 +102,73 @@ def _schemas() -> dict[str, JsonSchema]:
         "QueueMetrics": {
             "title": "Queue metrics",
             "description": (
-                "Queue and dead-letter counts returned by the operational view. "
+                "Durable IA, audio and image work counts derived from PostgreSQL. "
+                "Legacy Redis queue/dead-letter fields are intentionally absent "
+                "after the Redis runtime removal; "
                 "conversation_cycles is an empty map when cycle metrics are unavailable."
             ),
             "type": "object",
             "required": [
-                "ia_queue",
-                "ia_dead_letter",
-                "audio_transcription_queue",
-                "audio_transcription_dead_letter",
-                "image_extraction_queue",
-                "image_extraction_dead_letter",
+                "audio_due",
+                "audio_scheduled",
+                "audio_leased",
+                "audio_stale",
+                "audio_completed",
+                "audio_failed",
+                "image_due",
+                "image_scheduled",
+                "image_leased",
+                "image_stale",
+                "image_completed",
+                "image_failed",
+                "ia_due",
+                "ia_scheduled",
+                "ia_leased",
                 "conversation_cycles",
             ],
             "properties": {
-                name: {"type": "integer", "minimum": 0}
-                for name in (
-                    "ia_queue",
-                    "ia_dead_letter",
-                    "audio_transcription_queue",
-                    "audio_transcription_dead_letter",
-                    "image_extraction_queue",
-                    "image_extraction_dead_letter",
-                )
-            }
-            | {
                 "conversation_cycles": {
                     "type": "object",
                     "additionalProperties": {"type": "integer", "minimum": 0},
                 }
+            }
+            | {
+                name: {"type": "integer", "minimum": 0}
+                for name in (
+                    "ia_due",
+                    "ia_scheduled",
+                    "ia_leased",
+                    "audio_due",
+                    "audio_scheduled",
+                    "audio_leased",
+                    "audio_stale",
+                    "audio_completed",
+                    "audio_failed",
+                    "image_due",
+                    "image_scheduled",
+                    "image_leased",
+                    "image_stale",
+                    "image_completed",
+                    "image_failed",
+                )
             },
             "additionalProperties": False,
             "example": {
-                "ia_queue": 2,
-                "ia_dead_letter": 0,
-                "audio_transcription_queue": 1,
-                "audio_transcription_dead_letter": 0,
-                "image_extraction_queue": 0,
-                "image_extraction_dead_letter": 1,
+                "audio_due": 1,
+                "audio_scheduled": 0,
+                "audio_leased": 1,
+                "audio_stale": 0,
+                "audio_completed": 12,
+                "audio_failed": 1,
+                "image_due": 0,
+                "image_scheduled": 2,
+                "image_leased": 1,
+                "image_stale": 0,
+                "image_completed": 23,
+                "image_failed": 1,
+                "ia_due": 2,
+                "ia_scheduled": 1,
+                "ia_leased": 1,
                 "conversation_cycles": {"pending": 3, "completed": 12},
             },
         },
@@ -502,13 +531,13 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         tag="Operações",
         summary="Check service readiness",
         description=(
-            "Checks Redis first and then PostgreSQL. A database readiness failure "
-            "is returned as 503 with a known detail object; an unmapped Redis failure "
-            "has no stable response contract."
+            "Checks PostgreSQL readiness only. A database readiness failure is "
+            "returned as 503 with the known detail object; Redis is not an "
+            "application runtime dependency."
         ),
         responses={
             "200": _response(
-                "Both dependencies are ready.",
+                "PostgreSQL is ready.",
                 _ref("HealthResponse"),
                 {"healthy": {"status": "ok"}},
             ),
@@ -523,9 +552,12 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         tag="Operações",
         summary="Inspect queue counts",
         description=(
-            "Returns integer queue/dead-letter counts and grouped cycle status counts. "
-            "No authentication is currently configured for internal query operations, "
-            "and unmapped Redis failures remain server failures without a stable body."
+            "Returns only PostgreSQL-derived IA, "
+            "audio and image due/scheduled/leased/recovery counts, completed and "
+            "failed media counts, and grouped cycle status counts. "
+            "The formerly exposed Redis list fields are intentionally removed in "
+            "this unversioned compatibility change and are not fabricated as zero. "
+            "No authentication is currently configured for internal query operations."
         ),
         responses={
             "200": _response(
@@ -533,12 +565,21 @@ def _decorate_operations(document: dict[str, Any]) -> None:
                 _ref("QueueMetrics"),
                 {
                     "metrics": {
-                        "ia_queue": 2,
-                        "ia_dead_letter": 0,
-                        "audio_transcription_queue": 1,
-                        "audio_transcription_dead_letter": 0,
-                        "image_extraction_queue": 0,
-                        "image_extraction_dead_letter": 1,
+                        "audio_due": 1,
+                        "audio_scheduled": 0,
+                        "audio_leased": 1,
+                        "audio_stale": 0,
+                        "audio_completed": 12,
+                        "audio_failed": 1,
+                        "image_due": 0,
+                        "image_scheduled": 2,
+                        "image_leased": 1,
+                        "image_stale": 0,
+                        "image_completed": 23,
+                        "image_failed": 1,
+                        "ia_due": 2,
+                        "ia_scheduled": 1,
+                        "ia_leased": 1,
                         "conversation_cycles": {"pending": 3, "completed": 12},
                     }
                 },
@@ -695,7 +736,8 @@ def _decorate_operations(document: dict[str, Any]) -> None:
     )
 
     conversation_status_description = (
-        "Returns the latest persisted cycle state. conversation_id is the external "
+        "Returns the latest persisted PostgreSQL cycle state; this operation does "
+        "not read the retired Redis compatibility view. conversation_id is the external "
         "DigiSac identifier and cycle_id is its public UUID. An accepted webhook does "
         "not imply a terminal state or an available result."
     )
@@ -743,7 +785,9 @@ def _decorate_operations(document: dict[str, Any]) -> None:
     )
     result_description = (
         "Returns the latest classification projection when classification_public_id "
-        "is available. A terminal cycle and a classification result are separate facts."
+        "is available. The projection is read from PostgreSQL and does not depend on "
+        "the retired ia_result:* Redis compatibility view. A terminal cycle and a "
+        "classification result are separate facts."
     )
     operation(
         "/conversations/{conversation_id}/result",
@@ -807,7 +851,7 @@ def _decorate_operations(document: dict[str, Any]) -> None:
             ] = "Maximum cycles to return; default 50 and effective database clamp 1-100. Type errors return 422."
 
     cycle_status_description = (
-        "Returns the persisted cycle row identified by public_id. The path value is "
+        "Returns the persisted PostgreSQL cycle row identified by public_id. The path value is "
         "named cycle_id but the handler does not validate its UUID format."
     )
     operation(
@@ -833,10 +877,11 @@ def _decorate_operations(document: dict[str, Any]) -> None:
         tag="Ciclos",
         summary="Get a cycle classification result",
         description=(
-            "Returns the classification projection for a cycle when its "
+            "Returns the PostgreSQL classification projection for a cycle when its "
             "classification_public_id is available. completed and "
             "completed_with_warnings are terminal states, but status alone does "
-            "not guarantee result availability."
+            "not guarantee result availability; the retired ia_result:* Redis "
+            "compatibility view is not used."
         ),
         responses={
             "200": _response(

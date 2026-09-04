@@ -1,24 +1,18 @@
 # utils/idempotency.py
 import hashlib
 import json
-from typing import Any, Dict
+from typing import Any, Mapping
 
-from src.core.redis_client import AsyncRedis
+from src.core import webhook_event_repository
 
 
 class IdempotencyService:
-    def __init__(self, redis_client: AsyncRedis):
-        self.redis = redis_client
-        self.ttl = 3600  # 1 hora
-
     async def try_mark_processed(self, event_id: str) -> bool:
         """Atomically reserve an event; False means it was already received."""
-        return bool(
-            await self.redis.set(f"processed:{event_id}", "1", ex=self.ttl, nx=True)
-        )
+        return await webhook_event_repository.try_mark_webhook_event(event_id)
 
     @staticmethod
-    def generate_event_id(payload: Dict[str, Any]) -> str:
+    def generate_event_id(payload: Mapping[str, Any]) -> str:
         """Gera ID único para evento baseado no conteúdo"""
         # Usa campos chave para evitar duplicação
         key_fields = {

@@ -14,7 +14,7 @@ resultado por API.
 - recebe eventos `ticket.created`, `ticket.updated`, `message.created` e
   `message.updated` da DigiSac;
 - valida e normaliza envelopes de webhook, ignora mensagens de bot e deduplica
-  eventos;
+  eventos com um ledger PostgreSQL de digest expiráveis;
 - registra, em ordem cronológica, os departamentos e atendentes pelos quais o
   ticket passou;
 - transcreve áudios e extrai o conteúdo visível de imagens em workers separados;
@@ -49,48 +49,76 @@ DigiSac
   │
   ├─ ticket.created / ticket.updated
   │    ├─ histórico de departamento e atendente → PostgreSQL
-  │    └─ fechamento → ciclo persistente → ia_queue
+  │    └─ fechamento → ciclo persistente no PostgreSQL
   │
   └─ message.created / message.updated
        ├─ texto/documento → ciclo persistente
-       ├─ áudio → reserva PostgreSQL → audio_transcription_queue
-       └─ imagem → reserva PostgreSQL → image_extraction_queue
+       ├─ áudio → reserva + polling PostgreSQL → audio_worker
+       └─ imagem → reserva + polling PostgreSQL → image_worker
 
 audio_worker ── download DigiSac + Groq Whisper ──→ PostgreSQL
 image_worker ── download DigiSac + Groq Vision  ──→ PostgreSQL
 
 ia_worker
+  ├─ consulta e reclama ciclos elegíveis diretamente no PostgreSQL
   ├─ recupera e normaliza o histórico do ticket
   ├─ reconcilia transcrições e extrações de imagem
   ├─ aguarda/reagenda mídias pendentes de forma durável
   ├─ divide e resume contextos acima do limite seguro
   ├─ classifica a intenção do cliente com Groq
-  └─ grava classificação, snapshot e estado durável no PostgreSQL; publica
-     apenas status/resultados transitórios compatíveis no Redis
+  └─ grava classificação, snapshot, status e resultado duráveis no PostgreSQL
 ```
 
 ### Componentes
 
 | Componente | Responsabilidade |
 | --- | --- |
-| `api` | FastAPI, autenticação do webhook, normalização, reservas de mídia, abertura/fechamento de ciclos e consultas. |
-| `ia_worker` | Finalização da conversa, montagem do contexto, classificação e reconciliação de ciclos. |
+| `api` | FastAPI, HMAC do webhook, normalização, reserva de mídia, decisão de idempotência PostgreSQL, abertura/fechamento de ciclos e consultas. |
+| `ia_worker` | Polling/lease PostgreSQL de finalização, montagem do contexto, classificação e despertar seletivo de ciclos bloqueados por mídia. |
 | `audio_worker` | Download de áudio da DigiSac, transcrição e retries. Requer `ffmpeg`. |
 | `image_worker` | Download de imagem, análise multimodal e retries. |
-| `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac e ciclos. |
-| `redis` | Filas, locks, idempotência temporária, status e resultados com TTL. |
+| `postgres` | Fonte durável de classificações, mídias, atribuições, diretório DigiSac, ciclos e ledger de idempotência do webhook. |
 | `migrate` | Aplica a revisão Alembic configurada antes de liberar API e workers. |
+| `maintenance` | Perfil separado, fora do runtime, para inventariar e retirar famílias Redis explicitamente allowlisted; usa `MAINTENANCE_REDIS_URL` e não participa da aplicação. |
 
-RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional; Redis é uma
-camada transitória de transporte e coordenação.
+RabbitMQ não é usado. PostgreSQL é a fonte de verdade operacional e a única
+dependência de dados/trabalho do runtime da aplicação. Redis só é acessado por
+comandos históricos explicitamente executados no perfil `maintenance`. A decisão genérica de
+idempotência do webhook não depende de Redis: PostgreSQL aceita um digest uma
+vez por hora, substitui uma linha somente após sua expiração e falha fechadamente
+quando o banco não pode decidir.
+
+O fechamento de ticket não publica `ia_queue`: o `ia_worker` reclama um ciclo
+elegível por lease diretamente no PostgreSQL. `GET /queues` expõe `ia_due`,
+`ia_scheduled` e `ia_leased` como métricas duráveis; os contadores
+`audio_*`, `image_*` e `conversation_cycles` completam a visão durável. Não há
+campos de filas Redis no retorno de `/queues`: as listas legadas são visíveis
+somente pelos comandos de manutenção. Use
+`python -m scripts.retire_legacy_ia_queue` primeiro em dry run; o modo `--apply`
+exige confirmação explícita e nunca remove entradas malformadas ou sem ciclo
+PostgreSQL correspondente.
 
 Falhas transitórias de áudio permanecem `pending` com `next_attempt_at` e
 backoff independente do limite `MAX_RETRY_ATTEMPTS` da classificação IA. O
-worker recupera dead-letters antigos somente quando o erro persistido é
-demonstravelmente transitório, deduplica filas por `message_id` e mantém uma
-cópia de segurança até a persistência de uma transcrição não vazia. Erros
-persistidos e logs usam apenas categorias seguras, sem corpo do provider ou
-URL assinada.
+`audio_worker` reclama linhas diretamente de `message_transcriptions` com
+`FOR UPDATE SKIP LOCKED`, owner e lease; não consome nem republica
+`audio_transcription_queue` e não cria dead-letter Redis. O script de cutover
+importa dead-letters antigas somente quando o erro persistido é demonstravelmente
+transitório. Erros persistidos e logs usam apenas categorias seguras, sem corpo
+do provider ou URL assinada.
+
+O mesmo contrato vale para imagens: `image_worker` reclama linhas due de
+`message_image_extractions` com `FOR UPDATE SKIP LOCKED`, owner e lease. Retry
+transitório permanece em `pending` com `next_attempt_at`; falha permanente fica
+em `failed` no PostgreSQL, sem `RPUSH`, `LPOP`, `LRANGE`, `LREM` ou dead-letter
+Redis no caminho ativo. As listas legadas são apenas evidência para o comando
+bounded `scripts.retire_legacy_image_queue`.
+
+A retirada conjunta deve usar o perfil Compose `maintenance` e
+`scripts.retire_validated_legacy_redis_queues`. O comando guarda apenas
+digests dos valores Redis e exige um relatório dry-run completo, a revisão do
+checkout, um recovery point PostgreSQL, uma segunda fotografia e confirmação
+exata por família. A imagem `api` não contém os scripts de manutenção.
 
 ## Integração Acessórias aprovada
 
@@ -100,7 +128,10 @@ resolução conservadora de identidade e o mapeamento departamental por IDs
 estáveis. O contato é persistido
 por `contact.id`, snapshots de ticket são reconciliados no PostgreSQL e
 referências `contactId` de mensagens apenas registram hydration individual
-deduplicada para execução posterior. A resolução preserva evidência
+deduplicada para execução posterior. O issue 0051 preserva o
+`next_attempt_at` futuro quando mensagens repetem a referência: o poller
+continua dono da tentativa devida, sem fila Redis ou retry imediato forçado. A
+resolução preserva evidência
 fingerprintada, vínculos muitos-para-muitos, transições auditáveis e resultado
 imutável por ciclo; confirmação continua exclusivamente manual.
 
@@ -183,6 +214,23 @@ motivo seguro, timestamp durável e ator opcional; nenhum usuário da conversa,
 token, corpo do provider ou conteúdo da classificação é usado como ator ou
 evidência.
 
+## Idempotência de webhook
+
+O digest SHA-256 determinístico do evento é registrado em
+`webhook_event_keys` no PostgreSQL com `first_seen_at` e expiração de uma hora.
+Uma entrega concorrente tem um único vencedor; uma entrega dentro da janela
+retorna `202` com `status: duplicate`. O ledger armazena somente o digest e
+timestamps, nunca corpo, texto, contato, segredo, URL assinada ou resposta de
+provider. A limpeza de expirados é uma operação de manutenção bounded, com
+contagens antes/depois e sem acesso ao payload.
+
+O handoff dos marcadores Redis antigos é coordenado: pare e drene a API antiga,
+faça o dry-run completo, arquive o relatório e um recovery point PostgreSQL,
+aplique a importação dos marcadores ainda vivos e só então inicie a API nova.
+O apply revalida a fotografia e não remove as chaves `processed:*`; elas ficam
+retidas até os próximos issues de decommission. Uma fotografia truncada ou um
+marcador novo interrompe a operação para evitar uma implantação mista.
+
 ## Finalização persistente por histórico DigiSac
 
 Cada abertura/reabertura cria uma sequência e cada fechamento persiste um ciclo
@@ -194,7 +242,8 @@ Esse `/api/v1` pertence à DigiSac e não é uma rota de consulta montada pelo C
 Os estados do ciclo incluem, entre outros, espera por histórico, espera por
 mídia, bloqueio por mídia, classificação, conclusão, conclusão com avisos e
 falha. `next_attempt_at`, leases e claims no PostgreSQL permitem recuperar jobs
-mesmo se houver queda entre a persistência e a publicação no Redis.
+sem depender de uma publicação Redis. Áudio é reclamado diretamente por
+`audio_worker` e `image_worker`; ambos reclamam mídia diretamente no PostgreSQL.
 
 - mídia pendente mantém o ciclo em espera até o horário real de nova tentativa;
 - falha terminal de áudio ou imagem bloqueia a classificação para não concluir
@@ -238,7 +287,8 @@ de execução. As principais estruturas são:
 - `digisac_departments`, `digisac_users` e
   `digisac_directory_sync_state`: diretório local para resolução de nomes;
 - `digisac_contacts` e `digisac_contact_hydrations`: identidade DigiSac por
-  `contact.id`, metadata observada e claims/retries duráveis de hydration;
+  `contact.id`, metadata observada e claims/retries duráveis de hydration; uma
+  referência repetida não limpa um backoff futuro;
 - `conversation_processing_cycles` e `conversation_cycle_messages`: estado,
   snapshot, proveniência canônica do contato, leases, agendamento e auditoria
   da finalização persistente.
@@ -291,12 +341,16 @@ retenção ou arquivamento devem ser definidos como política operacional explí
 
 - O webhook pode exigir HMAC-SHA256 sobre o corpo bruto por meio de
   `X-Digisac-Signature` (`<hash>` ou `sha256=<hash>`).
-- Reservas de mídia acontecem antes da marcação de idempotência, permitindo que
-  uma entrega DigiSac repetida recupere uma publicação que falhou.
+- Reservas de mídia acontecem antes da decisão de idempotência no ledger
+  PostgreSQL, permitindo que uma entrega DigiSac repetida recupere uma
+  publicação que falhou.
+- A decisão do digest é atômica e expira em uma hora; falha do PostgreSQL não
+  confirma o recebimento e não depende da disponibilidade do Redis.
 - Filas de mídia e ciclos usam reservas/claims persistentes para evitar
   publicações concorrentes e recuperar trabalho abandonado.
 - A identidade de contato usa somente `contact.id`; hydration individual é
-  deduplicada no PostgreSQL e nunca é chamada em linha pelo webhook.
+  deduplicada no PostgreSQL, nunca é chamada em linha pelo webhook e nunca
+  antecipa `next_attempt_at` em uma referência repetida.
 - Retries transitórios respeitam `Retry-After`, backoff e limites configurados.
 - O histórico de atribuições nunca inventa transferências. IDs desconhecidos são
   preservados e os nomes só vêm dos endpoints de departamentos e usuários.
@@ -307,7 +361,6 @@ retenção ou arquivamento devem ser definidos como política operacional explí
 
 - Python 3.11+
 - PostgreSQL 16
-- Redis 7
 - `ffmpeg` para o worker de áudio
 - `GROQ_API_KEY` para os três workers
 - `DIGISAC_API_KEY` para downloads, sincronização de diretório e recuperação do
@@ -333,19 +386,17 @@ Variáveis principais:
 | `ADMIN_UI_PASSWORD` | Senha única de bootstrap da UI administrativa. | vazio; provisionar em ambiente protegido |
 | `ADMIN_SESSION_SECRET` | Chave de assinatura da sessão `HttpOnly` da UI. | vazio; provisionar em ambiente protegido |
 | `DATABASE_URL` | PostgreSQL da aplicação e Alembic. | obrigatório em execução |
-| `REDIS_URL` | Redis de filas e coordenação. | `redis://localhost:6379` |
+| `MAINTENANCE_REDIS_URL` | Endpoint Redis usado somente pelos comandos históricos do profile `maintenance`; não entra na API nem nos workers. | vazio; obrigatório ao executar manutenção |
 | `MODEL_NAME` | Modelo de classificação Groq. | `openai/gpt-oss-120b` |
 | `AUDIO_TRANSCRIPTION_MODEL` | Modelo de transcrição. | `whisper-large-v3-turbo` |
 | `AUDIO_RETRY_BASE_SECONDS` | Backoff inicial de falhas transitórias de áudio. | `2` |
 | `AUDIO_RETRY_MAX_DELAY_SECONDS` | Teto do backoff local de áudio. | `900` |
 | `AUDIO_RETRY_PROVIDER_MARGIN_SECONDS` | Margem adicionada ao `Retry-After` do provider. | `1` |
-| `AUDIO_DEAD_LETTER_RECOVERY_INTERVAL_SECONDS` | Intervalo de recuperação de dead-letters transitórios de áudio. | `60` |
 | `IMAGE_VISION_MODEL` | Modelo multimodal. | `qwen/qwen3.6-27b` |
 | `IMAGE_VISION_MAX_COMPLETION_TOKENS` | Orçamento inicial da resposta visual. | `5000` |
 | `MAX_TOKENS` | Orçamento solicitado à classificação; o worker impõe mínimo efetivo de `1000`. | `500` no `.env.example`; `3000` se ausente |
 | `PROMPT_VERSION` | Identificador do prompt persistido. | `v4` |
 | `MAX_RETRY_ATTEMPTS` | Limite de tentativas definitivas do worker de classificação IA. | `3` |
-| `RESULT_TTL_SECONDS` | TTL de status/resultados transitórios no Redis. | `86400` |
 | `CONTENT_EXTRACTION_WAIT_SECONDS` | Espera compartilhada por mídia. | `30` |
 | `CONTENT_RECOVERY_LEASE_SECONDS` | Lease de recuperação de mídia. | `300` |
 | `CONTENT_RECONCILE_INTERVAL_SECONDS` | Intervalo do reconciliador de mídia. | `5` |
@@ -371,17 +422,19 @@ docker compose -p cai ps
 docker compose -p cai logs -f api ia_worker audio_worker image_worker
 ```
 
-O Compose inicia PostgreSQL, Redis, aplica `alembic upgrade head` no serviço
-`migrate` e só então libera API e workers. A API fica em
-`http://localhost:8000`; PostgreSQL e Redis também são publicados localmente no
-Compose atual.
+O Compose inicia PostgreSQL, aplica `alembic upgrade head` no serviço `migrate`
+e só então libera API e workers. API, `ia_worker`, `audio_worker` e
+`image_worker` dependem somente de PostgreSQL e da migration; a topologia normal
+não define serviço, volume ou healthcheck Redis. A API fica em
+`http://localhost:8000`; qualquer Redis retido permanece fora do Compose e só
+pode ser acessado pelo profile `maintenance` com endpoint explícito.
 
 O fluxo persistente é iniciado diretamente após a aplicação das migrations; não
 há flag de finalização nem uma segunda fila de compatibilidade para alternar.
 
 ## Execução local
 
-Com PostgreSQL e Redis acessíveis por `DATABASE_URL` e `REDIS_URL`:
+Com PostgreSQL acessível por `DATABASE_URL`:
 
 ```bash
 python -m venv .venv
@@ -444,18 +497,18 @@ resultado só existe quando a classificação persistida está disponível.
 Respostas conhecidas usam o corpo `{"detail":"..."}` para erros mapeados,
 incluindo `404`, `401` e a indisponibilidade de banco em `/health` (`503`).
 Erros de validação de tipos seguem o formato padrão FastAPI (`422`); falhas
-não mapeadas de Redis ou servidor não têm um envelope de negócio estável.
+internas não mapeadas não têm um envelope de negócio estável.
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
 | `POST` | `/webhook/digisac` | Recebe eventos DigiSac; normalmente responde `202`. |
-| `GET` | `/health` | Verifica Redis e PostgreSQL. |
-| `GET` | `/queues` | Contadores das filas, dead-letters e ciclos por estado. |
-| `GET` | `/conversations/{id}/status` | Estado persistente do ciclo mais recente. |
-| `GET` | `/conversations/{id}/result` | Resultado mais recente disponível. |
+| `GET` | `/health` | Verifica PostgreSQL. |
+| `GET` | `/queues` | Contadores duráveis PostgreSQL de trabalho e ciclos por estado. |
+| `GET` | `/conversations/{id}/status` | Estado persistente do ciclo mais recente, lido do PostgreSQL. |
+| `GET` | `/conversations/{id}/result` | Resultado mais recente disponível, lido do PostgreSQL. |
 | `GET` | `/conversations/{id}/cycles` | Lista ciclos persistidos da conversa. |
-| `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo. |
-| `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo específico. |
+| `GET` | `/cycles/{cycle_id}/status` | Snapshot e estado auditável de um ciclo, lido do PostgreSQL. |
+| `GET` | `/cycles/{cycle_id}/result` | Resultado associado a um ciclo, lido do PostgreSQL. |
 
 As oito rotas acima são a superfície HTTP operacional original e continuam sem
 autenticação adicional nas consultas. A administração da identidade Acessórias
@@ -565,11 +618,21 @@ PYTHONPATH=/app python -m src.utils.migrate_sqlite_to_postgres \
 
 O migrador abre o SQLite somente para leitura, recusa destino já populado,
 valida o conteúdo e faz rollback completo em caso de erro. Resultados históricos
-que ainda estejam no Redis podem ser importados de forma idempotente com:
+que ainda estejam no Redis devem primeiro ser inventariados sem valores e
+reconciliados com PostgreSQL. Se houver resultado válido sem cópia durável, o
+importador idempotente só pode ser executado no perfil `maintenance`, após
+revisão do relatório:
 
 ```bash
-docker compose -p cai exec ia_worker python -m src.utils.backfill_redis_history
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m src.utils.backfill_redis_history
 ```
+
+O comando `python -m scripts.retire_ia_redis_compatibility --dry-run` é a
+fonte do relatório de sunset: ele registra somente contagens, buckets de TTL,
+digests de chave/entrada e matches duráveis. O `--apply` exige a janela completa
+de 86400 segundos, decisão histórica explícita
+e confirmação exata; remove somente `ia_status:*` e `ia_result:*`.
 
 ## Testes e validação
 
@@ -614,7 +677,7 @@ Ele cria um projeto Compose com nome único, PostgreSQL 16 em
 armazenamento temporário e porta de host publicada dinamicamente; nunca usa a
 porta fixa `5433`, `DATABASE_URL` ou `CAI_TEST_DATABASE_URL` do ambiente do
 desenvolvedor. Antes dos testes PostgreSQL, o mesmo processo comprova o acesso
-ao destino, aplica e verifica Alembic `0023_manual_reconciliation` e só então
+ao destino, aplica e verifica Alembic head `0025_webhook_event_keys` e só então
 fornece `CAI_TEST_DATABASE_URL` e `DATABASE_URL` ao subprocesso de testes.
 
 Em um host com acesso à porta publicada, a URL usa `127.0.0.1` e a porta
@@ -694,6 +757,60 @@ A cobertura valida o gate de confidence, a fronteira `0.50` e o payload interno
 `tipo=I`. O resultado é evidência local/descartável e não comprova provider live,
 Redis, credenciais, deployment ou produção.
 
+Na validação do issue 0050 em 2026-09-02, a suíte PostgreSQL descartável passou
+**34 testes**, incluindo claim concorrente de imagem, lease/ownership, mídia
+pendente, recuperação de ciclo bloqueado e regressões de transcrição. A suíte
+offline completa passou **280 testes, com 84 skips** restritos ao banco não
+configurado. A evidência é local/descartável e não comprova provider live,
+credenciais, deployment ou produção.
+
+Na validação do issue 0051 em 2026-09-03, compileall, Pyright e o runner
+descartável passaram; a suíte offline teve **280 passed, 86 skipped** e a
+etapa PostgreSQL teve **86 passed, 280 deselected** com head
+`0024_durable_media_leases` (o override `APP_TIMEZONE=UTC` evita o failure
+histórico de timezone de `test_department_mapping.py`). Os testes de
+identidade/hydration provaram decisões concorrentes durante backoff futuro,
+preservação exata de `next_attempt_at`, handoff de falha devida ao poller e
+no-op de hydration sucedida/current. Não houve migration nova nem dependência
+Redis adicionada; essa evidência continua local/descartável.
+
+Na implementação do issue 0053 em 2026-09-03, o digest genérico passou a usar
+o ledger PostgreSQL `webhook_event_keys`, com migration `0025`, expiração de uma
+hora, decisão concorrente atômica, cleanup bounded e falha fechada do webhook
+quando o banco não decide. O runner canônico passou compileall, Pyright,
+**290 passed, 90 skipped** offline e **90 passed, 290 deselected** no PostgreSQL
+16 descartável. No runtime `cai`, a API antiga foi parada antes do handoff, um
+backup custom-format foi validado, 171 marcadores vivos foram importados sem
+apagar `processed:*`, e a API/IA/audio/image foram recriados a partir de
+`db7a077`; o health interno retornou `{"status":"ok"}`. O ledger terminou com
+176 linhas vivas (171 importadas e cinco novas entregas), enquanto 171 marcadores
+Redis permaneceram retidos. Checksums e o recovery point estão na issue 0053.
+
+Na implementação do issue 0054 em 2026-09-03, o `ia_worker` deixou de depender
+do Redis e de publicar `ia_status:*`/`ia_result:*`; a classificação e o estado
+terminal continuam sendo persistidos no PostgreSQL antes da disponibilidade por
+API. No runtime `cai`, o dry-run encontrou 80 chaves de cada família e os 80
+resultados tinham match durável; uma segunda contagem após 30 segundos permaneceu
+em 80/80. O relatório sanitizado tinha digest
+`527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`. O inventário
+e a eventual retirada dessas duas famílias foram isolados no comando de
+manutenção `scripts.retire_ia_redis_compatibility`, com digests de entrada,
+buckets de TTL, reconciliação de resultado durável, confirmação exata e janela
+obrigatória de 86400 segundos. O apply permanece deliberadamente pendente até a
+janela completa e não removeu `processed:*`, filas, `ia_processing` ou dados
+PostgreSQL.
+
+Na implementação do issue 0055 em 2026-09-03, API, webhook, IA e a topologia
+Compose deixaram de instalar, inicializar, consultar ou exigir Redis. `/health`
+passou a verificar somente PostgreSQL e `/queues` passou a expor somente métricas
+duráveis, removendo explicitamente os seis campos legados. O cliente Redis e as
+ferramentas históricas foram isolados na imagem `maintenance`, com
+`MAINTENANCE_REDIS_URL` explícita; a imagem da API não contém o backfill nem a
+dependência Redis. O runner canônico passou **297 testes, 90 skips** offline e
+**90 testes PostgreSQL**, e o runtime nomeado `cai` foi reconstruído sem Redis,
+com health interno `{"status":"ok"}`. O container/volume antigo foi mantido
+para a issue 0056; essa evidência não é uma alegação de produção ampla.
+
 Não há uma rota de diagnóstico de webhook. O endpoint de produção é a única
 superfície de ingestão; respostas e logs operacionais expõem somente campos
 estruturados e motivos sanitizados, nunca o corpo bruto da requisição ou a
@@ -713,9 +830,186 @@ curl -fsS http://localhost:8000/queues
 docker compose -p cai logs --tail=200 api ia_worker audio_worker image_worker
 ```
 
-Dead-letters indicam trabalho que exige diagnóstico. Reprocessamentos devem ser
-restritos ao ID afetado: reserve um item, evite duplicá-lo na fila, confirme o
-estado `completed` persistido e só então remova a dead-letter correspondente.
+Áudio e imagem não possuem mais retry ou dead-letter ativo em Redis: `pending`,
+`next_attempt_at`, `processing`, lease, `completed` e `failed` ficam em
+`message_transcriptions` e `message_image_extractions`. As seis listas legadas
+(`ia_queue`, `ia_dead_letter`, as duas de áudio e as duas de imagem) são
+resíduo de cutover. O procedimento suportado usa uma imagem de manutenção
+separada, é dry-run por padrão e não apaga itens desconhecidos, malformados ou
+dead-letters transitórios.
+
+### Runtime sem Redis (issue 0055)
+
+A topologia normal do Compose não define Redis. API, `ia_worker`,
+`audio_worker` e `image_worker` inicializam somente com PostgreSQL e providers;
+`/health` não consulta Redis e `/queues` não expõe nem fabrica campos de listas
+legadas. O pacote Redis, o cliente e os scripts históricos existem somente na
+imagem `maintenance`, que exige `MAINTENANCE_REDIS_URL` explícita:
+
+```bash
+MAINTENANCE_REDIS_URL="$LEGACY_REDIS_URL" \
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_ia_redis_compatibility --dry-run \
+  --report /reports/ia-redis-compatibility.json
+```
+
+Para o rollout, aplique/verifique as migrations, pare a API/IA antigas, pare o
+container Redis sem remover seu volume, reconstrua a topologia e confira
+`/health`, `/queues`, logs e o polling PostgreSQL. Não faça `down -v` nem
+restaure uma imagem anterior ao issue 0053 sem uma ponte testada para o ledger
+`webhook_event_keys`; defeitos devem ser corrigidos por forward-fix ou versão
+transicional validada. A disposição do container/volume retido pertence ao
+issue 0056.
+
+### Disposição final do storage Redis (issue 0056)
+
+Esta é uma operação irreversível e só pode ocorrer depois de o issue 0054
+encerrar sua janela completa de 86400 segundos e seu apply bounded, de um
+backup PostgreSQL final ser listado/restaurado em um alvo descartável e de uma
+revisão explícita confirmar o alvo. Antes da deleção, resolva novamente o
+projeto, container, volume, mount e anexos:
+
+```bash
+docker compose -p cai config --services
+docker compose -p cai config --volumes
+docker inspect cai-redis-1
+docker volume inspect cai_redis_data
+docker ps -a --filter volume=cai_redis_data
+```
+
+No pré-check de 2026-09-04, o alvo histórico era exatamente
+`cai-redis-1`/`cai_redis_data`, com o container parado e sem PostgreSQL ou
+worker anexado, mas o gate 0054 e o backup final ainda estavam pendentes. Por
+isso nenhum alvo foi removido. Quando todos os gates estiverem registrados, a
+remoção deve usar somente os nomes revisados, verificar o container parado e
+confirmar a falha do `docker volume inspect` após a remoção:
+
+```bash
+docker rm -- cai-redis-1
+docker volume rm -- cai_redis_data
+docker volume inspect cai_redis_data  # deve falhar: volume removido
+```
+
+Se o nome, projeto, mount ou estado não coincidir, pare. Não use
+`docker compose down -v`, `docker volume prune`, `docker system prune`,
+`FLUSHDB` ou `FLUSHALL`, e nunca remova volumes PostgreSQL, backups, workers,
+classificações, ciclos, mídia, contatos ou ledgers. Após a deleção, confira
+`/health`, `/queues`, os quatro processos da aplicação, a conexão PostgreSQL e
+os logs; uma falha não autoriza recriar filas Redis. Os scripts históricos são
+mantidos para decisão de arquivamento, mas não constituem um runtime Redis
+suportado após o descarte.
+
+### Sunset das views IA Redis (issue 0054)
+
+Após parar o worker antigo e iniciar a revisão sem o produtor Redis, capture e
+arquive um relatório bounded no perfil `maintenance`:
+
+```bash
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_ia_redis_compatibility \
+  --dry-run --report /reports/ia-redis-compatibility.json
+```
+
+O relatório não contém chaves, valores, conteúdo de conversa ou payloads; ele
+registra somente contagens, TTLs agrupados, digests e matches PostgreSQL. Depois
+de pelo menos um TTL completo e revisão histórica explícita, o apply exige
+`--confirm retire-ia-redis-compatibility`, `--historical-decision
+all-valid-results-durable` e `--observation-completed-at`. A operação verifica
+uma segunda fotografia e remove somente `ia_status:*` e `ia_result:*`.
+
+### Handoff da idempotência de webhook (issue 0053)
+
+Antes de iniciar a versão que usa PostgreSQL, pare e drene as instâncias antigas
+da API. Capture um recovery point PostgreSQL e execute o dry-run da imagem
+`maintenance`; revise o relatório completo de `processed:*` antes do apply:
+
+```bash
+docker compose -p cai stop api
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.migrate_legacy_webhook_idempotency \
+  --dry-run --operator "$OPERATOR" --revision "$REVISION" \
+  --max-items 1000 --report /reports/webhook-idempotency-handoff.json
+```
+
+O apply exige a confirmação exata `migrate-legacy-webhook-idempotency`, a mesma
+revisão/limite do dry-run e `--backup-reference` apontando para o recovery point.
+Ele importa somente marcadores válidos ainda vivos, não lê seus valores nem
+apaga as chaves Redis, e bloqueia se a fotografia estiver truncada ou tiver
+crescido. Inicie a API somente após o apply; não execute versões antigas e novas
+simultaneamente. A limpeza posterior do ledger usa
+`scripts.cleanup_expired_webhook_event_keys` em lotes de no máximo 1000 e não é
+necessária para a correção do caminho de requisição.
+
+Prepare um diretório de relatório gravável pelo usuário do container e capture
+a revisão do checkout. O valor de `--max-items` deve ser maior que o tamanho
+físico observado em todas as listas:
+
+```bash
+REPORT_DIR=$(mktemp -d)
+export MAINTENANCE_REPORT_DIR="$REPORT_DIR"
+REVISION=$(git rev-parse HEAD)
+OPERATOR="nome-do-operador"
+REPORT_NAME="cai-legacy-queues-dry-run.json"
+MAX_ITEMS=50000
+
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --dry-run --operator "$OPERATOR" --revision "$REVISION" \
+  --compose-project cai --max-items "$MAX_ITEMS" \
+  --api-url http://api:8000 --report "/reports/$REPORT_NAME"
+```
+
+Revise e arquive o JSON antes de qualquer apply. Ele contém `/health`,
+`/queues`, schema, invariantes PostgreSQL, contagens, estados, duplicidades e
+digests SHA-256; não contém valores Redis, mensagens, payloads ou segredos.
+Registre também o status dos serviços:
+
+```bash
+docker compose -p cai ps api ia_worker audio_worker image_worker
+```
+
+Faça o backup ou registre o recovery point aprovado antes de aplicar:
+
+```bash
+BACKUP="$REPORT_DIR/cai-$(date -u +%Y%m%d-%H%M%S).dump"
+docker compose -p cai exec -T postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$BACKUP"
+```
+
+Aplique uma família por vez. O coordenador revalida a segunda fotografia e
+recusa crescimento, troca de valores, snapshot truncado, runtime indisponível
+ou relatório de outro operador/revisão. As confirmações são deliberadamente
+distintas:
+
+```bash
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --apply --family ia --confirm retire-legacy-ia-queue \
+  --operator "$OPERATOR" --revision "$REVISION" --compose-project cai \
+  --max-items "$MAX_ITEMS" --api-url http://api:8000 \
+  --backup-reference "$BACKUP" --report "/reports/$REPORT_NAME"
+
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --apply --family image --confirm retire-legacy-image-queue \
+  --operator "$OPERATOR" --revision "$REVISION" --compose-project cai \
+  --max-items "$MAX_ITEMS" --api-url http://api:8000 \
+  --backup-reference "$BACKUP" --report "/reports/$REPORT_NAME"
+
+docker compose -p cai --profile maintenance run --rm maintenance \
+  python -m scripts.retire_validated_legacy_redis_queues \
+  --apply --family audio --confirm retire-legacy-audio-queue \
+  --operator "$OPERATOR" --revision "$REVISION" --compose-project cai \
+  --max-items "$MAX_ITEMS" --api-url http://api:8000 \
+  --backup-reference "$BACKUP" --report "/reports/$REPORT_NAME"
+```
+
+Cada `LREM` remove somente uma ocorrência exata previamente validada. O
+comando não faz provider call, republicação, recuperação automática de
+dead-letter, escrita PostgreSQL, `FLUSHDB`, `FLUSHALL` ou remoção de
+`processed:*`, `ia_status:*`, `ia_result:*`, `ia_processing` e outras famílias.
+Após cada família, revise o relatório atualizado; em caso de interrupção,
+gere novo dry-run e reavalie o restante antes de continuar.
 
 Resíduos das antigas chaves Redis de buffer/debounce podem ser auditados e
 removidos somente por uma operação manual, limitada e revisada. O dry-run
@@ -734,8 +1028,9 @@ PYTHONPATH=/app python -m scripts.redis_residue_cleanup \
 O comando só pode apagar as seis famílias explicitamente allowlisted pelo
 issue 0037, uma chave por vez; nunca usa `FLUSHDB`, `FLUSHALL` ou um glob
 genérico. Ele revalida Redis, filas, PostgreSQL, leases, agendas e marcadores
-antes e depois, preservando filas/dead-letters ativos, `processed:*`,
-`ia_status:*`, `ia_result:*` e todo o estado durável PostgreSQL.
+antes e depois, preservando filas/dead-letters ativos, `processed:*`, as views
+IA aposentadas (que pertencem ao comando específico do issue 0054) e todo o
+estado durável PostgreSQL.
 
 Backup:
 
