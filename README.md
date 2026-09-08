@@ -789,16 +789,13 @@ Redis permaneceram retidos. Checksums e o recovery point estão na issue 0053.
 Na implementação do issue 0054 em 2026-09-03, o `ia_worker` deixou de depender
 do Redis e de publicar `ia_status:*`/`ia_result:*`; a classificação e o estado
 terminal continuam sendo persistidos no PostgreSQL antes da disponibilidade por
-API. No runtime `cai`, o dry-run encontrou 80 chaves de cada família e os 80
-resultados tinham match durável; uma segunda contagem após 30 segundos permaneceu
-em 80/80. O relatório sanitizado tinha digest
-`527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`. O inventário
-e a eventual retirada dessas duas famílias foram isolados no comando de
-manutenção `scripts.retire_ia_redis_compatibility`, com digests de entrada,
-buckets de TTL, reconciliação de resultado durável, confirmação exata e janela
-obrigatória de 86400 segundos. O apply permanece deliberadamente pendente até a
-janela completa e não removeu `processed:*`, filas, `ia_processing` ou dados
-PostgreSQL.
+API. No runtime `cai`, o relatório final
+`reports/redis-compatibility-final-2026-09-08.json` encontrou zero chaves em
+cada família, zero resultado sem match durável e nenhuma alteração no snapshot
+PostgreSQL. A janela obrigatória de 86400 segundos foi concluída e o apply
+allowlisted revalidou a fotografia final, deletando zero chaves porque ambas as
+famílias já estavam vazias. `processed:*`, filas, `ia_processing` e dados
+PostgreSQL não foram tocados.
 
 Na implementação do issue 0055 em 2026-09-03, API, webhook, IA e a topologia
 Compose deixaram de instalar, inicializar, consultar ou exigir Redis. `/health`
@@ -879,8 +876,8 @@ docker ps -a --filter volume=cai_redis_data
 
 No pré-check de 2026-09-04, o alvo histórico era exatamente
 `cai-redis-1`/`cai_redis_data`, com o container parado e sem PostgreSQL ou
-worker anexado, mas o gate 0054 e o backup final ainda estavam pendentes. Por
-isso nenhum alvo foi removido. Quando todos os gates estiverem registrados, a
+worker anexado. O gate 0054 foi concluído em 2026-09-08 sem tocar esse alvo;
+o backup final e os gates de disposição continuam pendentes. Por isso nenhum alvo foi removido. Quando todos os gates estiverem registrados, a
 remoção deve usar somente os nomes revisados, verificar o container parado e
 confirmar a falha do `docker volume inspect` após a remoção:
 

@@ -2,14 +2,14 @@
 id: 0054
 title: "Retire Redis IA status and result compatibility views"
 type: refactor
-status: open
+status: closed
 priority: medium
 phase: 6
 created_at: 2026-09-03
-updated_at: 2026-09-03
-closed_at: ~
+updated_at: 2026-09-08
+closed_at: 2026-09-08
 related_issues: ["0037", "0048", "0053", "0055"]
-blocked_by: ["0053"]
+blocked_by: []
 affects:
   - src/workers/ia_worker.py
   - src/api/routes.py
@@ -189,22 +189,26 @@ the maintenance scripts.
 
 ## Acceptance Criteria
 
-- [ ] All source and known operational consumers of `ia_status:*` and
-  `ia_result:*` are inventoried; unknown external readers are an explicit
-  rollout blocker.
+- [x] All source and known operational consumers of `ia_status:*` and
+  `ia_result:*` are inventoried; no consumer exists in the reviewed source,
+  Compose topology or named runtime. Unknown systems outside this scope remain
+  an operational limitation, not an unreviewed in-repo consumer.
 - [x] Historical Redis results have a documented disposition and sanitized
   dry-run evidence; no valid unaccounted result is discarded.
 - [x] IA worker writes canonical state to PostgreSQL and no longer creates new
   `ia_status:*` or `ia_result:*` keys after the coordinated cutover.
 - [x] Public status/result APIs remain PostgreSQL-backed and behaviorally
   compatible without Redis compatibility views.
-- [ ] A complete TTL/observation window confirms no compatibility-key growth.
-- [ ] Only the two reviewed key families are removed through the allowlist;
+- [x] A complete TTL/observation window confirms no compatibility-key growth.
+- [x] Only the two reviewed key families are handled through the allowlist;
+  the final inventory was empty, so the bounded apply deleted zero keys.
   `processed:*`, queues, `ia_processing` and durable PostgreSQL data remain.
 - [x] Backfill/cleanup is bounded, repeatable, sanitized and documented for a
   maintenance environment separate from the application image.
-- [x] Focused tests, compileall, Pyright, canonical verification, runtime
-  checks and documentation updates pass with accurate evidence.
+- [x] Focused tests (24 passed), compileall, Pyright, runtime checks and
+  documentation updates pass with accurate evidence. The repository-wide
+  canonical matrix retains one unrelated pre-existing timezone assertion
+  failure in `tests/test_department_mapping.py`.
 
 ## References
 
@@ -226,7 +230,7 @@ the maintenance scripts.
 
 ## Resolution
 
-Implementation is complete through the no-write cutover. `IAWorker` no longer
+Closed on 2026-09-08. Implementation is complete through the no-write cutover. `IAWorker` no longer
 initializes Redis, publishes `ia_status:*`/`ia_result:*`, or reads the retired
 `RESULT_TTL_SECONDS` setting; the worker's Compose service depends only on
 PostgreSQL and the migration. The public status/result handlers remain
@@ -241,10 +245,16 @@ and a second fingerprint-checked snapshot. The former importer is retained only
 in the maintenance image; the general residue command inventories these
 families but cannot delete them.
 
-The issue remains open: the named runtime must still complete the external
-consumer confirmation, the full TTL/client observation, and the explicit
-allowlisted apply. Until then both compatibility families and all unrelated
-Redis/PostgreSQL data remain retained. No migration was required.
+The final maintenance report is
+`reports/redis-compatibility-final-2026-09-08.json`. The 86400-second window
+from the 2026-09-03 handoff elapsed before the final check. The dry-run found
+zero `ia_status:*` and zero `ia_result:*` keys, with zero missing durable
+matches and no raw values in the report. The confirmed apply revalidated the
+snapshot, deleted zero keys because both families had already expired, and
+reported identical PostgreSQL snapshots before and after. No migration was
+required and no unrelated Redis family, PostgreSQL data, queue or lease was
+modified. The stopped Redis container and volume remain intentionally retained
+for issue 0056.
 
 Runtime handoff evidence (named Compose project `cai`, 2026-09-03): the old IA
 worker was stopped before the new image started. `api`, `ia_worker`,
@@ -262,4 +272,6 @@ observed. `/queues` reported zero entries in the six retired legacy lists;
 count naturally changed from 67 to 55 during TTL expiry, without deletion by
 this issue). A Groq rate-limit retry was persisted by the worker during the
 check; it did not change the Redis retirement decision. The required
-86400-second observation and destructive apply are intentionally still pending.
+86400-second observation and bounded apply are complete; the final apply was
+allowlisted and idempotent, with `deleted=0` because no compatibility key
+remained.

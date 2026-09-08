@@ -1,0 +1,180 @@
+{
+  "report_version": 1,
+  "mode": "dry-run",
+  "generated_at": "2026-09-08T03:12:41.774595+00:00",
+  "observation": {
+    "started_at": "2026-09-03T21:20:45Z",
+    "required_seconds": 86400
+  },
+  "redis": {
+    "families": {
+      "ia_status:*": {
+        "pattern": "ia_status:*",
+        "count": 0,
+        "redis_types": {},
+        "ttl_buckets": {},
+        "payload_dispositions": {},
+        "durable_matches": 0,
+        "key_digests": [],
+        "entry_digests": []
+      },
+      "ia_result:*": {
+        "pattern": "ia_result:*",
+        "count": 0,
+        "redis_types": {},
+        "ttl_buckets": {},
+        "payload_dispositions": {},
+        "durable_matches": 0,
+        "key_digests": [],
+        "entry_digests": []
+      }
+    },
+    "total_keys": 0,
+    "missing_durable_matches": 0,
+    "report_contains_values": false
+  },
+  "postgres": {
+    "cycle_statuses": {
+      "completed": 1661,
+      "completed_with_warnings": 397,
+      "failed": 3,
+      "media_blocked": 1,
+      "open": 166
+    },
+    "audio_statuses": {
+      "completed": 1396
+    },
+    "image_statuses": {
+      "completed": 913,
+      "failed": 2
+    },
+    "counts": {
+      "active_cycle_leases": 0,
+      "completed_images": 913,
+      "cycle_publication_markers": 0,
+      "cycles": 2228,
+      "failed_images": 2,
+      "future_audio_attempts": 0,
+      "future_cycle_attempts": 0,
+      "future_image_attempts": 0,
+      "pending_images": 0
+    }
+  },
+  "historical_disposition": "all valid ia_result payloads have a durable PostgreSQL match",
+  "decision": "No application producer remains; retain keys until the complete observation window and explicit apply review.",
+  "apply": {
+    "report_version": 1,
+    "mode": "apply-result",
+    "generated_at": "2026-09-08T03:12:58.095821+00:00",
+    "deleted": 0,
+    "before": {
+      "families": {
+        "ia_status:*": {
+          "pattern": "ia_status:*",
+          "count": 0,
+          "redis_types": {},
+          "ttl_buckets": {},
+          "payload_dispositions": {},
+          "durable_matches": 0,
+          "key_digests": [],
+          "entry_digests": []
+        },
+        "ia_result:*": {
+          "pattern": "ia_result:*",
+          "count": 0,
+          "redis_types": {},
+          "ttl_buckets": {},
+          "payload_dispositions": {},
+          "durable_matches": 0,
+          "key_digests": [],
+          "entry_digests": []
+        }
+      },
+      "total_keys": 0,
+      "missing_durable_matches": 0,
+      "report_contains_values": false
+    },
+    "after": {
+      "families": {
+        "ia_status:*": {
+          "pattern": "ia_status:*",
+          "count": 0,
+          "redis_types": {},
+          "ttl_buckets": {},
+          "payload_dispositions": {},
+          "durable_matches": 0,
+          "key_digests": [],
+          "entry_digests": []
+        },
+        "ia_result:*": {
+          "pattern": "ia_result:*",
+          "count": 0,
+          "redis_types": {},
+          "ttl_buckets": {},
+          "payload_dispositions": {},
+          "durable_matches": 0,
+          "key_digests": [],
+          "entry_digests": []
+        }
+      },
+      "total_keys": 0,
+      "missing_durable_matches": 0,
+      "report_contains_values": false
+    },
+    "postgres_before": {
+      "cycle_statuses": {
+        "completed": 1661,
+        "completed_with_warnings": 397,
+        "failed": 3,
+        "media_blocked": 1,
+        "open": 166
+      },
+      "audio_statuses": {
+        "completed": 1396
+      },
+      "image_statuses": {
+        "completed": 913,
+        "failed": 2
+      },
+      "counts": {
+        "active_cycle_leases": 0,
+        "completed_images": 913,
+        "cycle_publication_markers": 0,
+        "cycles": 2228,
+        "failed_images": 2,
+        "future_audio_attempts": 0,
+        "future_cycle_attempts": 0,
+        "future_image_attempts": 0,
+        "pending_images": 0
+      }
+    },
+    "postgres_after": {
+      "cycle_statuses": {
+        "completed": 1661,
+        "completed_with_warnings": 397,
+        "failed": 3,
+        "media_blocked": 1,
+        "open": 166
+      },
+      "audio_statuses": {
+        "completed": 1396
+      },
+      "image_statuses": {
+        "completed": 913,
+        "failed": 2
+      },
+      "counts": {
+        "active_cycle_leases": 0,
+        "completed_images": 913,
+        "cycle_publication_markers": 0,
+        "cycles": 2228,
+        "failed_images": 2,
+        "future_audio_attempts": 0,
+        "future_cycle_attempts": 0,
+        "future_image_attempts": 0,
+        "pending_images": 0
+      }
+    },
+    "decision": "Only ia_status:* and ia_result:* were removed; PostgreSQL, processed:*, queues and ia_processing were not touched."
+  }
+}

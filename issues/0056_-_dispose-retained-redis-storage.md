@@ -6,10 +6,10 @@ status: open
 priority: medium
 phase: 6
 created_at: 2026-09-03
-updated_at: 2026-09-04
+updated_at: 2026-09-08
 closed_at: ~
 related_issues: ["0037", "0052", "0053", "0054", "0055"]
-blocked_by: ["0054"]
+blocked_by: []
 affects:
   - docker-compose.yml
   - src/workers/audio_worker.py
@@ -152,7 +152,7 @@ prune or `docker compose down -v` is prohibited.
 - [ ] The issue records exact target identifiers, commands, timestamps and
   evidence without secrets or raw payloads.
 
-## Pre-disposal verification (2026-09-04)
+## Pre-disposal verification (2026-09-04; updated 2026-09-08)
 
 A pre-disposal check was performed at `2026-09-04T12:10:49Z` against the current checkout and the named
 Compose runtime. It is evidence for readiness only; it is not the irreversible
@@ -177,10 +177,11 @@ disposal operation.
   `redis_data`. The only container associated with that volume is the stopped
   `cai-redis-1`. No PostgreSQL or worker container is attached to it.
 - The Redis-free `api`, `ia_worker`, `audio_worker` and `image_worker` were
-  started at `2026-09-03T21:20:45Z`. Issue 0054 remains open and requires a
-  complete 86400-second observation window, so the earliest observation gate
-  is `2026-09-04T21:20:45Z`. Its compatibility keys must remain retained until
-  that gate and its bounded apply are complete.
+  started at `2026-09-03T21:20:45Z`. Issue 0054 was closed on 2026-09-08 after
+  the complete observation window and bounded apply. Its final report found
+  zero compatibility keys and the apply deleted zero keys; the PostgreSQL
+  snapshot was unchanged. The container and volume remain retained for this
+  issue and were not touched by that apply.
 - The three versioned dumps under `backups/` were successfully listed with
   `pg_restore` from the PostgreSQL container, but they are dated historical
   artifacts, not the final pre-disposal backup. The current checkout contains
@@ -189,10 +190,13 @@ disposal operation.
   artifacts must therefore be produced and validated after the observation
   gate, in a disposable PostgreSQL target.
 
-Decision: do not remove `cai-redis-1` or `cai_redis_data` in this pass. No
+Decision: do not remove `cai-redis-1` or `cai_redis_data` in this pass. Issue
+0054 is no longer a blocker; the remaining gates are the final PostgreSQL
+backup, disposable-target restore validation, exact target review and explicit
+approval for this irreversible disposal. No
 `docker volume rm`, `docker compose down -v`, Docker prune, `FLUSHDB` or
-`FLUSHALL` command was executed. The issue remains open and is explicitly
-blocked by issue 0054 plus the missing final-backup/report gate. The remaining
+`FLUSHALL` command was executed. The issue remains open pending its independent
+final-backup/report gate. The remaining
 maintenance and backfill source is retained for archival review; it is not
 part of the application runtime.
 

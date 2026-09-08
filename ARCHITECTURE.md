@@ -265,9 +265,9 @@ not active application state:
 - \`processed:*\` as retained legacy webhook markers during the coordinated
   handoff; they are not read by the active idempotency service after cutover;
 - \`ia_status:*\` and \`ia_result:*\` are retired compatibility families, with no
-  active producer or public consumer after issue 0054. Their bounded inventory,
-  historical disposition and eventual deletion belong only to
-  \`scripts.retire_ia_redis_compatibility\` after the full TTL observation window.
+  active producer or public consumer after issue 0054. Their final bounded
+  inventory/apply was verified on 2026-09-08 with zero remaining keys; the
+  maintenance report is `reports/redis-compatibility-final-2026-09-08.json`.
 
 The former buffer/debounce families are not application paths. Issue 0037's
 manual \`scripts/redis_residue_cleanup.py\` command inventories those explicit
@@ -281,10 +281,10 @@ must establish its historical disposition before any deletion.
 ### Final storage disposal (issue 0056)
 
 The Redis-free runtime does not make the former Redis storage disposable by
-itself. The exact project-scoped container and volume must remain retained until
-issue 0054 completes its compatibility-key observation and bounded apply, the
-final PostgreSQL backup is validated in a disposable target, and the reviewed
-operator confirms the target. In the named `cai` runtime, the 2026-09-04
+itself. Issue 0054 completed its compatibility-key observation and bounded apply
+on 2026-09-08. The exact project-scoped container and volume must remain retained
+until the final PostgreSQL backup is validated in a disposable target and the
+reviewed operator confirms the target. In the named `cai` runtime, the 2026-09-04
 pre-check resolved the stopped container `cai-redis-1` and volume
 `cai_redis_data`; no PostgreSQL or worker container was attached. The window
 had not completed, so neither target was deleted.
@@ -614,9 +614,9 @@ records these delivery limitations:
   all active workers use PostgreSQL/provider contracts only; `/queues` no
   longer fabricates the six legacy Redis list fields. Historical Redis tools
   and their client live only in the separate `maintenance` image and require
-  `MAINTENANCE_REDIS_URL`. The retained Redis container/volume is not deleted
-  until issue `0054`'s observation/apply and issue `0056`'s backup and target
-  gates complete; issue `0056` owns that irreversible disposal.
+  `MAINTENANCE_REDIS_URL`. Issue `0054` completed its observation/apply without
+  touching the retained container/volume; issue `0056` owns the remaining
+  backup, target-review and irreversible disposal gates.
 - Issue `0025` removes extracted webhook values from normal logs while
   preserving safe event, presence/type, and source metadata.
 - SPEC-0012 and issues `0038`–`0040` provide six authenticated internal
