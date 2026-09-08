@@ -1,7 +1,7 @@
 # SPEC-0004 — Baseline reprodutível de testes e verificação
 
-- **Status:** implementado; baseline canônico, verificação operacional e smoke Redis-free concluídos; o issue 0056 adiciona uma verificação operacional de prontidão que não é executada pelo runner canônico
-- **Versão:** 2.1
+- **Status:** implementado; baseline canônico, verificação operacional e smoke Redis-free concluídos; o issue 0054 tem evidência final de observação/apply; o issue 0056 adiciona uma verificação operacional de prontidão que não é executada pelo runner canônico
+- **Versão:** 2.2
 - **Prioridade/Fase:** P0/P1 / baseline e verificação operacional
 - **Rastreabilidade:** PRD §9; ARCHITECTURE §13; `IMPLEMENTATION_PLAN.md` baseline concluído, discrepância de entrada de testes e evidência externa pendente; SPEC-0001–0003; issues 0049–0051, 0055 e 0056
 - **Dependências:** SPEC-0001, SPEC-0002, SPEC-0003

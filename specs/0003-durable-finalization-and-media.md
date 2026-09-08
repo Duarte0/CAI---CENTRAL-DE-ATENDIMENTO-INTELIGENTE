@@ -100,7 +100,7 @@ O PostgreSQL continua sendo a autoridade para ciclos, transcrições, extraçõe
 agendas, leases e resultados; dead-letters transitórios, entradas desconhecidas
 e malformadas continuam preservados.
 
-**Aposentadoria das views IA Redis (2026-09-03):** o issue 0054 removeu a
+**Aposentadoria das views IA Redis (2026-09-08):** o issue 0054 removeu a
 publicação de `ia_status:*`/`ia_result:*` do `ia_worker`; classificação, ciclo,
 status e resultado permanecem no PostgreSQL. A consulta pública não usa essas
 views e o worker IA não depende mais de Redis. O comando
@@ -108,10 +108,10 @@ views e o worker IA não depende mais de Redis. O comando
 `maintenance`, com inventário bounded, buckets de TTL, digests sem valores,
 reconciliação com classificação durável e apply condicionado a decisão histórica,
 segunda fotografia e janela completa de TTL. A operação de remoção ainda não foi
-executada; no runtime `cai`, o dry-run encontrou 80 chaves em cada família e
-todos os 80 resultados tiveram match durável, sem crescimento observado após 30
-segundos. Filas legadas, `processed:*`, `ia_processing` e dados PostgreSQL estão
-fora da fronteira.
+executada; no runtime `cai`, o relatório final encontrou zero chaves em cada
+família e zero resultado sem match durável após a janela completa. O apply
+allowlisted deletou zero chaves por elas já terem expirado. Filas legadas,
+`processed:*`, `ia_processing` e dados PostgreSQL estão fora da fronteira.
 
 **Runtime sem Redis (2026-09-03):** o issue 0055 removeu Redis da API, do
 `ia_worker` e da topologia Compose. Claims, leases, retries, reservas, ciclos,
@@ -120,9 +120,9 @@ PostgreSQL. O desligamento do serviço Redis não altera rows duráveis nem agen
 as ferramentas de reconciliação histórica continuam disponíveis somente na
 imagem `maintenance` e exigem endpoint explícito.
 
-**Disposição sem impacto no trabalho durável (issue 0056, 2026-09-04):** o
-storage histórico ainda está retido fora da topologia normal. Sua remoção só
-é permitida depois do gate de observação do issue 0054, do backup final validado
+**Disposição sem impacto no trabalho durável (issue 0056, atualizado 2026-09-08):** o
+storage histórico ainda está retido fora da topologia normal. O gate de observação
+do issue 0054 foi concluído; sua remoção só é permitida depois do backup final validado
 e da inspeção exata do alvo. A disposição não pode remover ciclos, classificações,
 mídias, leases, retries ou qualquer outra linha PostgreSQL; falhas posteriores
 devem ser investigadas pelo estado durável, sem recriar filas Redis.

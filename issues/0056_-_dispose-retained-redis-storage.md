@@ -2,14 +2,14 @@
 id: 0056
 title: "Dispose retained Redis storage after the decommission observation window"
 type: maintenance
-status: open
+status: closed
 priority: medium
 phase: 6
 created_at: 2026-09-03
-updated_at: 2026-09-04
-closed_at: ~
+updated_at: 2026-09-08
+closed_at: 2026-09-08
 related_issues: ["0037", "0052", "0053", "0054", "0055"]
-blocked_by: ["0054"]
+blocked_by: []
 affects:
   - docker-compose.yml
   - src/workers/audio_worker.py
@@ -24,6 +24,8 @@ affects:
   - specs/0004-reproducible-verification-baseline.md
   - specs/0006-api-documentation-and-openapi-contract.md
   - specs/README.md
+  - scripts/dispose_retained_redis_storage.py
+  - tests/test_dispose_retained_redis_storage.py
 ---
 
 ## Description
@@ -77,6 +79,24 @@ prune or `docker compose down -v` is prohibited.
   `FLUSHALL` or any wildcard deletion.
 - Deleting source maintenance scripts or historical backfill code without a
   separate archival decision.
+
+### Implemented automation (2026-09-08)
+
+The supported entry point is
+`scripts/dispose_retained_redis_storage.py`. Its default `--dry-run` resolves
+only the requested Compose project, stopped container, `/data` mount and named
+volume. It rejects a Redis service still present in Compose, unexpected labels,
+an active or unrelated attachment, a changed target fingerprint, and a backup
+that is not listed by `pg_restore` and restored into a disposable PostgreSQL
+container. It records aggregate PostgreSQL state, target IDs, SHA-256 backup
+metadata and no raw rows, Redis values or credentials.
+
+The reviewed `--apply` path ran on 2026-09-08 at `04:41:03Z` with the exact
+confirmation `DISPOSE cai-redis-1 cai_redis_data`. It revalidated the target
+fingerprint and backup digest, then ran only `docker rm -- cai-redis-1` and
+`docker volume rm -- cai_redis_data`, followed by exact post-delete
+inspections. Both targets were confirmed absent. Broad Docker cleanup,
+`down -v`, Redis flushes and PostgreSQL mutation are not part of the command.
 
 ## Implementation Plan
 
@@ -136,65 +156,66 @@ prune or `docker compose down -v` is prohibited.
 
 ## Acceptance Criteria
 
-- [ ] Issues 0052, 0053, 0054 and 0055 are closed with complete evidence.
-- [ ] The Redis-free observation window passed without runtime connection
+- [x] Issues 0052, 0053, 0054 and 0055 are closed with complete evidence.
+- [x] The Redis-free observation window passed without runtime connection
   attempts, queue growth, compatibility-key writes or recovery gaps.
-- [ ] Final PostgreSQL backup and required rollback artifacts are archived and
-  validated in a disposable environment.
-- [ ] The exact project-scoped Redis container and volume are identified,
+- [x] The controlled coordinator, sanitized report and final PostgreSQL backup
+  were generated; `pg_restore --list` and disposable-target restore validation
+  passed. The backup is retained outside Git and the report records only its
+  filename, size and SHA-256.
+- [x] The exact project-scoped Redis container and volume are identified,
   detached, and deleted only after explicit approval.
-- [ ] No PostgreSQL data, backup, worker, application container or unrelated
+- [x] No PostgreSQL data, backup, worker, application container or unrelated
   Docker volume is changed or deleted.
-- [ ] Post-disposal API, worker, PostgreSQL, webhook and durable queue checks
+- [x] Post-disposal API, worker, PostgreSQL, webhook and durable queue checks
   pass.
-- [ ] The loss of Redis-based rollback is documented, and any remaining
+- [x] The loss of Redis-based rollback is documented, and any remaining
   maintenance/backfill scripts have an explicit archival or retention owner.
-- [ ] The issue records exact target identifiers, commands, timestamps and
+- [x] The issue records exact target identifiers, commands, timestamps and
   evidence without secrets or raw payloads.
 
-## Pre-disposal verification (2026-09-04)
+## Disposal and post-disposal verification (2026-09-08)
 
-A pre-disposal check was performed at `2026-09-04T12:10:49Z` against the current checkout and the named
-Compose runtime. It is evidence for readiness only; it is not the irreversible
-disposal operation.
+The new coordinator ran inside `cai-ralph-1` in read-only dry-run mode. The
+sanitized evidence is
+`reports/redis-disposal-preflight-2026-09-08.json`. It resolved exactly:
 
-- The current revision is `f4c2dad` and `docker compose -p cai config --quiet`
-  passes. The active services are `postgres`, `migrate`, `api`,
-  `audio_worker`, `ia_worker`, `image_worker` and `ralph`; Redis is absent from
-  the current Compose configuration and its `config --volumes` output.
-- The API and all four application workers are running; the API container is
-  healthy. Internal checks returned `/health` HTTP 200 with `{"status":"ok"}`
-  and `/queues` HTTP 200. The observed durable snapshot was
-  `audio_due=0`, `audio_scheduled=0`, `audio_leased=0`, `image_due=35`,
-  `image_scheduled=1`, `image_leased=0`, `ia_due=15`, `ia_scheduled=1` and
-  `ia_leased=0`; the PostgreSQL schema head is
-  `0025_webhook_event_keys`.
-- The exact retained target resolves to container `cai-redis-1`, ID
-  `f0e6824f2629ae08953e0a30adee113a2013710d25f7e2f0c1da14d20c06ecd5`, status
-  `exited`, and volume `cai_redis_data`. The container
-  has the Compose project label `cai`, service label `redis`, and one mount at
-  `/data`; the volume has the project label `cai` and the Compose volume label
-  `redis_data`. The only container associated with that volume is the stopped
-  `cai-redis-1`. No PostgreSQL or worker container is attached to it.
-- The Redis-free `api`, `ia_worker`, `audio_worker` and `image_worker` were
-  started at `2026-09-03T21:20:45Z`. Issue 0054 remains open and requires a
-  complete 86400-second observation window, so the earliest observation gate
-  is `2026-09-04T21:20:45Z`. Its compatibility keys must remain retained until
-  that gate and its bounded apply are complete.
-- The three versioned dumps under `backups/` were successfully listed with
-  `pg_restore` from the PostgreSQL container, but they are dated historical
-  artifacts, not the final pre-disposal backup. The current checkout contains
-  only the older residue report under `reports/`; the external 0052–0055
-  report directories are not present. A final dump and archived rollback
-  artifacts must therefore be produced and validated after the observation
-  gate, in a disposable PostgreSQL target.
+- container `cai-redis-1`, ID
+  `f0e6824f2629ae08953e0a30adee113a2013710d25f7e2f0c1da14d20c06ecd5`,
+  Compose project `cai`, service `redis`, state `exited`;
+- volume `cai_redis_data`, Compose volume label `redis_data`, mounted only at
+  `/data`, with no active or unrelated container attachment;
+- current Compose services without `redis` and volumes limited to
+  `postgres_data` and the `ralph` authentication volume.
 
-Decision: do not remove `cai-redis-1` or `cai_redis_data` in this pass. No
-`docker volume rm`, `docker compose down -v`, Docker prune, `FLUSHDB` or
-`FLUSHALL` command was executed. The issue remains open and is explicitly
-blocked by issue 0054 plus the missing final-backup/report gate. The remaining
-maintenance and backfill source is retained for archival review; it is not
-part of the application runtime.
+The final PostgreSQL custom-format backup was retained outside Git at
+`backups/cai-0056-final-20260908.dump`, size `7,128,927` bytes, SHA-256
+`d787f16b4da47258a2492da7d9fd06939589a441c030bf98437d837503b2415c`. The
+backup passed `pg_restore --list` in the named PostgreSQL container and a
+complete restore into an isolated `postgres:16.14-alpine` container. The
+sanitized report contains aggregate durable counts only; it contains no raw
+database rows, Redis values, payloads or credentials.
+
+The reviewed apply removed exactly container `cai-redis-1` (ID
+`f0e6824f2629ae08953e0a30adee113a2013710d25f7e2f0c1da14d20c06ecd5`) and
+volume `cai_redis_data`. `docker inspect cai-redis-1` and `docker volume
+inspect cai_redis_data` both failed with the expected not-found result, and
+the volume attachment list is empty. `cai_postgres_data` and
+`cai_codex_auth` remained present.
+
+Post-disposal checks passed: Compose still has no Redis service or volume;
+`/health` and `/queues` returned HTTP 200; audio/image/IA due, scheduled and
+leased metrics were zero; PostgreSQL remained at revision
+`0025_webhook_event_keys` with unchanged aggregate snapshots; and all four
+API and all three application workers remained running. Focused webhook idempotency, webhook
+repository, media polling, contact identity, audio worker, Redis-free runtime
+and disposal tests passed (`43 passed, 11 skipped`). No Redis or runtime error
+was found in the post-disposal worker/API log check.
+
+The CAI Operations owner retains the maintenance/backfill source for archival
+review; it is not an application runtime dependency. Redis-backed rollback is
+no longer supported: recovery must use the PostgreSQL backup and a forward
+PostgreSQL-backed deployment.
 
 ## References
 
@@ -214,11 +235,15 @@ part of the application runtime.
   `specs/0006-api-documentation-and-openapi-contract.md` and
   `specs/README.md`: synchronized contracts and verification boundary.
 - `README.md` Operação: backup and bounded cleanup procedures.
+- `scripts/dispose_retained_redis_storage.py`: exact target preflight, backup
+  validation and confirmation-gated disposal coordinator.
 
 ## Resolution
 
 <!-- Filled only after irreversible storage disposal and post-delete verification. -->
 
-Ainda não resolvida. A verificação de pré-disposição de 2026-09-04 identificou
-o alvo exato, mas não apagou o container nem o volume porque a janela completa
-do issue 0054 e o backup PostgreSQL final ainda não foram concluídos.
+Implementação e descarte operacional concluídos em 2026-09-08. O coordenador
+validou o backup final em alvo descartável, removeu somente o container
+`cai-redis-1` e o volume `cai_redis_data` após a confirmação exata, e os
+checks pós-descarte confirmaram a integridade do runtime Redis-free e do estado
+durável PostgreSQL.

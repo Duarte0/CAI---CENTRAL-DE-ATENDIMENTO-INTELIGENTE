@@ -98,8 +98,8 @@ complete locally; production acceptance remains separate._
   16 with head `0025_webhook_event_keys`; the named runtime imported 171 live
   markers and retained all 171 Redis source keys. This is named-runtime
   evidence, not a production-wide claim.
-- **[implemented | observation pending | current checkout | 2026-09-03] Issue
-  0054 IA Redis compatibility sunset.** `ia_worker` now persists and exposes
+- **[completed | current checkout | 2026-09-08] Issue 0054 IA Redis
+  compatibility sunset.** `ia_worker` now persists and exposes
   status/result only through PostgreSQL, with no Redis client, `SET`, or
   `RESULT_TTL_SECONDS` wiring. Public routes remain unchanged; OpenAPI and
   worker regression coverage make the dependency boundary explicit. The
@@ -108,8 +108,10 @@ complete locally; production acceptance remains separate._
   durable matches, and requires a full 86400-second observation window plus an
   explicit historical decision before deletion. In the named `cai` runtime,
   the dry-run found 80 keys in each family and 80 durable result matches; both
-  counts stayed at 80 after 30 seconds. The implementation is deployed, but
-  the issue remains open until the full window and bounded apply are verified.
+  counts stayed at 80 after 30 seconds. The full window is now complete; the
+  final report found zero keys in both families and the confirmed bounded apply
+  deleted zero keys because they had already expired. PostgreSQL snapshots
+  before and after were identical.
 - **[completed | current checkout | 2026-09-03] Issue 0055 Redis-free
   application runtime.** API, webhook admission, health, durable queue metrics
   and IA worker no longer import, initialize, ping or require Redis. The six
@@ -117,19 +119,22 @@ complete locally; production acceptance remains separate._
   zero. Runtime requirements and `.env.example` no longer carry Redis settings;
   the client and historical commands use only the separate `maintenance`
   image/profile with explicit `MAINTENANCE_REDIS_URL`. Compose no longer
-  defines the Redis service/volume or API/worker dependency, while the retained
-  Docker container/storage was not deleted. Focused source, route, OpenAPI,
+  defines the Redis service/volume or API/worker dependency; the retained
+  Docker container/storage was deliberately outside the scope of that cutover.
+  Focused source, route, OpenAPI,
   dependency and Compose guards plus the Redis-free named runtime smoke prove
   the boundary locally; this is not production-wide acceptance.
-- **[blocked | current checkout | 2026-09-04] Issue 0056 retained Redis
-  storage disposal pre-check.** The active Compose topology is Redis-free and
-  the named runtime is healthy. The exact historical target is the stopped
-  `cai-redis-1` container with volume `cai_redis_data`, with no PostgreSQL or
-  worker attachment. The Redis-free application containers started at
-  `2026-09-03T21:20:45Z`; issue 0054's required 86400-second observation gate
-  therefore ends at `2026-09-04T21:20:45Z`. Existing versioned dumps are
-  readable, but no final post-window dump or complete archived 0052–0055
-  report set is present. No container or volume was removed.
+- **[completed | current checkout | 2026-09-08] Issue 0056 retained Redis
+  storage disposal.** The Redis-free observation gate and issue 0054 apply were
+  complete. The final custom-format PostgreSQL backup was retained at
+  `backups/cai-0056-final-20260908.dump`, listed and restored successfully in a
+  disposable `postgres:16.14-alpine` target, with SHA-256
+  `d787f16b4da47258a2492da7d9fd06939589a441c030bf98437d837503b2415c`.
+  After explicit confirmation, only `cai-redis-1` and `cai_redis_data` were
+  removed at `2026-09-08T04:41:03Z`; PostgreSQL and the remaining named volumes
+  were unchanged. API, workers, `/queues`, PostgreSQL and focused webhook/media/
+  contact checks passed. Historical maintenance/backfill source remains under
+  CAI Operations archival ownership; Redis rollback is no longer supported.
 
 ### Implemented with bounded evidence
 
@@ -161,16 +166,16 @@ complete locally; production acceptance remains separate._
 
 ### Approved follow-up backlog
 
-- **[blocked | staged operational decommission]** Redis cleanup and final
-  storage disposal (issues 0054 and 0056; issues 0052–0053 and 0055 completed).
+- **[completed | staged operational decommission]** Redis cleanup and final
+  storage disposal (issues 0052–0056 completed).
   Issue 0052 retired only fully
   inventoried legacy IA, audio and image queue entries; issue 0053 moved generic webhook idempotency
-  from Redis to a PostgreSQL ledger; issue 0054 stops IA status/result
-  compatibility writes and starts their required sunset observation; issue 0055 removed Redis from the application runtime
-  and Compose; issue 0056 disposes the retained Redis volume only after an
-  explicit observation window and backup review. The sequence preserves
-  retained `processed:*`, durable PostgreSQL state, historical recovery tooling and
-  rollback boundaries until each dedicated issue closes.
+  from Redis to a PostgreSQL ledger; issue 0054 stopped IA status/result
+  compatibility writes and completed its sunset observation; issue 0055 removed
+  Redis from the application runtime and Compose; issue 0056 validated the final
+  backup and disposed the retained Redis volume after explicit review. The
+  sequence preserved durable PostgreSQL state and historical recovery tooling;
+  Redis-backed rollback is now closed.
 - **[completed]** Targeted searches found no active TODO/FIXME/stub or
   skipped/flaky-test marker that represents approved missing behavior. The
   `pass` occurrences are exception-control flow; the current 86 skips are the
@@ -278,7 +283,7 @@ complete locally; production acceptance remains separate._
 
 ### Phase 6 — Redis cleanup and decommission
 
-6. **[P1 | in progress | issues 0054–0056] Remove legacy Redis work residue, migrate
+6. **[P1 | completed | issues 0054–0056] Remove legacy Redis work residue, migrate
    the remaining transient contracts, and dispose storage only after a
    controlled observation window.**
 
@@ -291,15 +296,16 @@ complete locally; production acceptance remains separate._
    - issue 0053 is completed: it replaces Redis webhook idempotency with an
      expiring, concurrency-safe PostgreSQL ledger and coordinates the
      `processed:*` handoff before the new API starts;
-   - issue 0054 is implemented: the IA worker no longer depends on Redis or
-     writes `ia_status:*`/`ia_result:*`; the maintenance report, historical
-     disposition and full TTL observation must finish before its bounded apply;
+   - issue 0054 is completed: the IA worker no longer depends on Redis or
+     writes `ia_status:*`/`ia_result:*`; its full observation window and
+     allowlisted bounded apply were verified on 2026-09-08;
    - issue 0055 is completed: API/IA runtime, health, queue observability,
-     dependencies and Compose are Redis-free while the retained storage remains
-     outside the application topology for rollback;
-   - issue 0056 permanently disposes the exact Redis container/storage target
-     only after issue 0054 is closed, the observation window and backup/report
-     validation are complete, and explicit approval confirms the exact target.
+     dependencies and Compose are Redis-free; the retained storage was kept
+     outside the application topology until issue 0056;
+   - issue 0056 is completed: the final backup was validated, the exact
+     project-scoped Redis container and volume were removed after explicit
+     confirmation, and post-disposal health, queue, worker and PostgreSQL
+     invariants passed.
 
    Dependencies and risks: 0053–0055 must not assume a mixed old/new
    deployment is safe; PostgreSQL is the durable authority, but idempotency and
@@ -314,10 +320,11 @@ complete locally; production acceptance remains separate._
    entries. The protected Redis families and PostgreSQL durable totals remain
    outside this issue's deletion boundary; issue 0053 retains legacy
    `processed:*` markers for their natural TTL and does not delete them. Issue
-   0054 likewise retains both compatibility families until its observation gate
-   is complete. Issue 0055's named `cai` rebuild verified API health and worker
-   startup without Redis; issue 0056 identified the old Redis container/storage
-   exactly but did not remove it while the gate remains open.
+   0054 completed its gate with zero remaining compatibility keys and no
+   PostgreSQL mutation. Issue 0055's named `cai` rebuild verified API health and
+   worker startup without Redis; issue 0056 identified the old Redis
+   container/storage exactly but did not remove it because its backup and
+   irreversible-disposal gates remain open.
 
 ## Dependencies, discrepancies, and sequencing
 
@@ -350,15 +357,12 @@ complete locally; production acceptance remains separate._
 ## Recommended next pass
 
 SPEC-0013 is implemented locally by issues 0042–0044, covering its
-shell/session/BFF, read, and command-action increments. Issues 0048–0053 are
-complete locally, with issues 0052–0053 also accepted in the named `cai`
-runtime. Issue 0054 is implemented locally and ready for the named runtime
-handoff, but its destructive compatibility-key apply remains gated by the
-complete observation window. The current 0056 pre-check is blocked until the
-0054 observation/apply, final backup validation and report archive are complete;
-issue 0056 defines the remaining destructive storage disposal. Issue
-0053 is complete locally and in the named `cai` runtime, with its legacy marker
-source retained for the following compatibility/decommission stages.
+shell/session/BFF, read, and command-action increments. Issues 0048–0056 are
+complete locally, with issues 0052–0056 also verified in the named `cai`
+runtime. Issue 0056 completed the final backup validation, exact Redis
+container/volume disposal and post-disposal checks. Historical maintenance and
+backfill source remains retained under its explicit archival ownership; it is
+not part of the application runtime.
 The remaining items are product, operational authorization, or
 production-acceptance gates.
 Request

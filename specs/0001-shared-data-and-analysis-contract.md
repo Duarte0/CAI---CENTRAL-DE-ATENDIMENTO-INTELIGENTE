@@ -1,6 +1,6 @@
 # SPEC-0001 — Contrato compartilhado de dados e análise
 
-- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; issue 0053 moveu a idempotência genérica de webhook para PostgreSQL; issue 0054 retirou o produtor das views IA de status/resultado e deixou sua limpeza para o sunset bounded; issue 0055 removeu Redis do runtime e deixou seu acesso somente no contexto de manutenção; issue 0056 registrou a pré-disposição do storage sem executar sua remoção enquanto o gate 0054 permanece aberto; decisões de produto registradas abaixo
+- **Status:** baseline ativo, derivado da implementação; issues 0010, 0024, 0025 e 0032 corrigiram a paridade da taxonomia no prompt, a fronteira de privacidade dos logs e a separação da persistência de classificações; issue 0035 isolou o contrato model-facing sem alterar a política; issue 0037 adicionou auditoria manual e allowlist para resíduos Redis sem alterar a autoridade durável; issues 0049 e 0050 retiraram o transporte Redis ativo de áudio e imagem; issue 0051 preservou o backoff durável de hydration; issue 0052 adicionou o contexto de manutenção e a retirada validada por relatório; issue 0053 moveu a idempotência genérica de webhook para PostgreSQL; issue 0054 concluiu o sunset bounded das views IA de status/resultado; issue 0055 removeu Redis do runtime e deixou seu acesso somente no contexto de manutenção; issue 0056 registrou a pré-disposição do storage sem executar sua remoção; decisões de produto registradas abaixo
 - **Versão:** 1.13
 - **Prioridade/Fase:** P0 / baseline de requisitos
 - **Rastreabilidade:** PRD §§3, 6 e 8; ARCHITECTURE §§4, 8–9 e 12; `IMPLEMENTATION_PLAN.md` baseline concluído e trabalho pendente; Alembic `0001_initial`–`0025_webhook_event_keys`; SPEC-0007–0010; issues 0010, 0024, 0025, 0032, 0035, 0037, 0049, 0050, 0051, 0052, 0053, 0054, 0055 e 0056
@@ -107,20 +107,20 @@ a API PostgreSQL-only é iniciada. Uma fotografia nova ou truncada interrompe o
 apply. Isso evita a lacuna de uma implantação mista; a remoção das chaves
 retidas continua pertencendo aos issues 0054–0056.
 
-**Views IA Redis aposentadas (2026-09-03):** o issue 0054 removeu de
+**Views IA Redis aposentadas (2026-09-08):** o issue 0054 removeu de
 `src/workers/ia_worker.py` a publicação de `ia_status:*` e `ia_result:*`,
 removeu `RESULT_TTL_SECONDS` da configuração do worker e retirou a dependência
 Redis do serviço IA. As rotas públicas continuam consultando os repositórios
 PostgreSQL. O comando `scripts.retire_ia_redis_compatibility` faz inventário
 bounded com buckets de TTL, digests de entrada e matches duráveis sem expor
 valores; o importador histórico foi mantido somente no perfil `maintenance`.
-No runtime `cai`, o dry-run encontrou 80 chaves de cada família, 80 resultados
-com match durável e zero resultado válido sem correspondência; o relatório
-sanitizado foi identificado pelo digest
-`527e741d7a8d83186bd894e57eac67f2e99eadd36ed3bf14b80969c64651b02b`. Após 30
-segundos, as contagens permaneceram 80/80. Nenhuma chave foi removida nesta
-etapa: o apply requer decisão histórica, segunda fotografia e uma janela
-completa de 86400 segundos.
+No runtime `cai`, o relatório final
+`reports/redis-compatibility-final-2026-09-08.json` encontrou zero chaves em
+ambas as famílias, zero resultados sem correspondência durável e nenhum valor
+bruto. A janela completa de 86400 segundos passou; o apply allowlisted
+revalidou a segunda fotografia e deletou zero chaves porque elas já haviam
+expirado. PostgreSQL, `processed:*`, filas e `ia_processing` permaneceram
+inalterados.
 
 **Runtime PostgreSQL-only (2026-09-03):** o issue 0055 removeu o cliente Redis,
 a inicialização/ping da API, a dependência do webhook, os campos de listas de
@@ -133,9 +133,9 @@ imagem `api` não instala Redis nem contém esses scripts. O container Redis e
 seu volume não foram removidos por esta issue e permanecem fora da topologia
 aplicacional para o procedimento separado do issue 0056.
 
-**Pré-disposição do storage Redis (issue 0056, 2026-09-04):** a disposição é
+**Pré-disposição do storage Redis (issue 0056, atualizado 2026-09-08):** a disposição é
 uma operação operacional irreversível, sem alteração de schema ou da
-autoridade PostgreSQL. A verificação deve aguardar o fechamento do issue 0054,
+autoridade PostgreSQL. O issue 0054 já está fechado; a verificação ainda deve aguardar
 um backup PostgreSQL final listado/restaurável em alvo descartável e a revisão
 do container/volume exatos, com zero anexos ativos. No runtime nomeado `cai`, o
 alvo identificado foi `cai-redis-1`/`cai_redis_data`, mas a janela de 86400
