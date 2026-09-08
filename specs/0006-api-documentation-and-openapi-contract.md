@@ -1,7 +1,7 @@
 # SPEC-0006 — Documentação da API HTTP e contrato OpenAPI
 
-- **Status:** implementado; delta v1.9 documenta as métricas duráveis de áudio/imagem, a remoção dos campos Redis de `/queues`, a fronteira do comando de manutenção do issue 0052, a idempotência PostgreSQL do webhook do issue 0053, a independência PostgreSQL das consultas de status/resultado após o issue 0054, o runtime Redis-free do issue 0055 e a disposição operacional separada do issue 0056
-- **Versão:** 1.9
+- **Status:** implementado; delta v2.0 documenta as métricas duráveis de áudio/imagem, a remoção dos campos Redis de `/queues`, a fronteira do comando de manutenção do issue 0052, a idempotência PostgreSQL do webhook do issue 0053, a independência PostgreSQL das consultas de status/resultado após o issue 0054, o runtime Redis-free do issue 0055 e a disposição operacional separada do issue 0056
+- **Versão:** 2.0
 - **Prioridade/Fase:** P1 / documentação de compatibilidade
 - **Rastreabilidade:** PRD §§2, 5.1, 7–8 e 10; ARCHITECTURE §§3, 10 e 13;
   `IMPLEMENTATION_PLAN.md`; SPEC-0001–0005 e SPEC-0012; issues 0049–0050,
