@@ -866,6 +866,24 @@ backup PostgreSQL final ser listado/restaurado em um alvo descartável e de uma
 revisão explícita confirmar o alvo. Antes da deleção, resolva novamente o
 projeto, container, volume, mount e anexos:
 
+O coordenador versionado concentra essas travas e é somente leitura por padrão
+no `--dry-run`. O descarte foi concluído em 2026-09-08 após a validação final:
+
+```bash
+docker compose -p cai exec -T ralph bash -lc '
+  PYTHONPATH=/app python -m scripts.dispose_retained_redis_storage \
+    --dry-run --operator Guilherme \
+    --report /app/reports/redis-disposal-preflight-2026-09-08.json \
+    --backup /app/backups/cai-0056-final-20260908.dump --validate-restore
+'
+```
+
+O relatório registra o fingerprint do alvo, labels, anexos, contagens
+PostgreSQL e apenas o nome/tamanho/digest do backup. Não contém linhas,
+valores Redis, payloads ou credenciais. O apply exige relatório pronto,
+fingerprint inalterado, digest idêntico e a confirmação exata:
+`DISPOSE cai-redis-1 cai_redis_data`.
+
 ```bash
 docker compose -p cai config --services
 docker compose -p cai config --volumes
@@ -874,12 +892,27 @@ docker volume inspect cai_redis_data
 docker ps -a --filter volume=cai_redis_data
 ```
 
-No pré-check de 2026-09-04, o alvo histórico era exatamente
-`cai-redis-1`/`cai_redis_data`, com o container parado e sem PostgreSQL ou
-worker anexado. O gate 0054 foi concluído em 2026-09-08 sem tocar esse alvo;
-o backup final e os gates de disposição continuam pendentes. Por isso nenhum alvo foi removido. Quando todos os gates estiverem registrados, a
-remoção deve usar somente os nomes revisados, verificar o container parado e
-confirmar a falha do `docker volume inspect` após a remoção:
+No preflight de 2026-09-08, o alvo foi confirmado como exatamente
+`cai-redis-1`/`cai_redis_data`, parado, com único anexo e fora da topologia
+Compose ativa. O backup final passou `pg_restore --list` e restauração em
+PostgreSQL descartável; o relatório sanitizado está em
+`reports/redis-disposal-preflight-2026-09-08.json`. O apply foi executado em
+`2026-09-08T04:41:03Z` com a confirmação exata:
+
+```bash
+docker compose -p cai exec -T ralph bash -lc '
+  PYTHONPATH=/app python -m scripts.dispose_retained_redis_storage \
+    --apply --operator Guilherme \
+    --report /app/reports/redis-disposal-preflight-2026-09-08.json \
+    --backup /app/backups/cai-0056-final-20260908.dump \
+    --confirm "DISPOSE cai-redis-1 cai_redis_data"
+'
+```
+
+O apply usou somente os nomes revisados, removeu primeiro o container parado,
+removeu depois o volume exato e confirmou a falha do `docker volume inspect`
+após a remoção. O backup persistente tem SHA-256
+`d787f16b4da47258a2492da7d9fd06939589a441c030bf98437d837503b2415c`.
 
 ```bash
 docker rm -- cai-redis-1
@@ -892,9 +925,9 @@ Se o nome, projeto, mount ou estado não coincidir, pare. Não use
 `FLUSHDB` ou `FLUSHALL`, e nunca remova volumes PostgreSQL, backups, workers,
 classificações, ciclos, mídia, contatos ou ledgers. Após a deleção, confira
 `/health`, `/queues`, os quatro processos da aplicação, a conexão PostgreSQL e
-os logs; uma falha não autoriza recriar filas Redis. Os scripts históricos são
-mantidos para decisão de arquivamento, mas não constituem um runtime Redis
-suportado após o descarte.
+os logs; todos passaram. Uma falha não autoriza recriar filas Redis. Os scripts
+históricos são mantidos sob responsabilidade de CAI Operations para decisão de
+arquivamento, mas não constituem um runtime Redis suportado após o descarte.
 
 ### Sunset das views IA Redis (issue 0054)
 
